@@ -1,0 +1,35 @@
+# Frontend Dockerfile
+FROM node:20-alpine as builder
+
+WORKDIR /app/frontend
+
+# Copy package files
+COPY frontend/package*.json ./
+
+# Install dependencies
+RUN npm install
+
+# Copy source code
+COPY frontend/src ./src
+COPY frontend/public ./public
+COPY frontend/vite.config.ts frontend/tsconfig.json frontend/tsconfig.node.json frontend/index.html ./
+
+# Build
+RUN npm run build
+
+# Production image
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install static server
+RUN npm install -g serve
+
+# Copy built files from builder
+COPY --from=builder /app/frontend/dist ./frontend/dist
+
+# Expose port
+EXPOSE 3000
+
+# Start server
+CMD ["serve", "-s", "frontend/dist", "-l", "3000"]

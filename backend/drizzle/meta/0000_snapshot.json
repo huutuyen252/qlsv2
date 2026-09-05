@@ -1,0 +1,406 @@
+{
+  "id": "74b3fd91-7fed-4352-be1f-5e316860284f",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.diem": {
+      "name": "diem",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "ma_sv": {
+          "name": "ma_sv",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ho_ten_sv": {
+          "name": "ho_ten_sv",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ma_mh": {
+          "name": "ma_mh",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ten_mh": {
+          "name": "ten_mh",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "so_tin_chi": {
+          "name": "so_tin_chi",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "hoc_ky": {
+          "name": "hoc_ky",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "nam_hoc": {
+          "name": "nam_hoc",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "diem_chuyen_can": {
+          "name": "diem_chuyen_can",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "diem_giua_ky": {
+          "name": "diem_giua_ky",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "diem_cuoi_ky": {
+          "name": "diem_cuoi_ky",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "diem_tong_ket_10": {
+          "name": "diem_tong_ket_10",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "diem_thang_4": {
+          "name": "diem_thang_4",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "diem_chu": {
+          "name": "diem_chu",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'F'"
+        },
+        "trang_thai": {
+          "name": "trang_thai",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'FAILED'"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.mon_hoc": {
+      "name": "mon_hoc",
+      "schema": "",
+      "columns": {
+        "ma_mh": {
+          "name": "ma_mh",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "ten_mh": {
+          "name": "ten_mh",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "so_tin_chi": {
+          "name": "so_tin_chi",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "khoa_phu_trach": {
+          "name": "khoa_phu_trach",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "khoa": {
+          "name": "khoa",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "loai_mon": {
+          "name": "loai_mon",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "hoc_ky": {
+          "name": "hoc_ky",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "nam_hoc": {
+          "name": "nam_hoc",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lop": {
+          "name": "lop",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "le_phi_thi_lai": {
+          "name": "le_phi_thi_lai",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "le_phi_hoc_lai": {
+          "name": "le_phi_hoc_lai",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.sinh_vien": {
+      "name": "sinh_vien",
+      "schema": "",
+      "columns": {
+        "ma_sv": {
+          "name": "ma_sv",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "ho_ten": {
+          "name": "ho_ten",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "avatar": {
+          "name": "avatar",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ngay_sinh": {
+          "name": "ngay_sinh",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "gioi_tinh": {
+          "name": "gioi_tinh",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lop": {
+          "name": "lop",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "khoa": {
+          "name": "khoa",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "so_dien_thoai": {
+          "name": "so_dien_thoai",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dia_chi": {
+          "name": "dia_chi",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ho_so_file": {
+          "name": "ho_so_file",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ho_so_file_name": {
+          "name": "ho_so_file_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ho_so_files": {
+          "name": "ho_so_files",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ngay_nhap_hoc": {
+          "name": "ngay_nhap_hoc",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "trang_thai": {
+          "name": "trang_thai",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'Đang học'"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.users": {
+      "name": "users",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "username": {
+          "name": "username",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "full_name": {
+          "name": "full_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "password": {
+          "name": "password",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "avatar": {
+          "name": "avatar",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "student_code": {
+          "name": "student_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "faculty": {
+          "name": "faculty",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'ACTIVE'"
+        },
+        "permissions": {
+          "name": "permissions",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "users_username_unique": {
+          "name": "users_username_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "username"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

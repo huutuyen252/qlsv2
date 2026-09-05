@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/logo-truong.svg" />
+    <link rel="apple-touch-icon" href="/logo-truong.svg" />
+    <title>Hệ thống Quản lý Sinh viên - Trường ĐH Trần Đại Nghĩa</title>
+    <meta name="description" content="Cổng thông tin Đào tạo & Quản lý Sinh viên - Trường Sĩ quan Kỹ thuật Quân sự / Đại học Trần Đại Nghĩa." />
+    <meta property="og:title" content="Hệ thống Quản lý Sinh viên - Trường ĐH Trần Đại Nghĩa" />
+    <meta property="og:description" content="Cổng thông tin Đào tạo & Quản lý Sinh viên - Trường Sĩ quan Kỹ thuật Quân sự / Đại học Trần Đại Nghĩa." />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,500&display=swap" rel="stylesheet">
+    <script>
+      (function() {
+        try {
+          var saved = localStorage.getItem('app_theme');
+          var isDark = saved === 'dark' || (saved !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (isDark) {
+            document.documentElement.classList.add('dark');
+            document.documentElement.style.colorScheme = 'dark';
+          } else {
+            document.documentElement.classList.remove('dark');
+            document.documentElement.style.colorScheme = 'light';
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <style>
+      body {
+        font-family: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

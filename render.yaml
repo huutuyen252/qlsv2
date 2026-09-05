@@ -1,0 +1,42 @@
+name: qlsv-app
+services:
+  - type: web
+    name: qlsv-backend
+    runtime: node
+    repo: your-github-repo-url
+    region: singapore
+    startCommand: cd backend && npm run build && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: SQL_HOST
+        scope: shared-envs
+      - key: SQL_DB_NAME
+        scope: shared-envs
+      - key: SQL_ADMIN_USER
+        scope: shared-envs
+      - key: SQL_ADMIN_PASSWORD
+        scope: shared-envs
+      - key: CORS_ORIGIN
+        value: https://your-frontend-domain.com
+    healthCheckPath: /health
+
+  - type: web
+    name: qlsv-frontend
+    runtime: node
+    repo: your-github-repo-url
+    region: singapore
+    buildCommand: cd frontend && npm run build
+    startCommand: serve -s frontend/dist -l 3000
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://your-backend-domain.com/api
+
+databases:
+  - type: pgsql
+    name: qlsv-database
+    version: 16
+    region: singapore
+    plan: starter

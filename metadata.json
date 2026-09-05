@@ -1,0 +1,6 @@
+{
+  "name": "Hệ thống Quản lý Sinh viên - Trường ĐH Trần Đại Nghĩa",
+  "description": "Cổng thông tin Đào tạo & Quản lý Sinh viên - Trường Sĩ quan Kỹ thuật Quân sự / Đại học Trần Đại Nghĩa.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
