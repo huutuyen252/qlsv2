@@ -411,16 +411,30 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header id="app-header" className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800/80 px-4 lg:px-8 py-3 transition-colors shadow-xs">
       <div className="flex items-center justify-between gap-4 max-w-7xl mx-auto">
-        <div className="flex items-center gap-3">
+        <div
+          id="header-brand-logo"
+          onClick={() => onSwitchView('dashboard')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onSwitchView('dashboard');
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          title="Về trang tổng quan"
+          aria-label="Về trang tổng quan"
+          className="flex items-center gap-3 cursor-pointer select-none group transition-all duration-200 hover:opacity-90 active:scale-[0.98] outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 rounded-xl p-1 -m-1"
+        >
           <img
             src="/logo-truong.svg"
             alt="Logo Trường ĐH Trần Đại Nghĩa"
-            className="w-10 h-10 md:w-11 md:h-11 object-contain drop-shadow-sm shrink-0"
+            className="w-10 h-10 md:w-11 md:h-11 object-contain drop-shadow-sm shrink-0 group-hover:scale-105 transition-transform duration-200"
             referrerPolicy="no-referrer"
           />
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-lg font-black tracking-tight text-slate-900 dark:text-white leading-none">
+              <h1 className="text-lg font-black tracking-tight text-slate-900 dark:text-white leading-none group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                 TDNU <span className="text-blue-600 dark:text-blue-400">EDU</span>
               </h1>
              
