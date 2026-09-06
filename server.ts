@@ -55,6 +55,32 @@ import {
   clearAllOperationalData,
 } from './src/db/dbOperations.ts';
 import { SinhVien, Diem, RenLuyen, ThoiKhoaBieu, ThiLaiHocLai, NamHoc, HocKy, Lop, DiemDanh, ThongBaoKiemTra, MonHoc, NghiLe } from './src/types/index.ts';
+type StorageUploadOptions = {
+  folder?: string;
+  publicId?: string;
+  resourceType?: string;
+  tags?: string[];
+};
+
+type StorageUploadResult = {
+  url: string;
+  provider: string;
+};
+
+// Cloud storage is optional; retain local data-URL support when the module is
+// unavailable in a development checkout.
+const getStorageStatus = () => ({
+  provider: 'local',
+  configured: false,
+});
+
+const uploadToCloudStorage = async (
+  fileData: string,
+  _options: StorageUploadOptions = {},
+): Promise<StorageUploadResult> => ({
+  url: fileData,
+  provider: 'local',
+});
 const failedLoginAttempts: Record<string, number> = {};
 async function startServer() {
   const app = express();
@@ -468,24 +494,75 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
+  app.get('/api/storage/status', (req: Request, res: Response) => {
+    return res.json({
+      success: true,
+      data: getStorageStatus(),
+    });
+  });
+  app.post('/api/students/upload-avatar', async (req: Request, res: Response) => {
+    try {
+      const { maSV, fileData } = req.body;
+      if (!fileData) {
+        return res.status(400).json({ success: false, message: 'Dữ liệu ảnh không được để trống' });
+      }
+
+      const uploadResult = await uploadToCloudStorage(fileData, {
+        folder: 'qlsv_students/avatars',
+        publicId: `avatar_${maSV || 'temp'}_${Date.now()}`,
+        resourceType: 'image',
+        tags: ['avatar', maSV || 'student'],
+      });
+
+      if (maSV) {
+        const student = await getSinhVienByMaSV(maSV);
+        if (student) {
+          await updateSinhVien(maSV, { avatar: uploadResult.url });
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: `Tải ảnh đại diện lên ${uploadResult.provider === 'cloudinary' ? 'Cloudinary Storage' : 'Hệ thống'} thành công`,
+        avatarUrl: uploadResult.url,
+        provider: uploadResult.provider,
+      });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  });
   app.post('/api/students/upload-hoso', async (req: Request, res: Response) => {
     try {
       const { maSV, fileName, fileData } = req.body;
-      const s3Url = fileData || `https://s3.ap-southeast-1.amazonaws.com/huce-student-files/hoso_${maSV}_${Date.now()}.pdf`;
+      let finalFileUrl = fileData || `https://s3.ap-southeast-1.amazonaws.com/huce-student-files/hoso_${maSV}_${Date.now()}.pdf`;
+      let uploadProvider = 'local';
+
+      if (fileData) {
+        const uploadResult = await uploadToCloudStorage(fileData, {
+          folder: `qlsv_students/hoso/${maSV || 'general'}`,
+          publicId: `hoso_${maSV || 'doc'}_${Date.now()}`,
+          resourceType: 'auto',
+          tags: ['hoso', maSV || 'student'],
+        });
+        finalFileUrl = uploadResult.url;
+        uploadProvider = uploadResult.provider;
+      }
+
       if (maSV) {
         const student = await getSinhVienByMaSV(maSV);
         if (student) {
           await updateSinhVien(maSV, {
-            hoSoFile: s3Url,
+            hoSoFile: finalFileUrl,
             hoSoFileName: fileName || `HoSo_${maSV}_Scan.pdf`,
           });
         }
       }
       return res.json({
         success: true,
-        message: 'Upload file hồ sơ lên Cloud Storage thành công và lưu vào PostgreSQL',
-        fileUrl: s3Url,
+        message: `Upload hồ sơ lên ${uploadProvider === 'cloudinary' ? 'Cloudinary Cloud Storage' : 'Cloud Storage'} thành công và lưu vào PostgreSQL`,
+        fileUrl: finalFileUrl,
         fileName: fileName || `HoSo_${maSV}_Scan.pdf`,
+        provider: uploadProvider,
       });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });

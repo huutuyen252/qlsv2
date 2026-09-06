@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
 import { SinhVien, UserRole, HoSoFile, User } from '../../types';
+import { apiService } from '../../services/apiService';
 import {
   Users,
   Search,
@@ -57,6 +58,7 @@ interface StudentProfileModuleProps {
   onAddStudent: (student: SinhVien) => void;
   onUpdateStudent: (maSV: string, student: Partial<SinhVien>) => void;
   onDeleteStudent: (maSV: string) => void;
+  onDeleteStudents?: (maSVs: string[]) => void;
   onUploadHoSo: (maSV: string, fileName: string, fileData?: string) => void;
   onImportStudents?: (students: Partial<SinhVien>[]) => void;
 }
@@ -69,9 +71,20 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
   onAddStudent,
   onUpdateStudent,
   onDeleteStudent,
+  onDeleteStudents,
   onUploadHoSo,
   onImportStudents,
 }) => {
+  const canonicalizeClassName = (className: string): string => {
+    const normalized = className.trim().replace(/\s+/g, ' ');
+    const codeMatch = normalized.match(/(\d{2}\s*[A-Za-zÀ-ỹ]{2,}\s*\d{3,})$/u);
+    if (!codeMatch) return normalized.toLocaleUpperCase('vi-VN');
+
+    const classCode = codeMatch[1].replace(/\s+/g, '').toUpperCase();
+    const classTitle = normalized.slice(0, codeMatch.index).trim().toLocaleUpperCase('vi-VN');
+    return `${classTitle} ${classCode}`;
+  };
+
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'HIERARCHICAL' | 'FLAT'>('HIERARCHICAL');
   const [searchTerm, setSearchTerm] = useState('');
@@ -81,12 +94,12 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
   // Class & Faculty map state
   const [classMap, setClassMap] = useState<Record<string, string>>(() => {
     const defaultMap: Record<string, string> = {
-      'CNKT Cơ khí 25DDS 09041': 'Khoa Cơ khí',
-      'CNKT Ô tô 25DDS09021': 'Khoa Ô tô',
+      'CNKT CƠ KHÍ 25DDS09041': 'Khoa Cơ khí',
+      'CNKT Ô TÔ 25DDS09021': 'Khoa Ô tô',
     };
     students.forEach((s) => {
       if (s.lop && s.khoa) {
-        defaultMap[s.lop] = s.khoa;
+        defaultMap[canonicalizeClassName(s.lop)] = s.khoa;
       }
     });
     return defaultMap;
@@ -104,23 +117,24 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
 
   // Helper to determine faculty for a given class
   const getFacultyForClass = (lopName: string): string => {
-    if (classMap[lopName]) return classMap[lopName];
-    const studentWithFaculty = students.find((s) => s.lop === lopName && s.khoa);
+    const canonicalLopName = canonicalizeClassName(lopName);
+    if (classMap[canonicalLopName]) return classMap[canonicalLopName];
+    const studentWithFaculty = students.find((s) => canonicalizeClassName(s.lop) === canonicalLopName && s.khoa);
     if (studentWithFaculty) return studentWithFaculty.khoa;
-    if (lopName.toLowerCase().includes('ô tô') || lopName.toLowerCase().includes('o to')) return 'Khoa Ô tô';
-    if (lopName.toLowerCase().includes('cơ khí') || lopName.toLowerCase().includes('co khi')) return 'Khoa Cơ khí';
-    if (lopName.toLowerCase().includes('thông tin') || lopName.toLowerCase().includes('cntt')) return 'Khoa Công nghệ Thông tin';
+    if (canonicalLopName.includes('Ô TÔ') || canonicalLopName.includes('O TO')) return 'Khoa Ô tô';
+    if (canonicalLopName.includes('CƠ KHÍ') || canonicalLopName.includes('CO KHI')) return 'Khoa Cơ khí';
+    if (canonicalLopName.includes('THÔNG TIN') || canonicalLopName.includes('CNTT')) return 'Khoa Công nghệ Thông tin';
     return 'Khoa Đào tạo';
   };
 
   // Available classes derived dynamically from students list
   const availableClasses: string[] = Array.from(
-    new Set(students.map((s) => s.lop).filter(Boolean) as string[])
+    new Set(students.map((s) => s.lop && canonicalizeClassName(s.lop)).filter(Boolean) as string[])
   );
 
   const handleSaveNewClass = (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmedLop = newClassFormData.lopName.trim();
+    const trimmedLop = canonicalizeClassName(newClassFormData.lopName);
     const trimmedKhoa = newClassFormData.khoa.trim() || 'Khoa Đào tạo';
     if (!trimmedLop) return;
 
@@ -139,7 +153,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     if (!editingClassModal) return;
 
     const { oldLopName, lopName, khoa } = editingClassModal;
-    const newLopName = lopName.trim();
+    const newLopName = canonicalizeClassName(lopName);
     const newKhoa = khoa.trim() || 'Khoa Đào tạo';
 
     if (!newLopName) return;
@@ -155,7 +169,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     });
 
     // Update all students in this class
-    const studentsInOldClass = students.filter((s) => s.lop === oldLopName);
+    const studentsInOldClass = students.filter((s) => canonicalizeClassName(s.lop) === canonicalizeClassName(oldLopName));
     studentsInOldClass.forEach((s) => {
       onUpdateStudent(s.maSV, {
         lop: newLopName,
@@ -175,7 +189,8 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
 
   const handleDeleteClass = (lopName: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    const studentsInLop = students.filter((s) => s.lop === lopName);
+    const canonicalLopName = canonicalizeClassName(lopName);
+    const studentsInLop = students.filter((s) => canonicalizeClassName(s.lop) === canonicalLopName);
     const faculty = getFacultyForClass(lopName);
 
     const confirmMsg =
@@ -184,17 +199,19 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
         : `⚠️ XÁC NHẬN XÓA LỚP HỌC:\n\nLớp: ${lopName}\nKhoa: ${faculty}\n\nBạn có chắc chắn muốn xóa lớp học này khỏi danh sách không?`;
 
     if (window.confirm(confirmMsg)) {
-      studentsInLop.forEach((s) => {
-        onDeleteStudent(s.maSV);
-      });
+      if (onDeleteStudents) {
+        onDeleteStudents(studentsInLop.map((s) => s.maSV));
+      } else {
+        studentsInLop.forEach((s) => onDeleteStudent(s.maSV));
+      }
 
       setClassMap((prev) => {
         const next = { ...prev };
-        delete next[lopName];
+        delete next[canonicalLopName];
         return next;
       });
 
-      if (selectedClass === lopName) {
+      if (selectedClass === canonicalLopName) {
         setSelectedClass(null);
       }
 
@@ -290,11 +307,11 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
 
             let lop = '';
             if (lopVal && maLopVal) {
-              lop = lopVal.includes(maLopVal) ? lopVal : `${lopVal} ${maLopVal}`;
+              lop = canonicalizeClassName(lopVal.includes(maLopVal) ? lopVal : `${lopVal} ${maLopVal}`);
             } else if (maLopVal) {
-              lop = maLopVal;
+              lop = canonicalizeClassName(maLopVal);
             } else if (lopVal) {
-              lop = lopVal;
+              lop = canonicalizeClassName(lopVal);
             } else {
               lop = 'CNKT Ô TÔ 25DDS09021';
             }
@@ -419,13 +436,13 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
   // Filter & sort students by MSSV ascending from smallest to largest
   const filteredStudents = baseStudentsList
     .filter((s) => {
-      const matchesClass = !selectedClass || s.lop === selectedClass;
+      const matchesClass = !selectedClass || canonicalizeClassName(s.lop) === canonicalizeClassName(selectedClass);
       const matchesSearch =
         s.maSV.toLowerCase().includes(searchTerm.toLowerCase()) ||
         s.hoTen.toLowerCase().includes(searchTerm.toLowerCase()) ||
         s.email.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesKhoa = !selectedKhoa || s.khoa === selectedKhoa;
-      const matchesLop = !selectedLop || s.lop === selectedLop;
+      const matchesLop = !selectedLop || canonicalizeClassName(s.lop) === canonicalizeClassName(selectedLop);
       return matchesClass && matchesSearch && matchesKhoa && matchesLop;
     })
     .sort((a, b) => a.maSV.localeCompare(b.maSV, undefined, { numeric: true, sensitivity: 'base' }));
@@ -523,23 +540,45 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
         else if (fname.includes('ly lich') || fname.includes('so yeu')) defaultName = 'Sơ yếu lý lịch sinh viên';
         else defaultName = file.name.replace(/\.[^/.]+$/, '');
 
-        existingFiles.push({
-          id: `file-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
-          customName: defaultName,
-          fileName: file.name,
-          fileUrl: (reader.result as string) || 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-          uploadedAt: new Date().toISOString().split('T')[0],
-        });
-
-        loadedCount++;
-        if (loadedCount === filesArray.length) {
-          setFormData((prev) => ({
-            ...prev,
-            hoSoFiles: [...existingFiles],
-            hoSoFile: existingFiles[0]?.fileUrl || prev.hoSoFile,
-            hoSoFileName: existingFiles[0]?.fileName || prev.hoSoFileName,
-          }));
-        }
+        const localData = reader.result as string;
+        apiService.uploadHoSoFile(formData.maSV || 'temp', file.name, localData)
+          .then((res) => {
+            const finalUrl = res.success && res.fileUrl ? res.fileUrl : localData;
+            existingFiles.push({
+              id: `file-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+              customName: defaultName,
+              fileName: file.name,
+              fileUrl: finalUrl,
+              uploadedAt: new Date().toISOString().split('T')[0],
+            });
+            loadedCount++;
+            if (loadedCount === filesArray.length) {
+              setFormData((prev) => ({
+                ...prev,
+                hoSoFiles: [...existingFiles],
+                hoSoFile: existingFiles[0]?.fileUrl || prev.hoSoFile,
+                hoSoFileName: existingFiles[0]?.fileName || prev.hoSoFileName,
+              }));
+            }
+          })
+          .catch(() => {
+            existingFiles.push({
+              id: `file-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+              customName: defaultName,
+              fileName: file.name,
+              fileUrl: localData,
+              uploadedAt: new Date().toISOString().split('T')[0],
+            });
+            loadedCount++;
+            if (loadedCount === filesArray.length) {
+              setFormData((prev) => ({
+                ...prev,
+                hoSoFiles: [...existingFiles],
+                hoSoFile: existingFiles[0]?.fileUrl || prev.hoSoFile,
+                hoSoFileName: existingFiles[0]?.fileName || prev.hoSoFileName,
+              }));
+            }
+          });
       };
       reader.readAsDataURL(file);
     });
@@ -558,22 +597,44 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
       const reader = new FileReader();
       reader.onload = () => {
         let defaultName = file.name.replace(/\.[^/.]+$/, '');
-        newFiles.push({
-          id: `hs-${Date.now()}-${index}`,
-          customName: defaultName || 'Tài liệu đính kèm mới',
-          fileName: file.name,
-          fileUrl: (reader.result as string) || 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-          uploadedAt: new Date().toISOString().split('T')[0],
-        });
+        const localData = reader.result as string;
 
-        loadedCount++;
-        if (loadedCount === filesArr.length) {
-          onUpdateStudent(student.maSV, {
-            hoSoFiles: newFiles,
-            hoSoFile: newFiles[0]?.fileUrl,
-            hoSoFileName: newFiles[0]?.fileName,
+        apiService.uploadHoSoFile(student.maSV, file.name, localData)
+          .then((res) => {
+            const finalUrl = res.success && res.fileUrl ? res.fileUrl : localData;
+            newFiles.push({
+              id: `hs-${Date.now()}-${index}`,
+              customName: defaultName || 'Tài liệu đính kèm mới',
+              fileName: file.name,
+              fileUrl: finalUrl,
+              uploadedAt: new Date().toISOString().split('T')[0],
+            });
+            loadedCount++;
+            if (loadedCount === filesArr.length) {
+              onUpdateStudent(student.maSV, {
+                hoSoFiles: newFiles,
+                hoSoFile: newFiles[0]?.fileUrl,
+                hoSoFileName: newFiles[0]?.fileName,
+              });
+            }
+          })
+          .catch(() => {
+            newFiles.push({
+              id: `hs-${Date.now()}-${index}`,
+              customName: defaultName || 'Tài liệu đính kèm mới',
+              fileName: file.name,
+              fileUrl: localData,
+              uploadedAt: new Date().toISOString().split('T')[0],
+            });
+            loadedCount++;
+            if (loadedCount === filesArr.length) {
+              onUpdateStudent(student.maSV, {
+                hoSoFiles: newFiles,
+                hoSoFile: newFiles[0]?.fileUrl,
+                hoSoFileName: newFiles[0]?.fileName,
+              });
+            }
           });
-        }
       };
       reader.readAsDataURL(file);
     });
@@ -952,7 +1013,10 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                   return (
                     <div
                       key={lopName}
-                      onClick={() => setSelectedClass(lopName)}
+                      onClick={() => {
+                        setSelectedClass(lopName);
+                        setSelectedLop('');
+                      }}
                       className="group bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-lg transition-all cursor-pointer flex flex-col justify-between"
                     >
                       <div className="space-y-3">
@@ -1113,11 +1177,15 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                   <select
                     id="filter-lop-select"
                     value={selectedLop}
-                    onChange={(e) => setSelectedLop(e.target.value)}
+                    onChange={(e) => {
+                      const nextLop = e.target.value;
+                      setSelectedLop(nextLop);
+                      if (nextLop) setSelectedClass(null);
+                    }}
                     className="w-full px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">Tất cả Lớp học</option>
-                    {Array.from(new Set(students.map((s) => s.lop).concat(['CNKT Cơ khí 25DDS 09041', 'CNKT Ô tô 25DDS09021']))).map((lop) => (
+                    {availableClasses.map((lop) => (
                       <option key={lop} value={lop}>{lop}</option>
                     ))}
                   </select>
@@ -1186,7 +1254,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                                 </button>
                               </td>
                               <td className="p-3.5">
-                                <div className="font-semibold text-zinc-800 dark:text-zinc-200">{s.lop}</div>
+                                <div className="font-semibold text-zinc-800 dark:text-zinc-200">{canonicalizeClassName(s.lop)}</div>
                                 <div className="text-[11px] text-zinc-500">{s.khoa}</div>
                               </td>
                               <td className="p-3.5">
@@ -1372,7 +1440,15 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                         if (!file) return;
                         const reader = new FileReader();
                         reader.onload = () => {
-                          setFormData((prev) => ({ ...prev, avatar: reader.result as string }));
+                          const localData = reader.result as string;
+                          setFormData((prev) => ({ ...prev, avatar: localData }));
+                          if (formData.maSV) {
+                            apiService.uploadAvatar(formData.maSV, localData).then((res) => {
+                              if (res.success && res.avatarUrl) {
+                                setFormData((prev) => ({ ...prev, avatar: res.avatarUrl }));
+                              }
+                            });
+                          }
                         };
                         reader.readAsDataURL(file);
                       }}
@@ -1797,6 +1873,14 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                           setViewingDetailStudent({
                             ...viewingDetailStudent,
                             avatar: newAvatar,
+                          });
+                          apiService.uploadAvatar(viewingDetailStudent.maSV, newAvatar).then((res) => {
+                            if (res.success && res.avatarUrl) {
+                              onUpdateStudent(viewingDetailStudent.maSV, { avatar: res.avatarUrl });
+                              setViewingDetailStudent((prev: any) =>
+                                prev ? { ...prev, avatar: res.avatarUrl } : null
+                              );
+                            }
                           });
                         };
                         reader.readAsDataURL(file);

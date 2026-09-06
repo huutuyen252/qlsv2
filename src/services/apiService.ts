@@ -162,6 +162,26 @@ export const apiService = {
       return { success: false, fileUrl: '', message: 'Upload thất bại' };
     }
   },
+  async uploadAvatar(maSV: string, fileData: string): Promise<{ success: boolean; avatarUrl: string; message: string; provider?: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/students/upload-avatar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maSV, fileData }),
+      });
+      return await res.json();
+    } catch {
+      return { success: false, avatarUrl: '', message: 'Upload ảnh đại diện thất bại' };
+    }
+  },
+  async getStorageStatus(): Promise<{ success: boolean; data: any }> {
+    try {
+      const res = await fetch(`${API_BASE}/storage/status`);
+      return await res.json();
+    } catch {
+      return { success: false, data: null };
+    }
+  },
   async importStudentsExcel(students: Partial<SinhVien>[]): Promise<{ success: boolean; message: string; importedCount?: number; newUsersCreated?: number }> {
     try {
       const res = await fetch(`${API_BASE}/students/import`, {
