@@ -1,7 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { SinhVien, UserRole, HoSoFile, User } from '../../types';
 import { apiService } from '../../services/apiService';
+import {
+  normalizeClassName,
+  normalizeFacultyName,
+  getFacultyForClass as getFacultyFromHelper,
+  isSameClass,
+  getUniqueClassesFromStudents,
+  CANONICAL_CLASS_CO_KHI,
+  CANONICAL_CLASS_O_TO,
+  FACULTY_CO_KHI,
+  FACULTY_O_TO,
+} from '../../utils/classHelper';
 import {
   Users,
   Search,
@@ -58,7 +69,6 @@ interface StudentProfileModuleProps {
   onAddStudent: (student: SinhVien) => void;
   onUpdateStudent: (maSV: string, student: Partial<SinhVien>) => void;
   onDeleteStudent: (maSV: string) => void;
-  onDeleteStudents?: (maSVs: string[]) => void;
   onUploadHoSo: (maSV: string, fileName: string, fileData?: string) => void;
   onImportStudents?: (students: Partial<SinhVien>[]) => void;
 }
@@ -71,20 +81,9 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
   onAddStudent,
   onUpdateStudent,
   onDeleteStudent,
-  onDeleteStudents,
   onUploadHoSo,
   onImportStudents,
 }) => {
-  const canonicalizeClassName = (className: string): string => {
-    const normalized = className.trim().replace(/\s+/g, ' ');
-    const codeMatch = normalized.match(/(\d{2}\s*[A-Za-zÀ-ỹ]{2,}\s*\d{3,})$/u);
-    if (!codeMatch) return normalized.toLocaleUpperCase('vi-VN');
-
-    const classCode = codeMatch[1].replace(/\s+/g, '').toUpperCase();
-    const classTitle = normalized.slice(0, codeMatch.index).trim().toLocaleUpperCase('vi-VN');
-    return `${classTitle} ${classCode}`;
-  };
-
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'HIERARCHICAL' | 'FLAT'>('HIERARCHICAL');
   const [searchTerm, setSearchTerm] = useState('');
@@ -94,12 +93,13 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
   // Class & Faculty map state
   const [classMap, setClassMap] = useState<Record<string, string>>(() => {
     const defaultMap: Record<string, string> = {
-      'CNKT CƠ KHÍ 25DDS09041': 'Khoa Cơ khí',
-      'CNKT Ô TÔ 25DDS09021': 'Khoa Ô tô',
+      [CANONICAL_CLASS_CO_KHI]: FACULTY_CO_KHI,
+      [CANONICAL_CLASS_O_TO]: FACULTY_O_TO,
     };
     students.forEach((s) => {
-      if (s.lop && s.khoa) {
-        defaultMap[canonicalizeClassName(s.lop)] = s.khoa;
+      if (s.lop) {
+        const normLop = normalizeClassName(s.lop);
+        defaultMap[normLop] = normalizeFacultyName(s.khoa, normLop);
       }
     });
     return defaultMap;
@@ -116,25 +116,76 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
   const [newClassFormData, setNewClassFormData] = useState({ lopName: '', khoa: '' });
 
   // Helper to determine faculty for a given class
-  const getFacultyForClass = (lopName: string): string => {
-    const canonicalLopName = canonicalizeClassName(lopName);
-    if (classMap[canonicalLopName]) return classMap[canonicalLopName];
-    const studentWithFaculty = students.find((s) => canonicalizeClassName(s.lop) === canonicalLopName && s.khoa);
-    if (studentWithFaculty) return studentWithFaculty.khoa;
-    if (canonicalLopName.includes('Ô TÔ') || canonicalLopName.includes('O TO')) return 'Khoa Ô tô';
-    if (canonicalLopName.includes('CƠ KHÍ') || canonicalLopName.includes('CO KHI')) return 'Khoa Cơ khí';
-    if (canonicalLopName.includes('THÔNG TIN') || canonicalLopName.includes('CNTT')) return 'Khoa Công nghệ Thông tin';
-    return 'Khoa Đào tạo';
+  const getFacultyForClass = (lopName: string | undefined | null): string => {
+    if (!lopName) return 'Khoa Đào tạo';
+    const norm = normalizeClassName(lopName);
+    if (classMap[norm]) return classMap[norm];
+    if (classMap[lopName]) return classMap[lopName];
+    return getFacultyFromHelper(norm);
   };
 
-  // Available classes derived dynamically from students list
-  const availableClasses: string[] = Array.from(
-    new Set(students.map((s) => s.lop && canonicalizeClassName(s.lop)).filter(Boolean) as string[])
-  );
+  // Available classes: canonical, unique, no duplicates
+  const availableClasses: string[] = useMemo(() => {
+    return getUniqueClassesFromStudents(students);
+  }, [students]);
+
+  // Unique faculties
+  const uniqueFaculties: string[] = useMemo(() => {
+    const set = new Set<string>();
+    set.add(FACULTY_CO_KHI);
+    set.add(FACULTY_O_TO);
+    students.forEach((s) => {
+      const k = normalizeFacultyName(s.khoa, s.lop);
+      if (k) set.add(k);
+    });
+    return Array.from(set).sort();
+  }, [students]);
+
+  // Handlers for class and faculty selection
+  const handleSelectClass = (lopName: string | null) => {
+    if (!lopName) {
+      setSelectedClass(null);
+      setSelectedLop('');
+      setSelectedKhoa('');
+      return;
+    }
+    const norm = normalizeClassName(lopName);
+    setSelectedClass(norm);
+    setSelectedLop(norm);
+    setSelectedKhoa(getFacultyForClass(norm));
+  };
+
+  const handleSelectLopFilter = (newLop: string) => {
+    if (!newLop) {
+      setSelectedLop('');
+      setSelectedClass(null);
+      setSelectedKhoa('');
+      return;
+    }
+    const norm = normalizeClassName(newLop);
+    setSelectedLop(norm);
+    setSelectedClass(norm);
+    setSelectedKhoa(getFacultyForClass(norm));
+  };
+
+  const handleSelectKhoaFilter = (newKhoa: string) => {
+    setSelectedKhoa(newKhoa);
+    if (!newKhoa) return;
+
+    // If currently selected class does not belong to this faculty, reset class selection
+    const activeClass = selectedLop || selectedClass;
+    if (activeClass) {
+      const classFaculty = getFacultyForClass(activeClass);
+      if (normalizeFacultyName(classFaculty).toLowerCase() !== normalizeFacultyName(newKhoa).toLowerCase()) {
+        setSelectedLop('');
+        setSelectedClass(null);
+      }
+    }
+  };
 
   const handleSaveNewClass = (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmedLop = canonicalizeClassName(newClassFormData.lopName);
+    const trimmedLop = newClassFormData.lopName.trim();
     const trimmedKhoa = newClassFormData.khoa.trim() || 'Khoa Đào tạo';
     if (!trimmedLop) return;
 
@@ -153,7 +204,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     if (!editingClassModal) return;
 
     const { oldLopName, lopName, khoa } = editingClassModal;
-    const newLopName = canonicalizeClassName(lopName);
+    const newLopName = lopName.trim();
     const newKhoa = khoa.trim() || 'Khoa Đào tạo';
 
     if (!newLopName) return;
@@ -169,7 +220,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     });
 
     // Update all students in this class
-    const studentsInOldClass = students.filter((s) => canonicalizeClassName(s.lop) === canonicalizeClassName(oldLopName));
+    const studentsInOldClass = students.filter((s) => s.lop === oldLopName);
     studentsInOldClass.forEach((s) => {
       onUpdateStudent(s.maSV, {
         lop: newLopName,
@@ -189,8 +240,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
 
   const handleDeleteClass = (lopName: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    const canonicalLopName = canonicalizeClassName(lopName);
-    const studentsInLop = students.filter((s) => canonicalizeClassName(s.lop) === canonicalLopName);
+    const studentsInLop = students.filter((s) => s.lop === lopName);
     const faculty = getFacultyForClass(lopName);
 
     const confirmMsg =
@@ -199,19 +249,17 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
         : `⚠️ XÁC NHẬN XÓA LỚP HỌC:\n\nLớp: ${lopName}\nKhoa: ${faculty}\n\nBạn có chắc chắn muốn xóa lớp học này khỏi danh sách không?`;
 
     if (window.confirm(confirmMsg)) {
-      if (onDeleteStudents) {
-        onDeleteStudents(studentsInLop.map((s) => s.maSV));
-      } else {
-        studentsInLop.forEach((s) => onDeleteStudent(s.maSV));
-      }
+      studentsInLop.forEach((s) => {
+        onDeleteStudent(s.maSV);
+      });
 
       setClassMap((prev) => {
         const next = { ...prev };
-        delete next[canonicalLopName];
+        delete next[lopName];
         return next;
       });
 
-      if (selectedClass === canonicalLopName) {
+      if (selectedClass === lopName) {
         setSelectedClass(null);
       }
 
@@ -237,9 +285,9 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
       {
         'Mã SV': '25DDS0904188',
         'Họ và tên': 'Nguyễn Văn Minh',
-        'Lớp': 'CNKT CƠ KHÍ',
+        'Lớp': CANONICAL_CLASS_CO_KHI,
         'Mã Lớp': '25DDS09041',
-        'Khoa / Viện': 'Khoa Cơ khí',
+        'Khoa / Viện': FACULTY_CO_KHI,
         'Ngày sinh': '2007-04-15',
         'Giới tính': 'Nam',
         'Số điện thoại': '0987654321',
@@ -251,9 +299,9 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
       {
         'Mã SV': '25DDS0904189',
         'Họ và tên': 'Trần Thị Thu Hà',
-        'Lớp': 'CNKT CƠ KHÍ',
+        'Lớp': CANONICAL_CLASS_CO_KHI,
         'Mã Lớp': '25DDS09041',
-        'Khoa / Viện': 'Khoa Cơ khí',
+        'Khoa / Viện': FACULTY_CO_KHI,
         'Ngày sinh': '2007-08-20',
         'Giới tính': 'Nữ',
         'Số điện thoại': '0912345678',
@@ -265,9 +313,9 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
       {
         'Mã SV': '25DDS0902190',
         'Họ và tên': 'Lê Hoàng Nam',
-        'Lớp': 'CNKT Ô TÔ',
+        'Lớp': CANONICAL_CLASS_O_TO,
         'Mã Lớp': '25DDS09021',
-        'Khoa / Viện': 'Khoa Ô tô',
+        'Khoa / Viện': FACULTY_O_TO,
         'Ngày sinh': '2007-11-02',
         'Giới tính': 'Nam',
         'Số điện thoại': '0933445566',
@@ -305,18 +353,18 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
             const lopVal = String(row['Lớp'] || row['Lop'] || row['Lớp sinh hoạt'] || row['lop'] || '').trim();
             const maLopVal = String(row['Mã Lớp'] || row['Mã lớp'] || row['MaLop'] || row['maLop'] || '').trim();
 
-            let lop = '';
+            let rawLop = '';
             if (lopVal && maLopVal) {
-              lop = canonicalizeClassName(lopVal.includes(maLopVal) ? lopVal : `${lopVal} ${maLopVal}`);
+              rawLop = lopVal.includes(maLopVal) ? lopVal : `${lopVal} ${maLopVal}`;
             } else if (maLopVal) {
-              lop = canonicalizeClassName(maLopVal);
+              rawLop = maLopVal;
             } else if (lopVal) {
-              lop = canonicalizeClassName(lopVal);
-            } else {
-              lop = 'CNKT Ô TÔ 25DDS09021';
+              rawLop = lopVal;
             }
 
-            const khoa = String(row['Khoa / Viện'] || row['Khoa'] || row['KhoaViên'] || row['khoa'] || 'Khoa Cơ khí').trim();
+            const lop = normalizeClassName(rawLop) || CANONICAL_CLASS_CO_KHI;
+            const rawKhoa = String(row['Khoa / Viện'] || row['Khoa'] || row['KhoaViên'] || row['khoa'] || '').trim();
+            const khoa = normalizeFacultyName(rawKhoa, lop);
             const ngaySinh = String(row['Ngày sinh'] || row['NgaySinh'] || row['ngaySinh'] || '2007-01-01').trim();
             const gioiTinh = String(row['Giới tính'] || row['GioiTinh'] || row['gioiTinh'] || 'Nam').trim();
             const soDienThoai = String(row['Số điện thoại'] || row['SoDienThoai'] || row['SĐT'] || row['soDienThoai'] || '').trim();
@@ -347,7 +395,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
         setExcelFileName(file.name);
       } catch (error) {
         console.error(error);
-        alert('Không thể đọc file Excel. Vui lòng kiểm tra lại địđịnh dạng file!');
+        alert('Không thể đọc file Excel. Vui lòng kiểm tra lại định dạng file!');
       }
     };
     reader.readAsBinaryString(file);
@@ -373,14 +421,14 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
   const [formData, setFormData] = useState<Partial<SinhVien>>({
     maSV: '',
     hoTen: '',
-    ngaySinh: '2003-01-01',
+    ngaySinh: '2007-01-01',
     gioiTinh: 'Nam',
-    lop: 'CNKT Cơ khí 25DDS 09041',
-    khoa: 'Khoa Cơ khí',
+    lop: CANONICAL_CLASS_CO_KHI,
+    khoa: FACULTY_CO_KHI,
     soDienThoai: '',
     email: '',
     diaChi: '',
-    ngayNhapHoc: '2021-09-05',
+    ngayNhapHoc: '2025-09-05',
     trangThai: 'Đang học',
     hoSoFiles: [],
   });
@@ -436,26 +484,28 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
   // Filter & sort students by MSSV ascending from smallest to largest
   const filteredStudents = baseStudentsList
     .filter((s) => {
-      const matchesClass = !selectedClass || canonicalizeClassName(s.lop) === canonicalizeClassName(selectedClass);
+      const activeClass = selectedLop || selectedClass;
+      const matchesClass = !activeClass || isSameClass(s.lop, activeClass);
       const matchesSearch =
         s.maSV.toLowerCase().includes(searchTerm.toLowerCase()) ||
         s.hoTen.toLowerCase().includes(searchTerm.toLowerCase()) ||
         s.email.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesKhoa = !selectedKhoa || s.khoa === selectedKhoa;
-      const matchesLop = !selectedLop || canonicalizeClassName(s.lop) === canonicalizeClassName(selectedLop);
-      return matchesClass && matchesSearch && matchesKhoa && matchesLop;
+      const sKhoa = normalizeFacultyName(s.khoa, s.lop);
+      const matchesKhoa = !selectedKhoa || sKhoa.toLowerCase().trim() === selectedKhoa.toLowerCase().trim();
+      return matchesClass && matchesSearch && matchesKhoa;
     })
     .sort((a, b) => a.maSV.localeCompare(b.maSV, undefined, { numeric: true, sensitivity: 'base' }));
 
   const handleOpenAdd = () => {
     const defaultMaSV = `25DDS0904${Math.floor(100 + Math.random() * 900)}`;
+    const initialClass = selectedClass || CANONICAL_CLASS_CO_KHI;
     setFormData({
       maSV: defaultMaSV,
       hoTen: '',
       ngaySinh: '2007-06-15',
       gioiTinh: 'Nam',
-      lop: 'CNKT Cơ khí 25DDS 09041',
-      khoa: 'Khoa Cơ khí',
+      lop: initialClass,
+      khoa: getFacultyForClass(initialClass),
       soDienThoai: '0912345678',
       email: '',
       diaChi: 'TP. Hồ Chí Minh',
@@ -480,6 +530,8 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     const files = getStudentFiles(student);
     setFormData({
       ...student,
+      lop: normalizeClassName(student.lop),
+      khoa: normalizeFacultyName(student.khoa, student.lop),
       hoSoFiles: files,
     });
     setIsAddModalOpen(true);
@@ -489,10 +541,18 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     e.preventDefault();
     if (!formData.maSV || !formData.hoTen) return;
 
+    const normLop = normalizeClassName(formData.lop) || CANONICAL_CLASS_CO_KHI;
+    const normKhoa = normalizeFacultyName(formData.khoa, normLop);
+    const payload = {
+      ...formData,
+      lop: normLop,
+      khoa: normKhoa,
+    };
+
     if (editingStudent) {
-      onUpdateStudent(editingStudent.maSV, formData);
+      onUpdateStudent(editingStudent.maSV, payload);
     } else {
-      onAddStudent(formData as SinhVien);
+      onAddStudent(payload as SinhVien);
     }
     setIsAddModalOpen(false);
   };
@@ -967,7 +1027,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
             <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm space-y-3">
               <div className="flex items-center flex-wrap gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
                 <button
-                  onClick={() => setSelectedClass(null)}
+                  onClick={() => handleSelectClass(null)}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
                     selectedClass === null
                       ? 'bg-blue-600 text-white font-bold shadow-sm'
@@ -1005,7 +1065,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {availableClasses.map((lopName) => {
-                  const studentsInLop = students.filter((s) => s.lop === lopName);
+                  const studentsInLop = students.filter((s) => isSameClass(s.lop, lopName));
                   const activeCount = studentsInLop.filter((s) => s.trangThai === 'Đang học').length;
                   const hasScanCount = studentsInLop.reduce((acc, s) => acc + getStudentFiles(s).length, 0);
                   const faculty = getFacultyForClass(lopName);
@@ -1013,10 +1073,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                   return (
                     <div
                       key={lopName}
-                      onClick={() => {
-                        setSelectedClass(lopName);
-                        setSelectedLop('');
-                      }}
+                      onClick={() => handleSelectClass(lopName)}
                       className="group bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-lg transition-all cursor-pointer flex flex-col justify-between"
                     >
                       <div className="space-y-3">
@@ -1135,7 +1192,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => setSelectedClass(null)}
+                      onClick={() => handleSelectClass(null)}
                       className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 transition-all cursor-pointer"
                     >
                       <ArrowLeft className="w-4 h-4" />
@@ -1163,11 +1220,11 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                   <select
                     id="filter-khoa-select"
                     value={selectedKhoa}
-                    onChange={(e) => setSelectedKhoa(e.target.value)}
+                    onChange={(e) => handleSelectKhoaFilter(e.target.value)}
                     className="w-full px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">Tất cả Khoa / Viện</option>
-                    {Array.from(new Set(students.map((s) => s.khoa).filter(Boolean))).map((kh) => (
+                    {uniqueFaculties.map((kh) => (
                       <option key={kh} value={kh}>{kh}</option>
                     ))}
                   </select>
@@ -1176,12 +1233,8 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                 <div>
                   <select
                     id="filter-lop-select"
-                    value={selectedLop}
-                    onChange={(e) => {
-                      const nextLop = e.target.value;
-                      setSelectedLop(nextLop);
-                      if (nextLop) setSelectedClass(null);
-                    }}
+                    value={selectedLop || selectedClass || ''}
+                    onChange={(e) => handleSelectLopFilter(e.target.value)}
                     className="w-full px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">Tất cả Lớp học</option>
@@ -1254,7 +1307,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                                 </button>
                               </td>
                               <td className="p-3.5">
-                                <div className="font-semibold text-zinc-800 dark:text-zinc-200">{canonicalizeClassName(s.lop)}</div>
+                                <div className="font-semibold text-zinc-800 dark:text-zinc-200">{s.lop}</div>
                                 <div className="text-[11px] text-zinc-500">{s.khoa}</div>
                               </td>
                               <td className="p-3.5">
@@ -1491,13 +1544,25 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-semibold block mb-1">Lớp sinh hoạt</label>
-                  <input
-                    type="text"
+                  <label className="font-semibold block mb-1">Lớp sinh hoạt *</label>
+                  <select
                     value={formData.lop}
-                    onChange={(e) => setFormData({ ...formData, lop: e.target.value })}
-                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
-                  />
+                    onChange={(e) => {
+                      const newLop = e.target.value;
+                      setFormData({
+                        ...formData,
+                        lop: newLop,
+                        khoa: getFacultyForClass(newLop),
+                      });
+                    }}
+                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl font-medium"
+                  >
+                    {availableClasses.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="font-semibold block mb-1">Khoa / Viện</label>

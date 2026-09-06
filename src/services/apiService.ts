@@ -215,6 +215,16 @@ export const apiService = {
       return { success: false, message: 'Không thể lưu điểm' };
     }
   },
+  async deleteGrade(id: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/grades/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+      return await res.json();
+    } catch {
+      return { success: false, message: 'Không thể xóa bản ghi điểm' };
+    }
+  },
   async importGradesExcel(grades: Partial<Diem>[]): Promise<{ success: boolean; message: string; importedCount?: number }> {
     try {
       const res = await fetch(`${API_BASE}/grades/import`, {
@@ -595,14 +605,6 @@ export const apiService = {
       return await res.json();
     } catch {
       return { success: false, message: 'Import môn học thất bại' };
-    }
-  },
-  async deleteGrade(id: string): Promise<{ success: boolean; message: string }> {
-    try {
-      const res = await fetch(`${API_BASE}/grades/${id}`, { method: 'DELETE' });
-      return await res.json();
-    } catch {
-      return { success: false, message: 'Xóa bản ghi điểm thất bại' };
     }
   },
   async deleteRetake(id: string): Promise<{ success: boolean; message: string }> {

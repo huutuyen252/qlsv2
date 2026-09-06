@@ -70,11 +70,15 @@ export const GradeManagementModule: React.FC<GradeManagementModuleProps> = ({
   const [selectedYear, setSelectedYear] = useState('');
   const [viewMode, setViewMode] = useState<'HIERARCHICAL' | 'FLAT'>('HIERARCHICAL');
   const [isGradeModalOpen, setIsGradeModalOpen] = useState(false);
+  const [gradeToDelete, setGradeToDelete] = useState<Diem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [gradeForm, setGradeForm] = useState<Partial<Diem>>({
     maSV: students[0]?.maSV || '',
     maMH: subjects[0]?.maMH || '',
-    hocKy: 'HK1',
-    namHoc: '2025-2026',
+    tenMH: subjects[0]?.tenMH || '',
+    soTinChi: subjects[0]?.soTinChi || 3,
+    hocKy: subjects[0]?.hocKy || 'HK1',
+    namHoc: subjects[0]?.namHoc || '2025-2026',
     diemChuyenCan: 8.5,
     diemGiuaKy: 8.0,
     diemCuoiKy: 8.5,
@@ -182,20 +186,28 @@ export const GradeManagementModule: React.FC<GradeManagementModuleProps> = ({
         const wsname = workbook.SheetNames[0];
         const ws = workbook.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
-        const normalized: Partial<Diem>[] = data.map((row) => ({
-          maSV: String(row.maSV || row['Mã Sinh Viên'] || row['MaSV'] || ''),
-          hoTenSV: String(row.hoTenSV || row['Họ và Tên'] || row['HoTen'] || ''),
-          maMH: String(row.maMH || row['Mã Môn Học'] || row['MaMH'] || ''),
-          tenMH: String(row.tenMH || row['Tên Môn Học'] || row['TenMH'] || ''),
-          soTinChi: Number(row.soTinChi || row['Số Tín Chỉ'] || 3),
-          hocKy: String(row.hocKy || row['Học Kỳ'] || 'HK1'),
-          namHoc: String(row.namHoc || row['Năm Học'] || '2025-2026'),
-          diemChuyenCan: Number(row.diemChuyenCan || row['Điểm Chuyên Cần (10%)'] || 0),
-          diemGiuaKy: Number(row.diemGiuaKy || row['Điểm Giữa Kỳ (30%)'] || 0),
-          diemCuoiKy: Number(row.diemCuoiKy || row['Điểm Cuối Kỳ (60%)'] || 0),
-        }));
+        const normalized: Partial<Diem>[] = data.map((row) => {
+          const maMH = String(row.maMH || row['Mã Môn Học'] || row['MaMH'] || selectedCourse || '').trim();
+          const matchedSubject = (subjects || []).find((m) => m?.maMH?.toLowerCase() === maMH.toLowerCase());
+          const hocKy = matchedSubject?.hocKy || String(row.hocKy || row['Học Kỳ'] || 'HK1').trim();
+          const namHoc = matchedSubject?.namHoc || String(row.namHoc || row['Năm Học'] || '2025-2026').trim();
+          const tenMH = matchedSubject?.tenMH || String(row.tenMH || row['Tên Môn Học'] || row['TenMH'] || '').trim();
+          const soTinChi = matchedSubject?.soTinChi || Number(row.soTinChi || row['Số Tín Chỉ'] || 3);
+          return {
+            maSV: String(row.maSV || row['Mã Sinh Viên'] || row['MaSV'] || '').trim(),
+            hoTenSV: String(row.hoTenSV || row['Họ và Tên'] || row['HoTen'] || '').trim(),
+            maMH,
+            tenMH,
+            soTinChi,
+            hocKy,
+            namHoc,
+            diemChuyenCan: Number(row.diemChuyenCan || row['Điểm Chuyên Cần (10%)'] || row['CC'] || 0),
+            diemGiuaKy: Number(row.diemGiuaKy || row['Điểm Giữa Kỳ (30%)'] || row['GK'] || 0),
+            diemCuoiKy: Number(row.diemCuoiKy || row['Điểm Cuối Kỳ (60%)'] || row['CK'] || 0),
+          };
+        });
         onImportExcel(normalized);
-        setImportStatus(`Đã đọc và import thành công ${normalized.length} dòng điểm từ Excel!`);
+        setImportStatus(`Đã đọc và import thành công ${normalized.length} dòng điểm theo đúng học kỳ & năm học của từng môn học!`);
         setTimeout(() => setImportStatus(null), 5000);
       } catch (err) {
         setImportStatus('Lỗi đọc file Excel. Vui lòng sử dụng đúng template chuẩn!');
@@ -239,6 +251,8 @@ export const GradeManagementModule: React.FC<GradeManagementModuleProps> = ({
     else if (tk10 >= 4.0) { thang4 = 1.0; chu = 'D'; trangThai = 'PASSED'; }
     const course = (subjects || []).find((m) => m?.maMH === gradeForm.maMH);
     const stu = students.find((s) => s.maSV === gradeForm.maSV);
+    const finalHocKy = course?.hocKy || gradeForm.hocKy || 'HK1';
+    const finalNamHoc = course?.namHoc || gradeForm.namHoc || '2025-2026';
     onSaveGrade({
       ...gradeForm,
       hoTenSV: stu ? stu.hoTen : gradeForm.hoTenSV,
@@ -246,6 +260,8 @@ export const GradeManagementModule: React.FC<GradeManagementModuleProps> = ({
       diemThang4: thang4,
       diemChu: chu,
       trangThai,
+      hocKy: finalHocKy,
+      namHoc: finalNamHoc,
       soTinChi: course ? course.soTinChi : 3,
       tenMH: course ? course.tenMH : gradeForm.maMH,
     });
@@ -630,11 +646,7 @@ export const GradeManagementModule: React.FC<GradeManagementModuleProps> = ({
                             </button>
                             {isAdminOrLecturer && onDeleteGrade && (
                               <button
-                                onClick={async () => {
-                                  if (window.confirm(`s️ Bạn có chắc chắn mun xóa bản ghi điểm môn ${g.tenMH || g.maMH} (${g.maMH}) của sinh viên ${g.hoTenSV || g.maSV}?`)) {
-                                    await onDeleteGrade(g.id);
-                                  }
-                                }}
+                                onClick={() => setGradeToDelete(g)}
                                 className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/60 rounded-lg border border-red-200 dark:border-red-800/60 transition-all cursor-pointer"
                                 title="Xóa bản ghi điểm này"
                               >
@@ -648,7 +660,7 @@ export const GradeManagementModule: React.FC<GradeManagementModuleProps> = ({
                   ) : (
                     <tr>
                       <td colSpan={11} className="p-8 text-center text-zinc-500 dark:text-zinc-400">
-                        Chưa có bảng điểm phù hợp vi iều kin lọc
+                        Chưa có bảng điểm phù hợp với điều kiện lọc
                       </td>
                     </tr>
                   )}
@@ -688,17 +700,42 @@ export const GradeManagementModule: React.FC<GradeManagementModuleProps> = ({
                 <label className="font-semibold block mb-1 text-zinc-700 dark:text-zinc-300">Chọn Môn học *</label>
                 <select
                   value={gradeForm.maMH}
-                  onChange={(e) => setGradeForm({ ...gradeForm, maMH: e.target.value })}
-                  className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border rounded-xl border-zinc-300 dark:border-zinc-700"
+                  onChange={(e) => {
+                    const chosenMaMH = e.target.value;
+                    const course = (subjects || []).find((m) => m?.maMH === chosenMaMH);
+                    setGradeForm({
+                      ...gradeForm,
+                      maMH: chosenMaMH,
+                      tenMH: course?.tenMH || '',
+                      soTinChi: course?.soTinChi || 3,
+                      hocKy: course?.hocKy || gradeForm.hocKy || 'HK1',
+                      namHoc: course?.namHoc || gradeForm.namHoc || '2025-2026',
+                    });
+                  }}
+                  className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border rounded-xl border-zinc-300 dark:border-zinc-700 font-semibold"
                   required
                 >
                   {(subjects || []).map((m) => (
                     <option key={m.maMH} value={m.maMH}>
-                      {m.maMH} - {m.tenMH} ({m.soTinChi} TC)
+                      {m.maMH} - {m.tenMH} ({m.soTinChi || 3} TC - {m.hocKy || 'HK1'} {m.namHoc || '2025-2026'})
                     </option>
                   ))}
                 </select>
               </div>
+
+              {/* Subject Academic Period Auto-Sync Banner */}
+              <div className="bg-blue-50 dark:bg-blue-950/40 p-2.5 rounded-xl border border-blue-200 dark:border-blue-800 text-[11px] text-blue-900 dark:text-blue-300 space-y-1">
+                <div className="font-bold flex items-center gap-1.5">
+                  <CheckCircle className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                  <span>Thời điểm đào tạo theo môn học:</span>
+                </div>
+                <div className="flex items-center gap-3 font-mono font-semibold text-xs">
+                  <span>Học kỳ: <strong className="text-blue-600 dark:text-blue-400">{gradeForm.hocKy || 'HK1'}</strong></span>
+                  <span>Năm học: <strong className="text-blue-600 dark:text-blue-400">{gradeForm.namHoc || '2025-2026'}</strong></span>
+                  <span>Số tín chỉ: <strong>{gradeForm.soTinChi || 3} TC</strong></span>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="font-semibold block mb-1 text-zinc-700 dark:text-zinc-300">Học Kỳ</label>
@@ -707,7 +744,7 @@ export const GradeManagementModule: React.FC<GradeManagementModuleProps> = ({
                     value={gradeForm.hocKy}
                     onChange={(e) => setGradeForm({ ...gradeForm, hocKy: e.target.value })}
                     placeholder="HK1, HK2, HK3..."
-                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border rounded-xl border-zinc-300 dark:border-zinc-700"
+                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border rounded-xl border-zinc-300 dark:border-zinc-700 font-mono"
                   />
                 </div>
                 <div>
@@ -717,7 +754,7 @@ export const GradeManagementModule: React.FC<GradeManagementModuleProps> = ({
                     value={gradeForm.namHoc}
                     onChange={(e) => setGradeForm({ ...gradeForm, namHoc: e.target.value })}
                     placeholder="2025-2026..."
-                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border rounded-xl border-zinc-300 dark:border-zinc-700"
+                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border rounded-xl border-zinc-300 dark:border-zinc-700 font-mono"
                   />
                 </div>
               </div>
@@ -766,11 +803,11 @@ export const GradeManagementModule: React.FC<GradeManagementModuleProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsGradeModalOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 cursor-pointer"
+                  className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 cursor-pointer font-medium"
                 >
                   Hủy
                 </button>
-                <button type="submit" className="px-4 py-2 rounded-xl bg-blue-600 text-white font-medium cursor-pointer shadow-md">
+                <button type="submit" className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium cursor-pointer shadow-md transition-all">
                   Lưu Bảng Điểm
                 </button>
               </div>
@@ -778,12 +815,104 @@ export const GradeManagementModule: React.FC<GradeManagementModuleProps> = ({
           </div>
         </div>
       )}
+
+      {/* Dedicated Grade Delete Confirmation Modal */}
+      {gradeToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl max-w-md w-full p-6 shadow-2xl relative space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-red-100 dark:bg-red-950/70 text-red-600 dark:text-red-400 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-zinc-900 dark:text-white">
+                  Xác nhận xóa bản ghi điểm
+                </h3>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Dữ liệu điểm này sẽ bị xóa khỏi cơ sở dữ liệu hệ thống.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-red-50 dark:bg-red-950/30 rounded-2xl border border-red-200 dark:border-red-900/40 text-xs space-y-1.5 text-zinc-800 dark:text-zinc-200">
+              <div>
+                <span className="text-zinc-500">Môn học:</span>{' '}
+                <strong className="text-zinc-900 dark:text-white">
+                  {gradeToDelete.tenMH || gradeToDelete.maMH}
+                </strong>{' '}
+                <span className="font-mono text-blue-600 dark:text-blue-400">({gradeToDelete.maMH})</span>
+              </div>
+              <div>
+                <span className="text-zinc-500">Sinh viên:</span>{' '}
+                <strong className="text-zinc-900 dark:text-white">
+                  {gradeToDelete.hoTenSV || gradeToDelete.maSV}
+                </strong>{' '}
+                <span className="font-mono text-zinc-600 dark:text-zinc-400">({gradeToDelete.maSV})</span>
+              </div>
+              <div className="flex items-center gap-3 pt-1 text-[11px]">
+                <span className="bg-white dark:bg-zinc-800 px-2.5 py-1 rounded-lg border border-red-200 dark:border-red-900/60 font-semibold">
+                  Học kỳ: {gradeToDelete.hocKy}
+                </span>
+                <span className="bg-white dark:bg-zinc-800 px-2.5 py-1 rounded-lg border border-red-200 dark:border-red-900/60 font-semibold">
+                  Năm học: {gradeToDelete.namHoc}
+                </span>
+                <span className="bg-white dark:bg-zinc-800 px-2.5 py-1 rounded-lg border border-red-200 dark:border-red-900/60 font-mono font-bold text-red-600 dark:text-red-400">
+                  TK: {gradeToDelete.diemTongKet10} ({gradeToDelete.diemChu})
+                </span>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setGradeToDelete(null)}
+                className="px-4 py-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-semibold cursor-pointer disabled:opacity-50 transition-all"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={async () => {
+                  try {
+                    setIsDeleting(true);
+                    if (onDeleteGrade && gradeToDelete) {
+                      await onDeleteGrade(gradeToDelete.id);
+                    }
+                    setGradeToDelete(null);
+                  } catch (err) {
+                    console.error('Lỗi khi xóa điểm:', err);
+                  } finally {
+                    setIsDeleting(false);
+                  }
+                }}
+                className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-md cursor-pointer disabled:opacity-50 transition-all inline-flex items-center gap-1.5"
+              >
+                {isDeleting ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    <span>Đang xóa...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Xác nhận xóa điểm</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <StudentTranscriptModal
         isOpen={isTranscriptModalOpen}
         onClose={() => setIsTranscriptModalOpen(false)}
         student={selectedStudentForModal}
         grades={grades}
         subjects={subjects}
+        onDeleteGrade={onDeleteGrade}
       />
     </div>
   );

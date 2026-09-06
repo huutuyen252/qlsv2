@@ -48,6 +48,7 @@ interface ReportsModuleProps {
   schedule?: ThoiKhoaBieu[];
   subjects?: MonHoc[];
   trainingPoints?: any[];
+  onSwitchView?: (view: string) => void;
 }
 
 // Data model for classes & training metrics
@@ -89,6 +90,7 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
   schedule = [],
   subjects = [],
   trainingPoints = [],
+  onSwitchView,
 }) => {
   const allSubjectList = subjects || [];
   const [summary, setSummary] = useState<any>(null);
@@ -456,6 +458,25 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
   const studentGrades = isStudent
     ? allGrades.filter((g) => g.maSV.toLowerCase() === myStudentCode)
     : allGrades;
+
+  // Real-time current semester grades for student (strictly for the current active semester & academic year)
+  const currentRealtimeGrades = React.useMemo(() => {
+    return studentGrades.filter((g) => {
+      const sem = (g.hocKy || '').trim().toLowerCase();
+      const currSem = currentActiveSemester.trim().toLowerCase();
+      const matchesSemester =
+        sem === currSem || sem === `hk${currSem}` || currSem === `hk${sem}`;
+      const matchesYear =
+        !currentActiveYear || !g.namHoc || g.namHoc.trim() === currentActiveYear.trim();
+      return matchesSemester && matchesYear;
+    });
+  }, [studentGrades, currentActiveSemester, currentActiveYear]);
+
+  // Historical grades from past semesters/years stored in Bảng điểm & GPA
+  const historicalOldGrades = React.useMemo(() => {
+    const currentIds = new Set(currentRealtimeGrades.map((g) => g.id));
+    return studentGrades.filter((g) => !currentIds.has(g.id));
+  }, [studentGrades, currentRealtimeGrades]);
 
   // Semesters list for student grade table
   const availableSemesters = Array.from(
@@ -1600,10 +1621,18 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <BookOpen className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                <h3 className="font-bold text-slate-800 dark:text-white text-sm">
-                  {isStudent
-                    ? `Kết Quả Học Tập Môn Học (Lớp: ${currentStudent?.lop || 'Chuyên ngành'})`
-                    : 'Cập nhật điểm gần đây (Toàn Hệ Thống)'}
+                <h3 className="font-bold text-slate-800 dark:text-white text-sm flex items-center gap-2 flex-wrap">
+                  <span>
+                    {isStudent
+                      ? `Bảng Điểm Môn Học Trong Thời Điểm Hiện Tại (Thời Gian Thực)`
+                      : 'Cập nhật điểm gần đây (Toàn Hệ Thống)'}
+                  </span>
+                  {isStudent && (
+                    <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800/80 shadow-xs">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      Thời gian thực: {currentActiveSemester} ({currentActiveYear || '2025-2026'})
+                    </span>
+                  )}
                 </h3>
               </div>
               {isStudent && (
@@ -1612,45 +1641,94 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
                   <strong className="text-slate-800 dark:text-slate-200">
                     {currentStudent?.hoTen || currentStudentCode}
                   </strong>{' '}
-                  ({currentStudentCode.toUpperCase()})
+                  ({currentStudentCode.toUpperCase()}) • Lớp: {currentStudent?.lop || 'Chuyên ngành'}
                 </p>
               )}
             </div>
 
-            {/* Semester selector dropdown */}
-            <div className="flex items-center gap-2 text-xs">
-              <span className="font-semibold text-slate-500">Học kỳ:</span>
-              <select
-                id="select-report-semester"
-                value={selectedSemester}
-                onChange={(e) => setSelectedSemester(e.target.value)}
-                className="px-3 py-1.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            {/* Quick Action to Full Historical Transcript in Bảng Điểm & GPA */}
+            {isStudent && onSwitchView && (
+              <button
+                onClick={() => onSwitchView('grades')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-bold transition-all cursor-pointer shadow-xs shrink-0"
+                title="Xem các học kỳ và năm học cũ trong Bảng Điểm & GPA"
               >
-                <option value="ALL">Tất cả các học kỳ</option>
-                {availableSemesters.map((sem) => (
-                  <option key={sem} value={sem}>
-                    {sem}
-                  </option>
-                ))}
-              </select>
-            </div>
+                <Award className="w-3.5 h-3.5" />
+                <span>Xem Bảng Điểm & GPA Cũ</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
-          {/* List format of courses for student */}
+          {/* Persistent Historical Grades Guidance Banner for Students */}
+          {isStudent && (
+            <div className="px-5 py-3.5 bg-indigo-50/70 dark:bg-indigo-950/30 border-b border-indigo-100 dark:border-indigo-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2.5 text-indigo-900 dark:text-indigo-200">
+                <div className="w-7 h-7 rounded-lg bg-indigo-100 dark:bg-indigo-900/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+                  <Award className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="font-bold text-slate-900 dark:text-white">
+                    Bảng điểm của các học kỳ, năm học cũ được lưu trữ tại mục &ldquo;Bảng Điểm & GPA&rdquo;
+                  </p>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                    Trang tổng quan chỉ hiển thị điểm môn học trong thời điểm hiện tại ({currentActiveSemester} - {currentActiveYear || '2025-2026'}).
+                    {historicalOldGrades.length > 0 ? (
+                      <span className="font-semibold text-indigo-700 dark:text-indigo-300 ml-1">
+                        (Bạn có {historicalOldGrades.length} đầu điểm môn học cũ đã được lưu trữ an toàn).
+                      </span>
+                    ) : (
+                      <span className="text-slate-500 ml-1">
+                        (Toàn bộ điểm lịch sử và điểm tích lũy được bảo lưu tại Bảng điểm & GPA).
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+              {onSwitchView && (
+                <button
+                  onClick={() => onSwitchView('grades')}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 hover:underline cursor-pointer shrink-0"
+                >
+                  <span>Mở Bảng Điểm & GPA</span>
+                  <ChevronRight className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* List format of courses for student: strictly real-time current semester */}
           {isStudent ? (
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {filteredGradesList.length === 0 ? (
-                <div className="p-8 text-center text-slate-500 text-xs">
-                  Không tìm thấy dữ liệu điểm cho sinh viên thuộc học kỳ này.
+              {currentRealtimeGrades.length === 0 ? (
+                <div className="p-8 text-center space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto">
+                    <BookOpen className="w-6 h-6" />
+                  </div>
+                  <h4 className="text-sm font-bold text-slate-800 dark:text-white">
+                    Chưa có bảng điểm trong học kỳ hiện tại ({currentActiveSemester} - {currentActiveYear || '2025-2026'})
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
+                    Các bảng điểm của các học kỳ, năm học cũ ({historicalOldGrades.length} môn học) được lưu trữ đầy đủ và có thể tra cứu bất cứ lúc nào trong mục &ldquo;Bảng Điểm & GPA&rdquo;.
+                  </p>
+                  {onSwitchView && (
+                    <button
+                      onClick={() => onSwitchView('grades')}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md transition-all cursor-pointer mt-1"
+                    >
+                      <Award className="w-4 h-4" />
+                      <span>Xem Bảng Điểm & GPA Cũ / Toàn Khóa</span>
+                    </button>
+                  )}
                 </div>
               ) : (
-                filteredGradesList.map((item) => (
+                currentRealtimeGrades.map((item) => (
                   <div
                     key={item.id}
                     className="p-4 hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors flex flex-col md:flex-row md:items-center justify-between gap-4"
                   >
                     <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/80 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5 shadow-xs">
                         {item.maMH.slice(-3)}
                       </div>
                       <div className="space-y-1">
@@ -1664,8 +1742,9 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
                           <span className="text-[11px] font-medium text-slate-500">
                             • {item.soTinChi || 3} Tín chỉ
                           </span>
-                          <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2.5 py-0.5 rounded-full border border-blue-200 dark:border-blue-800">
-                            {item.hocKy} ({item.namHoc})
+                          <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2.5 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                            <span>{item.hocKy} ({item.namHoc})</span>
                           </span>
                         </div>
                         {/* Component Score Chips */}

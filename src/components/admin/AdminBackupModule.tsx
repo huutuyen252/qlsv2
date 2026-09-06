@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Database,
   Download,
@@ -9,12 +9,7 @@ import {
   Trash2,
   FileJson,
   ShieldAlert,
-  HardDrive,
-  Cloud,
-  Flame,
-  CloudUpload,
-  ExternalLink,
-  Check,
+  HardDrive
 } from 'lucide-react';
 import { apiService } from '../../services/apiService';
 
@@ -30,52 +25,6 @@ export const AdminBackupModule: React.FC<AdminBackupModuleProps> = ({
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [isRestoring, setIsRestoring] = useState<boolean>(false);
   const [isClearing, setIsClearing] = useState<boolean>(false);
-
-  // Cloudinary & Firebase Cloud States
-  const [isCheckingCloud, setIsCheckingCloud] = useState<boolean>(false);
-  const [isSyncingFirebase, setIsSyncingFirebase] = useState<boolean>(false);
-  const [cloudStatus, setCloudStatus] = useState<any>(null);
-  const [cloudSyncMsg, setCloudSyncMsg] = useState<string | null>(null);
-
-  const fetchCloudStatus = async () => {
-    setIsCheckingCloud(true);
-    try {
-      const res = await fetch('/api/cloud/status');
-      const data = await res.json();
-      if (data.success) {
-        setCloudStatus(data.services);
-      }
-    } catch (e) {
-      console.warn('Lỗi kiểm tra cloud status:', e);
-    } finally {
-      setIsCheckingCloud(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchCloudStatus();
-  }, []);
-
-  const handleSyncFirebase = async () => {
-    setIsSyncingFirebase(true);
-    setCloudSyncMsg('Đang đồng bộ toàn bộ hồ sơ sinh viên lên Google Firebase Firestore...');
-    try {
-      const res = await fetch('/api/cloud/sync-firebase', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        setCloudSyncMsg(data.message || `Đã đồng bộ ${data.count} sinh viên lên Firebase thành công!`);
-        showToast(`Đồng bộ thành công ${data.count} hồ sơ sinh viên lên Firebase Firestore!`);
-      } else {
-        setCloudSyncMsg(`Lỗi đồng bộ: ${data.message || 'Không thể đồng bộ'}`);
-        showToast(`Lỗi: ${data.message || 'Không thể đồng bộ'}`);
-      }
-    } catch (err: any) {
-      setCloudSyncMsg(`Lỗi kết nối API: ${err.message}`);
-      showToast(`Lỗi: ${err.message}`);
-    } finally {
-      setIsSyncingFirebase(false);
-    }
-  };
 
   // Export full system snapshot as JSON
   const handleExportJSON = async () => {
@@ -267,119 +216,6 @@ export const AdminBackupModule: React.FC<AdminBackupModuleProps> = ({
               </label>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Cloud Storage (Cloudinary) & Firebase Firestore Integration */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
-              <Cloud className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <span>Lưu Trữ Đám Mây & Hồ Sơ Sinh Viên</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-mono font-bold border border-emerald-200 dark:border-emerald-800">
-                  Cloudinary & Firebase
-                </span>
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Tự động lưu trữ ảnh chân dung qua Cloudinary CDN và đồng bộ hồ sơ sinh viên an toàn lên Google Firebase Firestore
-              </p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={fetchCloudStatus}
-            disabled={isCheckingCloud}
-            className="self-start sm:self-auto px-3 py-1.5 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200 flex items-center gap-1.5 transition-all cursor-pointer"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isCheckingCloud ? 'animate-spin text-blue-600' : ''}`} />
-            <span>Làm mới trạng thái Cloud</span>
-          </button>
-        </div>
-
-        {/* 2 Service Status Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Cloudinary Box */}
-          <div className="p-4 rounded-2xl border border-sky-100 dark:border-sky-900/40 bg-sky-50/40 dark:bg-sky-950/20 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sky-700 dark:text-sky-300 font-bold text-xs">
-                <CloudUpload className="w-4 h-4 text-sky-600" />
-                <span>Cloudinary Media Storage</span>
-              </div>
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                cloudStatus?.cloudinary?.configured
-                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300'
-                  : 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300'
-              }`}>
-                {cloudStatus?.cloudinary?.configured ? 'Đã kết nối API Keys' : 'Chế độ Lưu trữ Cục bộ / Đang chờ Keys'}
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
-              Lưu trữ và tối ưu hóa ảnh đại diện sinh viên, ảnh thẻ scan tự động với băng thông CDN tốc độ cao.
-            </p>
-            <div className="pt-2 text-[10px] font-mono text-slate-500 dark:text-slate-400 flex flex-wrap gap-2">
-              <span>Thư mục: <strong className="text-slate-700 dark:text-slate-300">tdnu_students</strong></span>
-              {cloudStatus?.cloudinary?.cloudName && (
-                <span>• Cloud Name: <strong className="text-slate-700 dark:text-slate-300">{cloudStatus.cloudinary.cloudName}</strong></span>
-              )}
-            </div>
-          </div>
-
-          {/* Firebase Box */}
-          <div className="p-4 rounded-2xl border border-amber-100 dark:border-amber-900/40 bg-amber-50/40 dark:bg-amber-950/20 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300 font-bold text-xs">
-                <Flame className="w-4 h-4 text-amber-600" />
-                <span>Google Firebase Cloud Firestore</span>
-              </div>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300">
-                {cloudStatus?.firebase?.firestoreReady ? 'Firestore Sẵn sàng' : 'Đã cấu hình App'}
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
-              Lưu trữ hồ sơ sinh viên phân tán không giới hạn, sao lưu song song với PostgreSQL và bảo mật với Firebase Rules.
-            </p>
-            <div className="pt-2 text-[10px] font-mono text-slate-500 dark:text-slate-400 flex flex-wrap gap-2">
-              <span>Bộ sưu tập: <strong className="text-slate-700 dark:text-slate-300">sinhvien</strong></span>
-              <span>• Project: <strong className="text-slate-700 dark:text-slate-300">{cloudStatus?.firebase?.projectId || 'triple-network-nxctm'}</strong></span>
-            </div>
-          </div>
-        </div>
-
-        {/* Sync Action and Progress */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80">
-          <div className="space-y-0.5">
-            <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-              Đồng Bộ Hồ Sơ Sinh Viên Lên Firebase Firestore
-            </h4>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Quét toàn bộ danh sách sinh viên hiện có từ PostgreSQL và đẩy lên bộ sưu tập <code className="font-mono text-blue-600 dark:text-blue-400">/sinhvien</code> trên Firebase Cloud.
-            </p>
-            {cloudSyncMsg && (
-              <p className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400 pt-1 flex items-center gap-1">
-                <Check className="w-3.5 h-3.5" />
-                <span>{cloudSyncMsg}</span>
-              </p>
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={handleSyncFirebase}
-            disabled={isSyncingFirebase}
-            className="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm cursor-pointer shrink-0 transition-all"
-          >
-            {isSyncingFirebase ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            ) : (
-              <CloudUpload className="w-4 h-4" />
-            )}
-            <span>{isSyncingFirebase ? 'Đang đồng bộ...' : 'Đồng Bộ Tất Cả Lên Firebase'}</span>
-          </button>
         </div>
       </div>
 

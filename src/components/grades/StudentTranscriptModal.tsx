@@ -8,6 +8,7 @@ interface StudentTranscriptModalProps {
   student: SinhVien | null | undefined;
   grades: Diem[];
   subjects?: MonHoc[];
+  onDeleteGrade?: (id: string) => Promise<void>;
 }
 export const StudentTranscriptModal: React.FC<StudentTranscriptModalProps> = ({
   isOpen,
@@ -15,6 +16,7 @@ export const StudentTranscriptModal: React.FC<StudentTranscriptModalProps> = ({
   student,
   grades,
   subjects = [],
+  onDeleteGrade,
 }) => {
   if (!isOpen || !student) return null;
   const studentGrades = grades.filter(

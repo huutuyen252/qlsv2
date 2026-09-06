@@ -355,15 +355,6 @@ export default function App() {
     }
   };
 
-  const handleDeleteStudents = async (maSVs: string[]) => {
-    const results = await Promise.all(maSVs.map((maSV) => apiService.deleteStudent(maSV)));
-    const deletedCount = results.filter((result) => result.success).length;
-    if (deletedCount > 0) {
-      showToast(`Đã xóa ${deletedCount} sinh viên trong lớp`);
-      await loadAllData();
-    }
-  };
-
   const handleUploadHoSo = async (maSV: string, fileName: string, fileData?: string) => {
     const res = await apiService.uploadHoSoFile(maSV, fileName, fileData);
     if (res.success) {
@@ -712,6 +703,7 @@ export default function App() {
                   schedule={filteredSchedule}
                   subjects={subjects}
                   trainingPoints={filteredTrainingPoints}
+                  onSwitchView={setCurrentView}
                 />
               )}
 
@@ -735,7 +727,6 @@ export default function App() {
                   onAddStudent={handleAddStudent}
                   onUpdateStudent={handleUpdateStudent}
                   onDeleteStudent={handleDeleteStudent}
-                  onDeleteStudents={handleDeleteStudents}
                   onUploadHoSo={handleUploadHoSo}
                   onImportStudents={handleImportStudentsExcel}
                 />

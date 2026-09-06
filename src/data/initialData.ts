@@ -73,4 +73,3 @@ export const INITIAL_DIEM: Diem[] = [];
 export const INITIAL_REN_LUYEN: RenLuyen[] = [];
 export const INITIAL_THOI_KHOA_BIEU: ThoiKhoaBieu[] = [];
 export const INITIAL_THI_LAI_HOC_LAI: ThiLaiHocLai[] = [];
-

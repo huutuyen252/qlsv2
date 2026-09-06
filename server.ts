@@ -55,32 +55,15 @@ import {
   clearAllOperationalData,
 } from './src/db/dbOperations.ts';
 import { SinhVien, Diem, RenLuyen, ThoiKhoaBieu, ThiLaiHocLai, NamHoc, HocKy, Lop, DiemDanh, ThongBaoKiemTra, MonHoc, NghiLe } from './src/types/index.ts';
-type StorageUploadOptions = {
-  folder?: string;
-  publicId?: string;
-  resourceType?: string;
-  tags?: string[];
-};
-
-type StorageUploadResult = {
-  url: string;
-  provider: string;
-};
-
-// Cloud storage is optional; retain local data-URL support when the module is
-// unavailable in a development checkout.
-const getStorageStatus = () => ({
-  provider: 'local',
-  configured: false,
-});
-
-const uploadToCloudStorage = async (
-  fileData: string,
-  _options: StorageUploadOptions = {},
-): Promise<StorageUploadResult> => ({
-  url: fileData,
-  provider: 'local',
-});
+import { uploadToCloudStorage, getStorageStatus } from './src/lib/cloudStorage.ts';
+import {
+  normalizeClassName,
+  normalizeFacultyName,
+  CANONICAL_CLASS_CO_KHI,
+  CANONICAL_CLASS_O_TO,
+  FACULTY_CO_KHI,
+  FACULTY_O_TO,
+} from './src/utils/classHelper.ts';
 const failedLoginAttempts: Record<string, number> = {};
 async function startServer() {
   const app = express();
@@ -101,6 +84,12 @@ async function startServer() {
     }
     next();
   });
+
+  // Health check endpoint
+  app.get('/api/health', (_req: Request, res: Response) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
   app.post('/api/auth/login', async (req: Request, res: Response) => {
     try {
       const { username, password } = req.body;
@@ -389,8 +378,12 @@ async function startServer() {
     try {
       const newStudent: SinhVien = req.body;
       if (!newStudent.maSV || !newStudent.hoTen) {
-        return res.status(400).json({ success: false, message: 'MaSV và HoTen là bắt buTc' });
+        return res.status(400).json({ success: false, message: 'MaSV và HoTen là bắt buộc' });
       }
+      newStudent.maSV = newStudent.maSV.trim();
+      newStudent.hoTen = newStudent.hoTen.trim();
+      newStudent.lop = normalizeClassName(newStudent.lop) || CANONICAL_CLASS_CO_KHI;
+      newStudent.khoa = normalizeFacultyName(newStudent.khoa, newStudent.lop);
       const existing = await getSinhVienByMaSV(newStudent.maSV);
       if (existing) {
         return res.status(400).json({ success: false, message: 'Mã sinh viên đã tồn tại' });
@@ -408,13 +401,20 @@ async function startServer() {
       if (!existing) {
         return res.status(404).json({ success: false, message: 'Không tìm thấy sinh viên' });
       }
-      const updated = await updateSinhVien(maSV, req.body);
+      const updateData = { ...req.body };
+      if (updateData.lop) {
+        updateData.lop = normalizeClassName(updateData.lop);
+      }
+      if (updateData.khoa || updateData.lop) {
+        updateData.khoa = normalizeFacultyName(updateData.khoa, updateData.lop);
+      }
+      const updated = await updateSinhVien(maSV, updateData);
       const user = await getUserByUsername(maSV);
       if (user) {
         const uUpdate: any = {};
         if (req.body.hoTen) uUpdate.fullName = req.body.hoTen.trim();
         if (req.body.email) uUpdate.email = req.body.email.trim();
-        if (req.body.khoa) uUpdate.faculty = req.body.khoa.trim();
+        if (updateData.khoa) uUpdate.faculty = updateData.khoa;
         await updateUser(user.id, uUpdate);
       }
       return res.json({ success: true, message: 'Cập nhật thông tin sinh viên thành công', data: updated });
@@ -435,22 +435,24 @@ async function startServer() {
     try {
       const { students } = req.body;
       if (!Array.isArray(students) || students.length === 0) {
-        return res.status(400).json({ success: false, message: 'Dữ liệu danh sách sinh viên từ Excel không hợp l' });
+        return res.status(400).json({ success: false, message: 'Dữ liệu danh sách sinh viên từ Excel không hợp lệ' });
       }
       let importedCount = 0;
       let newUsersCreated = 0;
       for (const st of students) {
         if (st.maSV && st.hoTen) {
+          const normLop = normalizeClassName(st.lop) || CANONICAL_CLASS_CO_KHI;
+          const normKhoa = normalizeFacultyName(st.khoa, normLop);
           const studentObj = {
             maSV: st.maSV.trim(),
             hoTen: st.hoTen.trim(),
             ngaySinh: st.ngaySinh || '2007-01-01',
             gioiTinh: st.gioiTinh || 'Nam',
-            lop: st.lop || 'CNKT Cơ khí 25DDS 09041',
-            khoa: st.khoa || 'Khoa Cơ khí',
+            lop: normLop,
+            khoa: normKhoa,
             soDienThoai: st.soDienThoai || '0900000000',
             email: st.email || `${st.maSV.trim().toLowerCase()}@tdnu.edu.vn`,
-            diaChi: st.diaChi || 'TP. H" Chí Minh',
+            diaChi: st.diaChi || 'TP. Hồ Chí Minh',
             ngayNhapHoc: st.ngayNhapHoc || '2025-09-05',
             trangThai: st.trangThai || 'Đang học',
             hoSoFile: st.hoSoFile || null,
@@ -468,7 +470,7 @@ async function startServer() {
               email: st.email || `${st.maSV.trim().toLowerCase()}@tdnu.edu.vn`,
               password: '123456',
               studentCode: st.maSV.trim(),
-              faculty: st.khoa || 'Khoa Cơ khí',
+              faculty: normKhoa,
               role: 'STUDENT',
               status: 'ACTIVE',
               createdAt: new Date().toISOString().split('T')[0],
@@ -479,7 +481,7 @@ async function startServer() {
             await updateUser(existingUser.id, {
               fullName: st.hoTen.trim(),
               email: st.email || existingUser.email,
-              faculty: st.khoa || existingUser.faculty,
+              faculty: normKhoa,
             });
           }
         }
@@ -584,11 +586,30 @@ async function startServer() {
       if (student) {
         newGrade.hoTenSV = student.hoTen;
       }
+      const monHoc = await getMonHocByMaMH(newGrade.maMH);
+      if (monHoc) {
+        if (monHoc.hocKy) newGrade.hocKy = monHoc.hocKy;
+        if (monHoc.namHoc) newGrade.namHoc = monHoc.namHoc;
+        if (monHoc.tenMH) newGrade.tenMH = monHoc.tenMH;
+        if (monHoc.soTinChi) newGrade.soTinChi = monHoc.soTinChi;
+      }
       if (!newGrade.id) {
-        newGrade.id = `d-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        newGrade.id = `d-${newGrade.maSV}-${newGrade.maMH}-${newGrade.hocKy || 'HK1'}-${newGrade.namHoc || '2025-2026'}`.replace(/\s+/g, '');
       }
       const saved = await upsertDiem(newGrade);
       return res.json({ success: true, message: 'Cập nhật điểm thành công vào PostgreSQL', data: saved });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  });
+  app.delete('/api/grades/:id', async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const deleted = await deleteDiem(id);
+      if (deleted) {
+        return res.json({ success: true, message: 'Đã xóa bản ghi điểm thành công' });
+      }
+      return res.status(404).json({ success: false, message: 'Không tìm thấy bản ghi điểm để xóa' });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
     }
@@ -597,13 +618,19 @@ async function startServer() {
     try {
       const { grades } = req.body;
       if (!Array.isArray(grades) || grades.length === 0) {
-        return res.status(400).json({ success: false, message: 'Dữ liệu Excel không hợp l' });
+        return res.status(400).json({ success: false, message: 'Dữ liệu Excel không hợp lệ' });
       }
       let importedCount = 0;
       for (const g of grades) {
         if (g.maSV && g.maMH) {
           const student = await getSinhVienByMaSV(g.maSV);
           const hoTenSV = student ? student.hoTen : g.hoTenSV || '';
+          const monHoc = await getMonHocByMaMH(g.maMH);
+          const hocKy = monHoc?.hocKy || g.hocKy || 'HK1';
+          const namHoc = monHoc?.namHoc || g.namHoc || '2025-2026';
+          const tenMH = monHoc?.tenMH || g.tenMH || 'Môn học';
+          const soTinChi = monHoc?.soTinChi || Number(g.soTinChi || 3);
+
           const cc = Number(g.diemChuyenCan || 0);
           const gk = Number(g.diemGiuaKy || 0);
           const ck = Number(g.diemCuoiKy || 0);
@@ -620,14 +647,14 @@ async function startServer() {
           else if (tk10 >= 4.0) { thang4 = 1.0; chu = 'D'; trangThai = 'PASSED'; }
           else { thang4 = 0.0; chu = 'F'; trangThai = 'FAILED'; }
           const item: Diem = {
-            id: g.id || `d-${g.maSV}-${g.maMH}-${g.hocKy || 'HK1'}-${g.namHoc || '2025-2026'}`.replace(/\s+/g, ''),
+            id: g.id || `d-${g.maSV}-${g.maMH}-${hocKy}-${namHoc}`.replace(/\s+/g, ''),
             maSV: g.maSV,
             hoTenSV,
             maMH: g.maMH,
-            tenMH: g.tenMH || 'Môn học',
-            soTinChi: Number(g.soTinChi || 3),
-            hocKy: g.hocKy || 'HK1',
-            namHoc: g.namHoc || '2024-2025',
+            tenMH,
+            soTinChi,
+            hocKy,
+            namHoc,
             diemChuyenCan: cc,
             diemGiuaKy: gk,
             diemCuoiKy: ck,
@@ -642,7 +669,7 @@ async function startServer() {
       }
       return res.json({
         success: true,
-        message: `Đã import thành công ${importedCount} ầu điểm sinh viên từ Excel vào PostgreSQL`,
+        message: `Đã import thành công ${importedCount} đầu điểm sinh viên theo học kỳ & năm học của môn học vào cơ sở dữ liệu`,
         importedCount,
       });
     } catch (error: any) {
@@ -746,13 +773,13 @@ async function startServer() {
         id: `rl-${maSV}-${thang || 11}-${nam || 2024}`,
         maSV,
         hoTenSV: student ? student.hoTen : 'Sinh viên',
-        lop: student ? student.lop : 'CNKT Cơ khí 25DDS 09041',
+        lop: student ? normalizeClassName(student.lop) : CANONICAL_CLASS_CO_KHI,
         thang: Number(thang || 11),
         nam: Number(nam || 2024),
         diemRL: points,
         xepLoai,
-        nhanXet: nhanXet || 'Giảng viên đã duyệt ánh giá.',
-        nguoiDanhGia: nguoiDanhGia || 'Giảng viên Chủ nhim',
+        nhanXet: nhanXet || 'Giảng viên đã duyệt đánh giá.',
+        nguoiDanhGia: nguoiDanhGia || 'Giảng viên Chủ nhiệm',
         ngayDanhGia: new Date().toISOString().split('T')[0],
         diemMuc1: m1 || undefined,
         diemMuc2: m2 || undefined,
@@ -794,7 +821,7 @@ async function startServer() {
             id: `rl-${t.maSV}-${thangVal}-${namVal}`,
             maSV: t.maSV,
             hoTenSV: student ? student.hoTen : t.hoTenSV || 'Sinh viên',
-            lop: student ? student.lop : t.lop || 'CNKT Cơ khí 25DDS 09041',
+            lop: student ? normalizeClassName(student.lop) : normalizeClassName(t.lop) || CANONICAL_CLASS_CO_KHI,
             thang: thangVal,
             nam: namVal,
             hocKy: t.hocKy || 'HK1',
@@ -804,7 +831,7 @@ async function startServer() {
             diemMuc3: m3 || undefined,
             xepLoai,
             nhanXet: t.nhanXet || 'Đã import từ file Excel.',
-            nguoiDanhGia: t.nguoiDanhGia || 'HTi "ng Quản lý sinh viên',
+            nguoiDanhGia: t.nguoiDanhGia || 'Hội đồng Quản lý sinh viên',
             ngayDanhGia: new Date().toISOString().split('T')[0],
           };
           await upsertRenLuyen(record);
@@ -954,7 +981,7 @@ async function startServer() {
         return res.status(400).json({ success: false, message: 'Vui lòng nhập tên môn học và mđã học phần' });
       }
       const createdItems: any[] = [];
-      const targetClass = lop || lopID || 'CNKT Cơ khí 25DDS 09041';
+      const targetClass = normalizeClassName(lop || lopID) || CANONICAL_CLASS_CO_KHI;
       if (applyToClass && targetClass) {
         const allStudents = await getAllSinhVien(undefined, undefined, targetClass);
         const studentCodes = allStudents.length > 0 ? allStudents.map((s: any) => s.maSV) : [maSV || '25DDS0904103'];

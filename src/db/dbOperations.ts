@@ -1,8 +1,6 @@
 import * as dbModule from './index.ts';
 
-// Support the database export name used by the current database module while
-// keeping this operations layer compatible with older builds.
-const db = (dbModule as any).db ?? (dbModule as any).database;
+const db = (dbModule as any).db;
 const pool = (dbModule as any).pool;
 import {
   users,
