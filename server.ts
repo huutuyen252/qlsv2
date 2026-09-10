@@ -53,9 +53,13 @@ import {
   updateNghiLe,
   deleteNghiLe,
   clearAllOperationalData,
-} from './src/db/dbOperations.ts';
-import { SinhVien, Diem, RenLuyen, ThoiKhoaBieu, ThiLaiHocLai, NamHoc, HocKy, Lop, DiemDanh, ThongBaoKiemTra, MonHoc, NghiLe } from './src/types/index.ts';
-import { uploadToCloudStorage, getStorageStatus } from './src/lib/cloudStorage.ts';
+  deleteRenLuyen,
+  deleteClassRenLuyen,
+  syncTrainingPointFromAttendance,
+  syncAllTrainingPointsFromAttendance,
+} from './src/db/dbOperations';
+import { SinhVien, Diem, RenLuyen, ThoiKhoaBieu, ThiLaiHocLai, NamHoc, HocKy, Lop, DiemDanh, ThongBaoKiemTra, MonHoc, NghiLe } from './src/types/index';
+import { uploadToCloudStorage, getStorageStatus } from './src/lib/cloudStorage';
 import {
   normalizeClassName,
   normalizeFacultyName,
@@ -63,7 +67,7 @@ import {
   CANONICAL_CLASS_O_TO,
   FACULTY_CO_KHI,
   FACULTY_O_TO,
-} from './src/utils/classHelper.ts';
+} from './src/utils/classHelper';
 const failedLoginAttempts: Record<string, number> = {};
 async function startServer() {
   const app = express();
@@ -752,31 +756,36 @@ async function startServer() {
   });
   app.put('/api/training/comment', async (req: Request, res: Response) => {
     try {
-      const { maSV, thang, nam, diemRL, nhanXet, nguoiDanhGia, diemMuc1, diemMuc2, diemMuc3, hocKy } = req.body;
+      const { id, maSV, thang, nam, namHoc, diemRL, nhanXet, nguoiDanhGia, diemMuc1, diemMuc2, diemMuc3, hocKy } = req.body;
       if (!maSV) {
-        return res.status(400).json({ success: false, message: 'Mã sinh viên là bắt buTc' });
+        return res.status(400).json({ success: false, message: 'Mã sinh viên là bắt buộc' });
       }
       const m1 = Number(diemMuc1) || 0;
       const m2 = Number(diemMuc2) || 0;
       const m3 = Number(diemMuc3) || 0;
       const points = (m1 + m2 + m3 > 0) ? (m1 + m2 + m3) : Number(diemRL || 80);
-      let xepLoai = 'Tt';
-      if (points >= 90) xepLoai = 'Xuất sắc';
-      else if (points >= 80) xepLoai = 'Tt';
-      else if (points >= 70) xepLoai = 'Khá';
-      else if (points >= 60) xepLoai = 'TBK';
-      else if (points >= 50) xepLoai = 'TB';
-      else if (points >= 35) xepLoai = 'Yếu';
+      const finalPoints = Math.min(100, Math.max(0, points));
+      
+      // Xếp loại theo Điều 16 Quy chế 1519/QC-TĐN
+      let xepLoai = 'Kém';
+      if (finalPoints >= 90) xepLoai = 'Xuất sắc';
+      else if (finalPoints >= 80) xepLoai = 'Tốt';
+      else if (finalPoints >= 65) xepLoai = 'Khá';
+      else if (finalPoints >= 50) xepLoai = 'Trung bình';
+      else if (finalPoints >= 35) xepLoai = 'Yếu';
       else xepLoai = 'Kém';
+
       const student = await getSinhVienByMaSV(maSV);
+      const recordId = id || `rl-${maSV}-${thang || 11}-${nam || 2026}`;
       const record: RenLuyen = {
-        id: `rl-${maSV}-${thang || 11}-${nam || 2024}`,
+        id: recordId,
         maSV,
         hoTenSV: student ? student.hoTen : 'Sinh viên',
         lop: student ? normalizeClassName(student.lop) : CANONICAL_CLASS_CO_KHI,
         thang: Number(thang || 11),
-        nam: Number(nam || 2024),
-        diemRL: points,
+        nam: Number(nam || 2026),
+        namHoc: namHoc || (Number(nam) >= 2026 ? '2026-2027' : `${nam}-${Number(nam)+1}`),
+        diemRL: finalPoints,
         xepLoai,
         nhanXet: nhanXet || 'Giảng viên đã duyệt đánh giá.',
         nguoiDanhGia: nguoiDanhGia || 'Giảng viên Chủ nhiệm',
@@ -787,16 +796,99 @@ async function startServer() {
         hocKy: hocKy || 'HK1',
       };
       const saved = await upsertRenLuyen(record);
-      return res.json({ success: true, message: 'Đã cập nhật nhận xét và điểm rèn luyện vào PostgreSQL', data: saved });
+      return res.json({ success: true, message: 'Đã cập nhật nhận xét và điểm rèn luyện vào cơ sở dữ liệu', data: saved });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
+
+  // PUT /api/training/:id - Chỉnh sửa thông tin điểm rèn luyện cá nhân
+  app.put('/api/training/:id', async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const data = req.body;
+      const m1 = Number(data.diemMuc1) || 0;
+      const m2 = Number(data.diemMuc2) || 0;
+      const m3 = Number(data.diemMuc3) || 0;
+      const points = (m1 + m2 + m3 > 0) ? (m1 + m2 + m3) : Number(data.diemRL ?? 80);
+      const finalPoints = Math.min(100, Math.max(0, points));
+
+      let xepLoai = 'Kém';
+      if (finalPoints >= 90) xepLoai = 'Xuất sắc';
+      else if (finalPoints >= 80) xepLoai = 'Tốt';
+      else if (finalPoints >= 65) xepLoai = 'Khá';
+      else if (finalPoints >= 50) xepLoai = 'Trung bình';
+      else if (finalPoints >= 35) xepLoai = 'Yếu';
+      else xepLoai = 'Kém';
+
+      const student = data.maSV ? await getSinhVienByMaSV(data.maSV) : null;
+      const updatedRecord: RenLuyen = {
+        id,
+        maSV: data.maSV,
+        hoTenSV: student ? student.hoTen : (data.hoTenSV || 'Sinh viên'),
+        lop: student ? normalizeClassName(student.lop) : (normalizeClassName(data.lop) || CANONICAL_CLASS_CO_KHI),
+        thang: Number(data.thang || 8),
+        nam: Number(data.nam || 2026),
+        namHoc: data.namHoc || '2026-2027',
+        diemRL: finalPoints,
+        xepLoai: data.xepLoai && data.xepLoai !== 'Tt' ? data.xepLoai : xepLoai,
+        nhanXet: data.nhanXet || 'Đã cập nhật thông tin đánh giá.',
+        nguoiDanhGia: data.nguoiDanhGia || 'Hội đồng Quản lý sinh viên',
+        ngayDanhGia: data.ngayDanhGia || new Date().toISOString().split('T')[0],
+        diemMuc1: m1 || undefined,
+        diemMuc2: m2 || undefined,
+        diemMuc3: m3 || undefined,
+        hocKy: data.hocKy || 'HK1',
+      };
+      const saved = await upsertRenLuyen(updatedRecord);
+      return res.json({ success: true, message: 'Đã cập nhật điểm rèn luyện cá nhân thành công', data: saved });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  // DELETE /api/training/:id - Xóa điểm rèn luyện của một cá nhân
+  app.delete('/api/training/:id', async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (!id) {
+        return res.status(400).json({ success: false, message: 'Thiếu ID bản ghi cần xóa' });
+      }
+      await deleteRenLuyen(id);
+      return res.json({ success: true, message: 'Đã xóa bản ghi điểm rèn luyện thành công' });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  // DELETE /api/training/class - Xóa điểm rèn luyện của cả lớp (có thể lọc theo tháng, năm, học kỳ)
+  app.delete('/api/training-class/delete', async (req: Request, res: Response) => {
+    try {
+      const { lop, thang, nam, hocKy } = req.query;
+      if (!lop) {
+        return res.status(400).json({ success: false, message: 'Vui lòng cung cấp mã lớp cần xóa' });
+      }
+      const count = await deleteClassRenLuyen(
+        lop as string,
+        thang ? Number(thang) : undefined,
+        nam ? Number(nam) : undefined,
+        hocKy as string
+      );
+      return res.json({
+        success: true,
+        message: `Đã xóa thành công ${count} bản ghi điểm rèn luyện của lớp ${lop}`,
+        deletedCount: count,
+      });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
   app.post('/api/training/import', async (req: Request, res: Response) => {
     try {
       const { training } = req.body;
       if (!Array.isArray(training) || training.length === 0) {
-        return res.status(400).json({ success: false, message: 'Dữ liệu điểm rèn luyện từ Excel không hợp l' });
+        return res.status(400).json({ success: false, message: 'Dữ liệu điểm rèn luyện từ Excel không hợp lệ' });
       }
       let importedCount = 0;
       for (const t of training) {
@@ -807,16 +899,48 @@ async function startServer() {
           const m3 = Number(t.diemMuc3) || 0;
           const points = (m1 + m2 + m3 > 0) ? (m1 + m2 + m3) : Number(t.diemRL || 80);
           const finalPoints = Math.min(100, Math.max(0, points));
-          let xepLoai = 'Tt';
+
+          // Xếp loại chuẩn Điều 16 Quy chế 1519/QC-TĐN
+          let xepLoai = 'Kém';
           if (finalPoints >= 90) xepLoai = 'Xuất sắc';
-          else if (finalPoints >= 80) xepLoai = 'Tt';
-          else if (finalPoints >= 70) xepLoai = 'Khá';
-          else if (finalPoints >= 60) xepLoai = 'TBK';
-          else if (finalPoints >= 50) xepLoai = 'TB';
+          else if (finalPoints >= 80) xepLoai = 'Tốt';
+          else if (finalPoints >= 65) xepLoai = 'Khá';
+          else if (finalPoints >= 50) xepLoai = 'Trung bình';
           else if (finalPoints >= 35) xepLoai = 'Yếu';
           else xepLoai = 'Kém';
-          const thangVal = Number(t.thang || 11);
-          const namVal = Number(t.nam || 2025);
+
+          // Bóc tách tháng chuẩn xác
+          let thangVal = 8;
+          if (t.thang !== undefined && t.thang !== null && t.thang !== '') {
+            const matchMonth = String(t.thang).match(/(\d+)/);
+            if (matchMonth) {
+              thangVal = parseInt(matchMonth[1], 10);
+            }
+          }
+
+          // Xử lý năm học và năm dương lịch để tránh lỗi 'Tháng 8/2025' khi nhập vào năm học 2026-2027
+          let namHocVal = t.namHoc ? String(t.namHoc).trim() : '';
+          const namStr = String(t.nam || '');
+          if (!namHocVal && namStr.includes('-')) {
+            namHocVal = namStr;
+          }
+
+          let namVal = 2026;
+          if (namHocVal) {
+            const startYearMatch = namHocVal.match(/(\d{4})/);
+            const startYear = startYearMatch ? parseInt(startYearMatch[1], 10) : 2026;
+            // Năm học ví dụ 2026-2027:
+            // Tháng 8, 9, 10, 11, 12 thuộc năm dương lịch 2026 (HK1)
+            // Tháng 1, 2, 3, 4, 5, 6, 7 thuộc năm dương lịch 2027 (HK2)
+            namVal = thangVal >= 8 ? startYear : startYear + 1;
+          } else if (!isNaN(Number(t.nam)) && Number(t.nam) > 2000) {
+            namVal = Number(t.nam);
+            namHocVal = thangVal >= 8 ? `${namVal}-${namVal + 1}` : `${namVal - 1}-${namVal}`;
+          } else {
+            namVal = thangVal >= 8 ? 2026 : 2027;
+            namHocVal = '2026-2027';
+          }
+
           const record: RenLuyen = {
             id: `rl-${t.maSV}-${thangVal}-${namVal}`,
             maSV: t.maSV,
@@ -824,7 +948,8 @@ async function startServer() {
             lop: student ? normalizeClassName(student.lop) : normalizeClassName(t.lop) || CANONICAL_CLASS_CO_KHI,
             thang: thangVal,
             nam: namVal,
-            hocKy: t.hocKy || 'HK1',
+            namHoc: namHocVal,
+            hocKy: t.hocKy || (thangVal >= 8 ? 'HK1' : 'HK2'),
             diemRL: finalPoints,
             diemMuc1: m1 || undefined,
             diemMuc2: m2 || undefined,
@@ -840,7 +965,7 @@ async function startServer() {
       }
       return res.json({
         success: true,
-        message: `Đã import thành công ${importedCount} ánh giá điểm rèn luyện vào PostgreSQL!`,
+        message: `Đã import thành công ${importedCount} đánh giá điểm rèn luyện vào cơ sở dữ liệu!`,
         importedCount,
       });
     } catch (error: any) {
@@ -1167,7 +1292,7 @@ async function startServer() {
     try {
       const { id, maSV, hoTenSV, maMH, tenMH, lop, ngay, soTietNghi, coPhep, ghiChu, nguoiDiemDanh } = req.body;
       if (!maSV || !maMH || !ngay) {
-        return res.status(400).json({ success: false, message: 'Thiếu thông tin điểm danh bắt buTc' });
+        return res.status(400).json({ success: false, message: 'Thiếu thông tin điểm danh bắt buộc' });
       }
       const item = {
         id: id || `dd-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -1184,7 +1309,14 @@ async function startServer() {
         createdAt: new Date().toISOString(),
       };
       const saved = await createDiemDanh(item);
-      return res.status(201).json({ success: true, message: 'Ghi nhận điểm danh thành công vào PostgreSQL', data: saved });
+      // Auto-calculate & sync student training points (Mục I: Chuyên cần & Ý thức học tập)
+      const syncedRL = await syncTrainingPointFromAttendance(item.maSV, item.lop, item.ngay);
+      return res.status(201).json({
+        success: true,
+        message: 'Ghi nhận điểm danh và cập nhật điểm rèn luyện chuyên cần thành công',
+        data: saved,
+        trainingPoint: syncedRL,
+      });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
     }
@@ -1193,7 +1325,21 @@ async function startServer() {
     try {
       const { id } = req.params;
       await deleteDiemDanh(id);
-      return res.json({ success: true, message: 'Đã xóa bản ghi điểm danh khỏi PostgreSQL' });
+      await syncAllTrainingPointsFromAttendance();
+      return res.json({ success: true, message: 'Đã xóa bản ghi điểm danh và cập nhật lại điểm rèn luyện chuyên cần' });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  });
+  app.post(['/api/attendance/sync-training-points', '/api/diemdanh/sync-training-points'], async (req: Request, res: Response) => {
+    try {
+      const results = await syncAllTrainingPointsFromAttendance();
+      return res.json({
+        success: true,
+        message: `Đã đồng bộ điểm rèn luyện chuyên cần cho ${results.length} sinh viên`,
+        count: results.length,
+        data: results,
+      });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
     }

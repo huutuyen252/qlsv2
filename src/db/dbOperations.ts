@@ -1,4 +1,6 @@
-import * as dbModule from './index.ts';
+import * as dbModule from './index';
+import fs from 'fs';
+import path from 'path';
 
 const db = (dbModule as any).db;
 const pool = (dbModule as any).pool;
@@ -16,9 +18,12 @@ import {
   diemDanh,
   thongBaoKiemTra,
   nghiLe,
-} from './schema.ts';
+} from './schema';
 import { eq, and, sql, ilike, or } from 'drizzle-orm';
-import { INITIAL_USERS } from '../data/initialData.ts';
+import { INITIAL_USERS } from '../data/initialData';
+
+// Persistent storage file for uninterrupted durability
+const DATA_STORE_PATH = path.join(process.cwd(), '.app_data_storage.json');
 
 // In-memory fallback repositories
 let memoryUsers: any[] = [...INITIAL_USERS];
@@ -34,6 +39,57 @@ let memoryLop: any[] = [];
 let memoryDiemDanh: any[] = [];
 let memoryThongBaoKiemTra: any[] = [];
 let memoryNghiLe: any[] = [];
+
+export function saveToDisk() {
+  try {
+    const payload = {
+      memoryUsers,
+      memorySinhVien,
+      memoryMonHoc,
+      memoryDiem,
+      memoryRenLuyen,
+      memoryThoiKhoaBieu,
+      memoryThiLaiHocLai,
+      memoryNamHoc,
+      memoryHocKy,
+      memoryLop,
+      memoryDiemDanh,
+      memoryThongBaoKiemTra,
+      memoryNghiLe,
+    };
+    fs.writeFileSync(DATA_STORE_PATH, JSON.stringify(payload, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('[Storage] Error persisting data store to disk:', err);
+  }
+}
+
+export function loadFromDisk() {
+  try {
+    if (fs.existsSync(DATA_STORE_PATH)) {
+      const raw = fs.readFileSync(DATA_STORE_PATH, 'utf-8');
+      const data = JSON.parse(raw);
+      if (Array.isArray(data.memoryUsers) && data.memoryUsers.length > 0) memoryUsers = data.memoryUsers;
+      if (Array.isArray(data.memorySinhVien)) memorySinhVien = data.memorySinhVien;
+      if (Array.isArray(data.memoryMonHoc)) memoryMonHoc = data.memoryMonHoc;
+      if (Array.isArray(data.memoryDiem)) memoryDiem = data.memoryDiem;
+      if (Array.isArray(data.memoryRenLuyen)) memoryRenLuyen = data.memoryRenLuyen;
+      if (Array.isArray(data.memoryThoiKhoaBieu)) memoryThoiKhoaBieu = data.memoryThoiKhoaBieu;
+      if (Array.isArray(data.memoryThiLaiHocLai)) memoryThiLaiHocLai = data.memoryThiLaiHocLai;
+      if (Array.isArray(data.memoryNamHoc)) memoryNamHoc = data.memoryNamHoc;
+      if (Array.isArray(data.memoryHocKy)) memoryHocKy = data.memoryHocKy;
+      if (Array.isArray(data.memoryLop)) memoryLop = data.memoryLop;
+      if (Array.isArray(data.memoryDiemDanh)) memoryDiemDanh = data.memoryDiemDanh;
+      if (Array.isArray(data.memoryThongBaoKiemTra)) memoryThongBaoKiemTra = data.memoryThongBaoKiemTra;
+      if (Array.isArray(data.memoryNghiLe)) memoryNghiLe = data.memoryNghiLe;
+      console.log(`[Storage] Loaded persistent store: ${memorySinhVien.length} SV, ${memoryDiemDanh.length} điểm danh, ${memoryThongBaoKiemTra.length} thông báo KT`);
+    }
+  } catch (err) {
+    console.warn('[Storage] Error reading persistent store:', err);
+  }
+}
+
+// Automatically load from disk on boot
+loadFromDisk();
 
 export async function ensureDatabaseSchema() {
   if (!pool) return;
@@ -652,10 +708,60 @@ export async function upsertRenLuyen(data: any) {
   const idx = memoryRenLuyen.findIndex((r) => r.id === record.id);
   if (idx !== -1) {
     memoryRenLuyen[idx] = { ...memoryRenLuyen[idx], ...record };
+    saveToDisk();
     return memoryRenLuyen[idx];
   }
   memoryRenLuyen.push(record);
+  saveToDisk();
   return record;
+}
+
+export async function deleteRenLuyen(id: string): Promise<boolean> {
+  if (db) {
+    try {
+      await db.delete(renLuyen).where(eq(renLuyen.id, id));
+    } catch {
+      // fallback
+    }
+  }
+  const initialLen = memoryRenLuyen.length;
+  memoryRenLuyen = memoryRenLuyen.filter((r) => r.id !== id);
+  saveToDisk();
+  return true;
+}
+
+export async function deleteClassRenLuyen(
+  lop: string,
+  thang?: number,
+  nam?: number,
+  hocKy?: string
+): Promise<number> {
+  const normLop = lop.trim().toLowerCase();
+  let deletedCount = 0;
+  if (db) {
+    try {
+      const conditions = [ilike(renLuyen.lop, `%${normLop}%`)];
+      if (thang !== undefined && !isNaN(thang)) conditions.push(eq(renLuyen.thang, thang));
+      if (nam !== undefined && !isNaN(nam)) conditions.push(eq(renLuyen.nam, nam));
+      if (hocKy && hocKy.trim() && hocKy !== 'ALL') conditions.push(eq(renLuyen.hocKy, hocKy.trim()));
+      await db.delete(renLuyen).where(and(...conditions));
+    } catch {
+      // fallback
+    }
+  }
+  const prevCount = memoryRenLuyen.length;
+  memoryRenLuyen = memoryRenLuyen.filter((r) => {
+    const matchLop = !lop || (r.lop && r.lop.toLowerCase().includes(normLop));
+    const matchThang = thang === undefined || isNaN(thang) || r.thang === thang;
+    const matchNam = nam === undefined || isNaN(nam) || r.nam === nam;
+    const matchHocKy = !hocKy || hocKy === 'ALL' || r.hocKy === hocKy;
+    if (matchLop && matchThang && matchNam && matchHocKy) {
+      deletedCount++;
+      return false;
+    }
+    return true;
+  });
+  return Math.max(deletedCount, prevCount - memoryRenLuyen.length);
 }
 
 export async function getAllThoiKhoaBieu(maSV?: string, lop?: string, hocKy?: string, namHoc?: string) {
@@ -1065,6 +1171,7 @@ export async function createDiemDanh(data: any) {
         .values(item)
         .onConflictDoUpdate({ target: diemDanh.id, set: item })
         .returning();
+      saveToDisk();
       return res[0];
     } catch {
       // fallback
@@ -1073,9 +1180,11 @@ export async function createDiemDanh(data: any) {
   const idx = memoryDiemDanh.findIndex((d) => d.id === item.id);
   if (idx !== -1) {
     memoryDiemDanh[idx] = { ...memoryDiemDanh[idx], ...item };
+    saveToDisk();
     return memoryDiemDanh[idx];
   }
   memoryDiemDanh.push(item);
+  saveToDisk();
   return item;
 }
 
@@ -1083,12 +1192,12 @@ export async function deleteDiemDanh(id: string) {
   if (db) {
     try {
       await db.delete(diemDanh).where(eq(diemDanh.id, id));
-      return true;
     } catch {
       // fallback
     }
   }
   memoryDiemDanh = memoryDiemDanh.filter((d) => d.id !== id);
+  saveToDisk();
   return true;
 }
 
@@ -1112,12 +1221,14 @@ export async function createThongBaoKiemTra(data: any) {
   if (db) {
     try {
       const res = await db.insert(thongBaoKiemTra).values(item).returning();
+      saveToDisk();
       return res[0];
     } catch {
       // fallback
     }
   }
   memoryThongBaoKiemTra.push(item);
+  saveToDisk();
   return item;
 }
 
@@ -1125,12 +1236,12 @@ export async function deleteThongBaoKiemTra(id: string) {
   if (db) {
     try {
       await db.delete(thongBaoKiemTra).where(eq(thongBaoKiemTra.id, id));
-      return true;
     } catch {
       // fallback
     }
   }
   memoryThongBaoKiemTra = memoryThongBaoKiemTra.filter((t) => t.id !== id);
+  saveToDisk();
   return true;
 }
 
@@ -1161,12 +1272,14 @@ export async function createNghiLe(data: any) {
   if (db) {
     try {
       await db.insert(nghiLe).values(item);
+      saveToDisk();
       return item;
     } catch {
       // fallback
     }
   }
   memoryNghiLe = [item, ...memoryNghiLe.filter((h) => h.id !== item.id)];
+  saveToDisk();
   return item;
 }
 
@@ -1175,6 +1288,7 @@ export async function updateNghiLe(id: string, data: any) {
     try {
       await db.update(nghiLe).set(data).where(eq(nghiLe.id, id));
       const found = await db.select().from(nghiLe).where(eq(nghiLe.id, id)).limit(1);
+      saveToDisk();
       return found[0] || null;
     } catch {
       // fallback
@@ -1183,6 +1297,7 @@ export async function updateNghiLe(id: string, data: any) {
   const idx = memoryNghiLe.findIndex((h) => h.id === id);
   if (idx !== -1) {
     memoryNghiLe[idx] = { ...memoryNghiLe[idx], ...data };
+    saveToDisk();
     return memoryNghiLe[idx];
   }
   return null;
@@ -1192,13 +1307,117 @@ export async function deleteNghiLe(id: string) {
   if (db) {
     try {
       await db.delete(nghiLe).where(eq(nghiLe.id, id));
-      return true;
     } catch {
       // fallback
     }
   }
   memoryNghiLe = memoryNghiLe.filter((h) => h.id !== id);
+  saveToDisk();
   return true;
+}
+
+// Automatically sync and calculate training points (Mục I: Ý thức học tập & kỷ luật chuyên cần) from attendance
+export async function syncTrainingPointFromAttendance(maSV: string, lop?: string, dateStr?: string) {
+  if (!maSV) return null;
+  try {
+    const studentRecords = await getAllDiemDanh(maSV);
+    const date = dateStr ? new Date(dateStr) : new Date();
+    const thang = isNaN(date.getTime()) ? new Date().getMonth() + 1 : date.getMonth() + 1;
+    const nam = isNaN(date.getTime()) ? new Date().getFullYear() : date.getFullYear();
+    const namHoc = thang >= 8 ? `${nam}-${nam + 1}` : `${nam - 1}-${nam}`;
+    const hocKy = (thang >= 8 || thang <= 1) ? 'HK1' : 'HK2';
+
+    // Filter attendance records for this month
+    const monthRecords = studentRecords.filter((r) => {
+      if (!r.ngay) return false;
+      const d = new Date(r.ngay);
+      return d.getMonth() + 1 === thang && d.getFullYear() === nam;
+    });
+
+    const targetRecords = monthRecords.length > 0 ? monthRecords : studentRecords;
+    let unexcusedCount = 0;
+    let excusedCount = 0;
+    let totalMissedPeriods = 0;
+
+    targetRecords.forEach((r) => {
+      const missed = Number(r.soTietNghi) || 0;
+      totalMissedPeriods += missed;
+      if (missed > 0) {
+        if (r.coPhep) {
+          excusedCount += 1;
+        } else {
+          unexcusedCount += 1;
+        }
+      }
+    });
+
+    // Muc 1: Ý thức học tập & kỷ luật chuyên cần (Tối đa 40 điểm)
+    // Chuẩn: 40 điểm nếu không vắng. Trừ 4 điểm mỗi lần vắng không phép, trừ 1.5 điểm mỗi lần vắng có phép
+    let diemMuc1 = 40 - (unexcusedCount * 4 + excusedCount * 1.5);
+    diemMuc1 = Math.max(10, Math.min(40, Math.round(diemMuc1)));
+
+    // Look for existing training point record for this student and month
+    const existingList = await getAllRenLuyen(maSV, thang, nam);
+    const existing = existingList && existingList.length > 0 ? existingList[0] : null;
+
+    const diemMuc2 = existing?.diemMuc2 !== undefined ? Number(existing.diemMuc2) : 30; // Max 35
+    const diemMuc3 = existing?.diemMuc3 !== undefined ? Number(existing.diemMuc3) : 20; // Max 25
+    const diemRL = Math.min(100, Math.max(0, diemMuc1 + diemMuc2 + diemMuc3));
+
+    let xepLoai = 'Xuất sắc';
+    if (diemRL < 35) xepLoai = 'Kém';
+    else if (diemRL < 50) xepLoai = 'Yếu';
+    else if (diemRL < 65) xepLoai = 'Trung bình';
+    else if (diemRL < 80) xepLoai = 'Khá';
+    else if (diemRL < 90) xepLoai = 'Tốt';
+
+    const note = totalMissedPeriods === 0
+      ? 'Chuyên cần tốt, tham gia đầy đủ các buổi học theo TKB (Điểm chuyên cần: 40/40).'
+      : `Điểm danh: Vắng ${totalMissedPeriods} tiết (${excusedCount} có phép, ${unexcusedCount} không phép). Điểm ý thức học tập & chuyên cần: ${diemMuc1}/40.`;
+
+    const payload = {
+      id: existing?.id || `rl-att-${maSV}-${thang}-${nam}`,
+      maSV,
+      lop: lop || existing?.lop || '',
+      thang,
+      nam,
+      namHoc: existing?.namHoc || namHoc,
+      hocKy: existing?.hocKy || hocKy,
+      diemMuc1,
+      diemMuc2,
+      diemMuc3,
+      diemRL,
+      xepLoai,
+      nhanXet: note,
+      nguoiDanhGia: existing?.nguoiDanhGia || 'Hệ thống Điểm danh (Tự động)',
+      ngayDanhGia: new Date().toISOString().split('T')[0],
+    };
+
+    const saved = await upsertRenLuyen(payload);
+    saveToDisk();
+    return saved;
+  } catch (err) {
+    console.warn('[SyncTrainingPoint] Error:', err);
+    return null;
+  }
+}
+
+export async function syncAllTrainingPointsFromAttendance() {
+  const allAtt = await getAllDiemDanh();
+  const studentsWithAtt = Array.from(new Set(allAtt.map((a) => String(a.maSV)))) as string[];
+  const results = [];
+  for (const maSV of studentsWithAtt) {
+    const studentRecords = allAtt.filter((a) => a.maSV === maSV);
+    const first = studentRecords[0];
+    const synced = await syncTrainingPointFromAttendance(
+      maSV,
+      first?.lop ? String(first.lop) : undefined,
+      first?.ngay ? String(first.ngay) : undefined
+    );
+    if (synced) results.push(synced);
+  }
+  saveToDisk();
+  return results;
 }
 
 export async function clearAllOperationalData() {
@@ -1232,5 +1451,6 @@ export async function clearAllOperationalData() {
   memoryNamHoc = [];
   memoryLop = [];
   memoryUsers = memoryUsers.filter((u) => u.role === 'ADMIN');
+  saveToDisk();
   return true;
 }

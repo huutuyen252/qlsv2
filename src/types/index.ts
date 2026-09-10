@@ -92,8 +92,9 @@ export interface RenLuyen {
   lop?: string;
   thang: number;
   nam: number;
+  namHoc?: string; // Ví dụ '2026-2027', '2025-2026'
   diemRL: number;
-  xepLoai: 'Xuất sắc' | 'Tốt' | 'Tt' | 'Khá' | 'TBK' | 'TB' | 'Yếu' | 'Kém' | string;
+  xepLoai: 'Xuất sắc' | 'Tốt' | 'Khá' | 'Trung bình' | 'Yếu' | 'Kém' | string;
   nhanXet: string;
   nguoiDanhGia: string;
   ngayDanhGia: string;
@@ -215,7 +216,7 @@ export interface GpaSummary {
   tongTinChiTichLuy: number;
   diemTBTichLuyThang10: number;
   diemTBTichLuyThang4: number;
-  xepLoaiHocLuc: 'Xuất sắc' | 'Giỏi' | 'Khá' | 'Trung bình' | 'Yếu' | 'Chưa có điểm';
+  xepLoaiHocLuc: 'Xuất sắc' | 'Giỏi' | 'Khá' | 'Trung bình Khá' | 'Trung bình' | 'Yếu' | 'Kém' | 'Chưa có điểm';
   soMonNoTinChi: number;
 }
 
@@ -226,7 +227,7 @@ export interface SemesterGpaSummary {
   tongTinChiTichLuy: number;
   diemTBHocKyThang10: number;
   diemTBHocKyThang4: number;
-  xepLoaiHocKy: 'Xuất sắc' | 'Giỏi' | 'Khá' | 'Trung bình' | 'Yếu' | 'Chưa có điểm';
+  xepLoaiHocKy: 'Xuất sắc' | 'Giỏi' | 'Khá' | 'Trung bình Khá' | 'Trung bình' | 'Yếu' | 'Kém' | 'Chưa có điểm';
   soMonHoc: number;
   soMonDat: number;
   soMonKhongDat: number;
@@ -239,7 +240,7 @@ export interface YearGpaSummary {
   tongTinChiTichLuy: number;
   diemTBNamHocThang10: number;
   diemTBNamHocThang4: number;
-  xepLoaiNamHoc: 'Xuất sắc' | 'Giỏi' | 'Khá' | 'Trung bình' | 'Yếu' | 'Chưa có điểm';
+  xepLoaiNamHoc: 'Xuất sắc' | 'Giỏi' | 'Khá' | 'Trung bình Khá' | 'Trung bình' | 'Yếu' | 'Kém' | 'Chưa có điểm';
   soMonHoc: number;
   hocKySummaries: SemesterGpaSummary[];
 }

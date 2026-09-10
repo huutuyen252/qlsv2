@@ -688,7 +688,7 @@ export const StudentGradeView: React.FC<StudentGradeViewProps> = ({
                   }`}
                 >
                   <BookOpen className="w-3.5 h-3.5" />
-                  <span>Bảng Hợp Nhất MTt Trang</span>
+                  <span>Bảng Hợp Nhất Một Trang</span>
                 </button>
               </div>
             </div>

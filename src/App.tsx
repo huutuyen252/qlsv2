@@ -355,6 +355,15 @@ export default function App() {
     }
   };
 
+  const handleDeleteClassStudents = async (lop: string) => {
+    const studentsInClass = students.filter((s) => s.lop === lop);
+    for (const s of studentsInClass) {
+      await apiService.deleteStudent(s.maSV);
+    }
+    showToast(`Đã xóa toàn bộ ${studentsInClass.length} sinh viên trong lớp ${lop}. Lớp học vẫn được giữ lại.`);
+    loadAllData();
+  };
+
   const handleUploadHoSo = async (maSV: string, fileName: string, fileData?: string) => {
     const res = await apiService.uploadHoSoFile(maSV, fileName, fileData);
     if (res.success) {
@@ -422,6 +431,36 @@ export default function App() {
       loadAllData();
     } else {
       showToast(res.message || 'Import thất bại');
+    }
+  };
+
+  const handleUpdateTrainingPoint = async (id: string, data: Partial<RenLuyen>) => {
+    const res = await apiService.updateTrainingPoint(id, data);
+    if (res.success) {
+      showToast(res.message || 'Đã cập nhật điểm rèn luyện');
+      loadAllData();
+    } else {
+      showToast(res.message || 'Cập nhật thất bại');
+    }
+  };
+
+  const handleDeleteTrainingPoint = async (id: string) => {
+    const res = await apiService.deleteTrainingPoint(id);
+    if (res.success) {
+      showToast(res.message || 'Đã xóa điểm rèn luyện');
+      loadAllData();
+    } else {
+      showToast(res.message || 'Xóa thất bại');
+    }
+  };
+
+  const handleDeleteClassTrainingPoints = async (lop: string, params?: { thang?: number; nam?: number; hocKy?: string }) => {
+    const res = await apiService.deleteClassTrainingPoints(lop, params);
+    if (res.success) {
+      showToast(res.message || `Đã xóa điểm rèn luyện của lớp ${lop}`);
+      loadAllData();
+    } else {
+      showToast(res.message || 'Xóa điểm rèn luyện thất bại');
     }
   };
 
@@ -727,6 +766,7 @@ export default function App() {
                   onAddStudent={handleAddStudent}
                   onUpdateStudent={handleUpdateStudent}
                   onDeleteStudent={handleDeleteStudent}
+                  onDeleteClassStudents={handleDeleteClassStudents}
                   onUploadHoSo={handleUploadHoSo}
                   onImportStudents={handleImportStudentsExcel}
                 />
@@ -763,6 +803,10 @@ export default function App() {
                   currentUser={currentUser}
                   onSaveComment={handleSaveTrainingComment}
                   onImportExcel={handleImportTrainingExcel}
+                  onUpdateTrainingPoint={handleUpdateTrainingPoint}
+                  onDeleteTrainingPoint={handleDeleteTrainingPoint}
+                  onDeleteClassTrainingPoints={handleDeleteClassTrainingPoints}
+                  onRefreshData={loadAllData}
                 />
               )}
 
@@ -801,6 +845,14 @@ export default function App() {
               )}
             </main>
           </div>
+
+          {/* Footer */}
+          <footer className="mt-auto border-t border-slate-200/80 dark:border-slate-800/80 py-4 px-4 text-center text-xs text-slate-500 dark:text-slate-400 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xs">
+            <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
+              <span>Trường ĐH Trần Đại Nghĩa • Cổng thông tin Quản lý Đào tạo & Điểm Rèn Luyện</span>
+              <span className="font-semibold text-slate-600 dark:text-slate-300">TDNU EDU © 2026</span>
+            </div>
+          </footer>
         </>
       )}
 

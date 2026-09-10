@@ -218,7 +218,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                 Tài khoản do Admin cấp & quản lý
               </span>
-              <span>TDNU EDU © 2024</span>
+              <span>TDNU EDU © 2026</span>
             </div>
           </div>
         </div>

@@ -191,7 +191,7 @@ export const ScheduleFileUploadModal: React.FC<ScheduleFileUploadModalProps> = (
   const handleImport = async () => {
     const selectedItems = parsedData.filter(i => i.selected);
     if (selectedItems.length === 0) {
-      showToast('Vui lòng chọn ít nhất mTt môn học f tải lên');
+      showToast('Vui lòng chọn ít nhất một môn học để tải lên');
       return;
     }
     setIsSubmitting(true);
@@ -291,7 +291,7 @@ export const ScheduleFileUploadModal: React.FC<ScheduleFileUploadModalProps> = (
               Chọn hoặc Kéo thả file Excel (.xlsx, .xls) hoặc PDF Thời khóa biểu
             </p>
             <p className="text-[11px] text-zinc-500 mt-1">
-              Hệ thống sẽ tự Tổng bóc tách các cTt: Mã MH, Tên môn học, Tiết học, Phòng học, Giảng viên, Tuần.
+              Hệ thống sẽ tự động bóc tách các cột: Mã MH, Tên môn học, Tiết học, Phòng học, Giảng viên, Tuần.
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3 mt-4">
               <button

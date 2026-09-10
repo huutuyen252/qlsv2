@@ -1,27 +1,63 @@
 import { Diem, SinhVien, GpaSummary, SemesterGpaSummary, YearGpaSummary } from '../types';
 import * as XLSX from 'xlsx';
-export function convertGradeScale(diem10: number): {
+export function convertGradeScale(diem10: number, isDATN: boolean = false): {
   thang4: number;
   diemChu: string;
   trangThai: 'PASSED' | 'FAILED';
 } {
-  const tk10 = Math.round(Number(diem10 || 0) * 10) / 10;
+  const tk10 = Math.round(Number(diem10 || 0) * 100) / 100;
   if (tk10 >= 8.5) return { thang4: 4.0, diemChu: 'A', trangThai: 'PASSED' };
   if (tk10 >= 8.0) return { thang4: 3.5, diemChu: 'B+', trangThai: 'PASSED' };
   if (tk10 >= 7.0) return { thang4: 3.0, diemChu: 'B', trangThai: 'PASSED' };
   if (tk10 >= 6.5) return { thang4: 2.5, diemChu: 'C+', trangThai: 'PASSED' };
   if (tk10 >= 5.5) return { thang4: 2.0, diemChu: 'C', trangThai: 'PASSED' };
-  if (tk10 >= 5.0) return { thang4: 1.5, diemChu: 'D+', trangThai: 'PASSED' };
-  if (tk10 >= 4.0) return { thang4: 1.0, diemChu: 'D', trangThai: 'PASSED' };
+  if (tk10 >= 5.0) return { thang4: 1.5, diemChu: 'D+', trangThai: isDATN ? 'FAILED' : 'PASSED' };
+  if (tk10 >= 4.0) return { thang4: 1.0, diemChu: 'D', trangThai: isDATN ? 'FAILED' : 'PASSED' };
   return { thang4: 0.0, diemChu: 'F', trangThai: 'FAILED' };
 }
-export function getAcademicClassification(gpa4: number, totalCredits: number = 1): 'Xuất sắc' | 'Giỏi' | 'Khá' | 'Trung bình' | 'Yếu' | 'Chưa có điểm' {
+
+/**
+ * Xếp loại học lực theo Điều 14 Khoản 4 Quy chế 1348/QC-ĐHTĐN:
+ * - 3.60 - 4.00: Xuất sắc
+ * - 3.20 - 3.59: Giỏi
+ * - 2.80 - 3.19: Khá
+ * - 2.40 - 2.79: Trung bình Khá
+ * - 2.00 - 2.39: Trung bình
+ * - 1.00 - 1.99: Yếu
+ * - Dưới 1.00: Kém
+ */
+export function getAcademicClassification(
+  gpa4: number,
+  totalCredits: number = 1
+): 'Xuất sắc' | 'Giỏi' | 'Khá' | 'Trung bình Khá' | 'Trung bình' | 'Yếu' | 'Kém' | 'Chưa có điểm' {
   if (totalCredits === 0) return 'Chưa có điểm';
-  if (gpa4 >= 3.6) return 'Xuất sắc';
-  if (gpa4 >= 3.2) return 'Giỏi';
-  if (gpa4 >= 2.5) return 'Khá';
-  if (gpa4 >= 2.0) return 'Trung bình';
-  return 'Yếu';
+  const gpa = Math.round(Number(gpa4 || 0) * 100) / 100;
+  if (gpa >= 3.60) return 'Xuất sắc';
+  if (gpa >= 3.20) return 'Giỏi';
+  if (gpa >= 2.80) return 'Khá';
+  if (gpa >= 2.40) return 'Trung bình Khá';
+  if (gpa >= 2.00) return 'Trung bình';
+  if (gpa >= 1.00) return 'Yếu';
+  return 'Kém';
+}
+
+/**
+ * Phân loại rèn luyện sinh viên theo Điều 16 Quy chế 1519/QC-TĐN:
+ * - 90 - 100: Loại Xuất sắc
+ * - 80 - dưới 90: Loại Tốt
+ * - 65 - dưới 80: Loại Khá
+ * - 50 - dưới 65: Loại Trung bình
+ * - 35 - dưới 50: Loại Yếu
+ * - Dưới 35: Loại Kém
+ */
+export function getTrainingClassification(score: number): 'Xuất sắc' | 'Tốt' | 'Khá' | 'Trung bình' | 'Yếu' | 'Kém' {
+  const s = Math.round(Number(score || 0));
+  if (s >= 90) return 'Xuất sắc';
+  if (s >= 80) return 'Tốt';
+  if (s >= 65) return 'Khá';
+  if (s >= 50) return 'Trung bình';
+  if (s >= 35) return 'Yếu';
+  return 'Kém';
 }
 export function calculateSemesterSummary(grades: Diem[], hocKy: string, namHoc: string): SemesterGpaSummary {
   const semesterGrades = grades.filter(

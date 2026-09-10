@@ -10,6 +10,7 @@ import {
   getUniqueClassesFromStudents,
   CANONICAL_CLASS_CO_KHI,
   CANONICAL_CLASS_O_TO,
+  CANONICAL_CLASSES,
   FACULTY_CO_KHI,
   FACULTY_O_TO,
 } from '../../utils/classHelper';
@@ -69,6 +70,7 @@ interface StudentProfileModuleProps {
   onAddStudent: (student: SinhVien) => void;
   onUpdateStudent: (maSV: string, student: Partial<SinhVien>) => void;
   onDeleteStudent: (maSV: string) => void;
+  onDeleteClassStudents?: (lop: string) => Promise<void> | void;
   onUploadHoSo: (maSV: string, fileName: string, fileData?: string) => void;
   onImportStudents?: (students: Partial<SinhVien>[]) => void;
 }
@@ -81,6 +83,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
   onAddStudent,
   onUpdateStudent,
   onDeleteStudent,
+  onDeleteClassStudents,
   onUploadHoSo,
   onImportStudents,
 }) => {
@@ -124,10 +127,22 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     return getFacultyFromHelper(norm);
   };
 
-  // Available classes: canonical, unique, no duplicates
+  // Available classes: canonical, unique, no duplicates - always preserves registered classes even when student count is 0
   const availableClasses: string[] = useMemo(() => {
-    return getUniqueClassesFromStudents(students);
-  }, [students]);
+    const set = new Set<string>();
+    CANONICAL_CLASSES.forEach((c) => set.add(c));
+    Object.keys(classMap).forEach((c) => {
+      const norm = normalizeClassName(c);
+      if (norm) set.add(norm);
+    });
+    students.forEach((s) => {
+      if (s.lop) {
+        const norm = normalizeClassName(s.lop);
+        if (norm) set.add(norm);
+      }
+    });
+    return Array.from(set).sort();
+  }, [students, classMap]);
 
   // Unique faculties
   const uniqueFaculties: string[] = useMemo(() => {
@@ -238,32 +253,34 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     );
   };
 
-  const handleDeleteClass = (lopName: string, e?: React.MouseEvent) => {
+  const handleDeleteClass = async (lopName: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     const studentsInLop = students.filter((s) => s.lop === lopName);
     const faculty = getFacultyForClass(lopName);
 
-    const confirmMsg =
-      studentsInLop.length > 0
-        ? `⚠️ XÁC NHẬN XÓA LỚP HỌC:\n\nLớp: ${lopName}\nKhoa: ${faculty}\nSĩ số: ${studentsInLop.length} sinh viên\n\nBạn có chắc chắn muốn XÓA LỚP này và XÓA TOÀN BỘ ${studentsInLop.length} sinh viên thuộc lớp khỏi hệ thống không?`
-        : `⚠️ XÁC NHẬN XÓA LỚP HỌC:\n\nLớp: ${lopName}\nKhoa: ${faculty}\n\nBạn có chắc chắn muốn xóa lớp học này khỏi danh sách không?`;
+    if (studentsInLop.length === 0) {
+      alert(`Lớp "${lopName}" hiện không có sinh viên nào để xóa. Lớp học vẫn được giữ lại.`);
+      return;
+    }
+
+    const confirmMsg = `⚠️ XÁC NHẬN XÓA SINH VIÊN TRONG LỚP:\n\nLớp: ${lopName}\nKhoa: ${faculty}\nSĩ số hiện tại: ${studentsInLop.length} sinh viên\n\nBạn có chắc chắn muốn XÓA TOÀN BỘ ${studentsInLop.length} sinh viên thuộc lớp "${lopName}" không?\n\n(Lưu ý: Chỉ xóa các sinh viên trong lớp, lớp học "${lopName}" vẫn được giữ lại trong hệ thống với sĩ số 0 sinh viên).`;
 
     if (window.confirm(confirmMsg)) {
-      studentsInLop.forEach((s) => {
-        onDeleteStudent(s.maSV);
-      });
-
-      setClassMap((prev) => {
-        const next = { ...prev };
-        delete next[lopName];
-        return next;
-      });
-
-      if (selectedClass === lopName) {
-        setSelectedClass(null);
+      if (onDeleteClassStudents) {
+        await onDeleteClassStudents(lopName);
+      } else {
+        studentsInLop.forEach((s) => {
+          onDeleteStudent(s.maSV);
+        });
       }
 
-      alert(`Đã xóa thành công lớp "${lopName}"!`);
+      // Đảm bảo lớp học vẫn được lưu trong classMap (lớp không bị xóa)
+      setClassMap((prev) => ({
+        ...prev,
+        [lopName]: faculty,
+      }));
+
+      alert(`Đã xóa thành công ${studentsInLop.length} sinh viên trong lớp "${lopName}". Lớp học vẫn được giữ lại trong hệ thống!`);
     }
   };
 
@@ -1103,7 +1120,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                                 type="button"
                                 onClick={(e) => handleDeleteClass(lopName, e)}
                                 className="p-1.5 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950 rounded-lg transition-colors cursor-pointer"
-                                title="Xóa Lớp học này"
+                                title="Xóa toàn bộ sinh viên trong lớp (giữ lại lớp)"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
@@ -1182,10 +1199,10 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                           type="button"
                           onClick={(e) => handleDeleteClass(selectedClass, e)}
                           className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl bg-white dark:bg-zinc-800 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 hover:bg-rose-50 transition-all cursor-pointer"
-                          title="Xóa Lớp học này"
+                          title="Xóa toàn bộ sinh viên trong lớp này (giữ lại lớp)"
                         >
                           <Trash2 className="w-4 h-4" />
-                          <span>Xóa Lớp</span>
+                          <span>Xóa Sinh Viên Lớp</span>
                         </button>
                       </>
                     )}

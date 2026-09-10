@@ -289,6 +289,43 @@ export const apiService = {
       return { success: false, message: 'Import điểm rèn luyện từ Excel thất bại' };
     }
   },
+  async updateTrainingPoint(id: string, data: Partial<RenLuyen>): Promise<{ success: boolean; message: string; data?: RenLuyen }> {
+    try {
+      const res = await fetch(`${API_BASE}/training/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch {
+      return { success: false, message: 'Lỗi cập nhật điểm rèn luyện' };
+    }
+  },
+  async deleteTrainingPoint(id: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/training/${id}`, {
+        method: 'DELETE',
+      });
+      return await res.json();
+    } catch {
+      return { success: false, message: 'Lỗi xóa điểm rèn luyện' };
+    }
+  },
+  async deleteClassTrainingPoints(lop: string, params?: { thang?: number; nam?: number; hocKy?: string }): Promise<{ success: boolean; message: string; deletedCount?: number }> {
+    try {
+      const queryObj: Record<string, string> = { lop };
+      if (params?.thang) queryObj.thang = String(params.thang);
+      if (params?.nam) queryObj.nam = String(params.nam);
+      if (params?.hocKy && params.hocKy !== 'ALL') queryObj.hocKy = params.hocKy;
+      const query = new URLSearchParams(queryObj).toString();
+      const res = await fetch(`${API_BASE}/training-class/delete?${query}`, {
+        method: 'DELETE',
+      });
+      return await res.json();
+    } catch {
+      return { success: false, message: 'Lỗi xóa điểm rèn luyện của lớp' };
+    }
+  },
   async getSemesters(): Promise<{ success: boolean; data: HocKy[] }> {
     try {
       const res = await fetch(`${API_BASE}/hocky`);
@@ -488,19 +525,46 @@ export const apiService = {
     try {
       const query = new URLSearchParams(params as Record<string, string>).toString();
       const res = await fetch(`${API_BASE}/attendance?${query}`);
-      return await res.json();
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        if (!params || Object.keys(params).length === 0) {
+          localStorage.setItem('cached_attendance_list', JSON.stringify(data.data));
+        }
+        return data;
+      }
     } catch {
-      return { success: false, data: [] };
+      // fallback to cached
     }
+    const cached = localStorage.getItem('cached_attendance_list');
+    if (cached) {
+      try {
+        let list: DiemDanh[] = JSON.parse(cached);
+        if (params?.maSV) list = list.filter((a) => a.maSV?.toLowerCase() === params.maSV?.toLowerCase());
+        if (params?.maMH) list = list.filter((a) => a.maMH?.toLowerCase() === params.maMH?.toLowerCase());
+        return { success: true, data: list };
+      } catch {}
+    }
+    return { success: false, data: [] };
   },
-  async saveAttendance(data: Partial<DiemDanh>): Promise<{ success: boolean; message: string; data?: DiemDanh }> {
+  async saveAttendance(data: Partial<DiemDanh>): Promise<{ success: boolean; message: string; data?: DiemDanh; trainingPoint?: any }> {
     try {
       const res = await fetch(`${API_BASE}/attendance`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      return await res.json();
+      const result = await res.json();
+      if (result.success && result.data) {
+        try {
+          const cached = localStorage.getItem('cached_attendance_list');
+          let list: DiemDanh[] = cached ? JSON.parse(cached) : [];
+          list = [result.data, ...list.filter((a) => a.id !== result.data.id)];
+          localStorage.setItem('cached_attendance_list', JSON.stringify(list));
+        } catch {}
+        window.dispatchEvent(new CustomEvent('app-data-updated'));
+        window.dispatchEvent(new CustomEvent('attendance-updated'));
+      }
+      return result;
     } catch {
       return { success: false, message: 'Không thể lưu thông tin điểm danh' };
     }
@@ -508,19 +572,55 @@ export const apiService = {
   async deleteAttendance(id: string): Promise<{ success: boolean; message: string }> {
     try {
       const res = await fetch(`${API_BASE}/attendance/${id}`, { method: 'DELETE' });
-      return await res.json();
+      const result = await res.json();
+      try {
+        const cached = localStorage.getItem('cached_attendance_list');
+        if (cached) {
+          let list: DiemDanh[] = JSON.parse(cached);
+          list = list.filter((a) => a.id !== id);
+          localStorage.setItem('cached_attendance_list', JSON.stringify(list));
+        }
+      } catch {}
+      window.dispatchEvent(new CustomEvent('app-data-updated'));
+      window.dispatchEvent(new CustomEvent('attendance-updated'));
+      return result;
     } catch {
       return { success: false, message: 'Xóa điểm danh thất bại' };
+    }
+  },
+  async syncAttendanceTrainingPoints(): Promise<{ success: boolean; message: string; count?: number; data?: any[] }> {
+    try {
+      const res = await fetch(`${API_BASE}/attendance/sync-training-points`, { method: 'POST' });
+      const result = await res.json();
+      window.dispatchEvent(new CustomEvent('app-data-updated'));
+      return result;
+    } catch {
+      return { success: false, message: 'Không thể kết nối đồng bộ điểm rèn luyện' };
     }
   },
   async getExamNotices(maMH?: string): Promise<{ success: boolean; data: ThongBaoKiemTra[] }> {
     try {
       const query = maMH ? `?maMH=${encodeURIComponent(maMH)}` : '';
       const res = await fetch(`${API_BASE}/exam-notices${query}`);
-      return await res.json();
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        if (!maMH) {
+          localStorage.setItem('cached_exam_notices', JSON.stringify(data.data));
+        }
+        return data;
+      }
     } catch {
-      return { success: false, data: [] };
+      // fallback
     }
+    const cached = localStorage.getItem('cached_exam_notices');
+    if (cached) {
+      try {
+        let list: ThongBaoKiemTra[] = JSON.parse(cached);
+        if (maMH) list = list.filter((n) => n.maMH?.toLowerCase() === maMH.toLowerCase());
+        return { success: true, data: list };
+      } catch {}
+    }
+    return { success: false, data: [] };
   },
   async saveExamNotice(notice: Partial<ThongBaoKiemTra>): Promise<{ success: boolean; message: string; data?: ThongBaoKiemTra }> {
     try {
@@ -529,7 +629,18 @@ export const apiService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(notice),
       });
-      return await res.json();
+      const result = await res.json();
+      if (result.success && result.data) {
+        try {
+          const cached = localStorage.getItem('cached_exam_notices');
+          let list: ThongBaoKiemTra[] = cached ? JSON.parse(cached) : [];
+          list = [result.data, ...list.filter((n) => n.id !== result.data.id)];
+          localStorage.setItem('cached_exam_notices', JSON.stringify(list));
+        } catch {}
+        window.dispatchEvent(new CustomEvent('app-data-updated'));
+        window.dispatchEvent(new CustomEvent('exam-notices-updated'));
+      }
+      return result;
     } catch {
       return { success: false, message: 'Đăng thông báo kiểm tra thất bại' };
     }
@@ -537,7 +648,18 @@ export const apiService = {
   async deleteExamNotice(id: string): Promise<{ success: boolean; message: string }> {
     try {
       const res = await fetch(`${API_BASE}/exam-notices/${id}`, { method: 'DELETE' });
-      return await res.json();
+      const result = await res.json();
+      try {
+        const cached = localStorage.getItem('cached_exam_notices');
+        if (cached) {
+          let list: ThongBaoKiemTra[] = JSON.parse(cached);
+          list = list.filter((n) => n.id !== id);
+          localStorage.setItem('cached_exam_notices', JSON.stringify(list));
+        }
+      } catch {}
+      window.dispatchEvent(new CustomEvent('app-data-updated'));
+      window.dispatchEvent(new CustomEvent('exam-notices-updated'));
+      return result;
     } catch {
       return { success: false, message: 'Xóa thông báo kiểm tra thất bại' };
     }

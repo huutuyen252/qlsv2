@@ -361,7 +361,20 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
     } else {
       loadGrades();
     }
-  }, [grades]);
+
+    const handleUpdate = () => {
+      loadAttendanceAndNotices();
+      loadSummary();
+    };
+    window.addEventListener('app-data-updated', handleUpdate);
+    window.addEventListener('attendance-updated', handleUpdate);
+    window.addEventListener('exam-notices-updated', handleUpdate);
+    return () => {
+      window.removeEventListener('app-data-updated', handleUpdate);
+      window.removeEventListener('attendance-updated', handleUpdate);
+      window.removeEventListener('exam-notices-updated', handleUpdate);
+    };
+  }, [grades, userRole, activeSemester, currentStudentCode]);
 
   const loadAttendanceAndNotices = async () => {
     try {
@@ -406,8 +419,34 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
 
   // Class for current student
   const studentClassCode = currentStudent?.lop || '';
-  const studentClassItem =
-    dynamicClassMetrics.find((c) => c.maLop === studentClassCode) || null;
+  const createDefaultClassMetric = (classCode: string, faculty?: string): ClassMetricItem => ({
+    maLop: classCode || 'Chưa phân lớp',
+    tenLop: classCode ? (classCode.startsWith('Lớp') ? classCode : `Lớp ${classCode}`) : 'Chưa phân lớp',
+    siSo: (students || []).filter((s) => s.lop === classCode).length,
+    khoa: faculty || currentStudent?.khoa || 'Khoa Chuyên môn',
+    covan: 'Giảng viên Chủ nhiệm',
+    renLuyenTotal: 100,
+    renLuyenBreakdown: {
+      xuatSac: 0,
+      tot: 0,
+      kha: 0,
+      trungBinh: 0,
+      yeuKem: 0,
+    },
+    donThiLai: 0,
+    thiLaiBreakdown: [],
+    tyLeQuaMon: 100,
+    quaMonBreakdown: {
+      loaiA: 0,
+      loaiB: 0,
+      loaiC: 0,
+      loaiDF: 0,
+    },
+  });
+
+  const foundClassMetric = dynamicClassMetrics.find((c) => c.maLop === studentClassCode);
+  const studentClassItem: ClassMetricItem =
+    foundClassMetric || createDefaultClassMetric(studentClassCode, currentStudent?.khoa);
 
   // Effective class filter (strictly locked to student class if STUDENT role)
   const effectiveClassFilter = isStudent ? studentClassCode : selectedClassFilter;
@@ -550,7 +589,35 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
       }
       });
 
-    const svAtt = attendanceList.filter((a) => a.maSV.toLowerCase() === myStudentCode);
+    const svAtt = attendanceList.filter((a) => a.maSV?.toLowerCase() === myStudentCode?.toLowerCase());
+
+    // 4. Ensure all subjects having attendance records for this student are added to enrolledMap
+    svAtt.forEach((a) => {
+      if (a.maMH && !enrolledMap.has(a.maMH)) {
+        enrolledMap.set(a.maMH, {
+          maMH: a.maMH,
+          tenMH: a.tenMH || a.maMH,
+          soTinChi: 3,
+          giangVien: a.nguoiDiemDanh || 'Giảng viên Bộ môn',
+          hocKy: currentActiveSemester,
+        });
+      }
+    });
+
+    // 5. Fallback: if enrolledMap is still empty, include all courses from schedule for student
+    if (enrolledMap.size === 0) {
+      (schedule || []).forEach((sch) => {
+        if (sch.maMH && !enrolledMap.has(sch.maMH)) {
+          enrolledMap.set(sch.maMH, {
+            maMH: sch.maMH,
+            tenMH: sch.tenMH || sch.maMH,
+            soTinChi: sch.soTinChi || 3,
+            giangVien: sch.giangVien || 'Giảng viên Bộ môn',
+            hocKy: sch.hocKy || currentActiveSemester,
+          });
+        }
+      });
+    }
 
     return Array.from(enrolledMap.values()).map((course) => {
       const credits = course.soTinChi || 3;
@@ -591,8 +658,16 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
   const studentExamNotices = React.useMemo(() => {
     if (!isStudent) return [];
     const courseCodes = new Set(studentCourseProgressList.map((c) => c.maMH));
-    return (examNotices || []).filter((notice) => courseCodes.has(notice.maMH));
-  }, [isStudent, studentCourseProgressList, examNotices]);
+    (schedule || []).forEach((s) => s.maMH && courseCodes.add(s.maMH));
+    (allSubjectList || []).forEach((s) => s.maMH && courseCodes.add(s.maMH));
+    (attendanceList || []).filter((a) => a.maSV?.toLowerCase() === myStudentCode?.toLowerCase()).forEach((a) => a.maMH && courseCodes.add(a.maMH));
+
+    return (examNotices || []).filter((notice) => {
+      if (!notice.maMH) return true;
+      if (courseCodes.size === 0) return true;
+      return courseCodes.has(notice.maMH);
+    });
+  }, [isStudent, studentCourseProgressList, examNotices, schedule, allSubjectList, attendanceList, myStudentCode]);
 
   // Semesters list derived strictly from actual entered data
   const availableReportSemesters = React.useMemo(() => {
@@ -624,9 +699,9 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
   }, [trainingPoints, filterSemester]);
 
   // Compute stats based on effective class filter
-  const activeClassItem =
+  const activeClassItem: ClassMetricItem | null =
     effectiveClassFilter !== 'ALL'
-      ? dynamicClassMetrics.find((c) => c.maLop === effectiveClassFilter) || (isStudent ? studentClassItem : null)
+      ? dynamicClassMetrics.find((c) => c.maLop === effectiveClassFilter) || (isStudent ? studentClassItem : createDefaultClassMetric(effectiveClassFilter))
       : null;
 
   // Calculate overall Training Point breakdown when ALL classes selected
@@ -1077,7 +1152,11 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
             </label>
             {isStudent ? (
               <div className="w-full bg-slate-900 border border-slate-700 text-blue-300 text-xs font-bold rounded-lg px-3 py-2 flex items-center justify-between">
-                <span className="truncate">{studentClassItem.tenLop.startsWith('Lớp') ? studentClassItem.tenLop : `Lớp ${studentClassItem.maLop}`}</span>
+                <span className="truncate">
+                  {studentClassItem?.tenLop
+                    ? (studentClassItem.tenLop.startsWith('Lớp') ? studentClassItem.tenLop : `Lớp ${studentClassItem.maLop}`)
+                    : (studentClassCode ? `Lớp ${studentClassCode}` : 'Chưa phân lớp')}
+                </span>
                 <span className="text-[10px] bg-blue-950 text-blue-400 px-2 py-0.5 rounded border border-blue-800 shrink-0 ml-1">Lớp của tôi</span>
               </div>
             ) : (
@@ -1114,13 +1193,13 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
                 </div>
                 <div className="my-2">
                   <div className="text-xl font-mono font-black text-white">
-                    {studentClassItem.maLop}
+                    {studentClassItem?.maLop || studentClassCode || 'N/A'}
                   </div>
                   <div className="text-xs text-blue-300 font-semibold truncate mt-0.5">
-                    {studentClassItem.tenLop}
+                    {studentClassItem?.tenLop || (studentClassCode ? `Lớp ${studentClassCode}` : 'Chưa phân lớp')}
                   </div>
                   <div className="text-[11px] text-slate-400 mt-1">
-                    Sĩ số: <strong className="text-white font-mono">{studentClassItem.siSo} SV</strong> • Cố vấn: {studentClassItem.covan}
+                    Sĩ số: <strong className="text-white font-mono">{studentClassItem?.siSo ?? 0} SV</strong> • Cố vấn: {studentClassItem?.covan || 'GVCN'}
                   </div>
                 </div>
                 <div className="text-[11px] font-semibold text-blue-400 flex items-center gap-1 mt-1">

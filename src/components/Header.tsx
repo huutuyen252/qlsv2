@@ -103,8 +103,17 @@ export const Header: React.FC<HeaderProps> = ({
       }
     };
     fetchBellData();
+    const handleUpdate = () => {
+      if (isMounted) fetchBellData();
+    };
+    window.addEventListener('app-data-updated', handleUpdate);
+    window.addEventListener('attendance-updated', handleUpdate);
+    window.addEventListener('exam-notices-updated', handleUpdate);
     return () => {
       isMounted = false;
+      window.removeEventListener('app-data-updated', handleUpdate);
+      window.removeEventListener('attendance-updated', handleUpdate);
+      window.removeEventListener('exam-notices-updated', handleUpdate);
     };
   }, [currentUser]);
   useEffect(() => {
@@ -303,8 +312,30 @@ export const Header: React.FC<HeaderProps> = ({
         });
       }
       const svAtt = (attendanceList || []).filter(
-        (a) => studentCode && a.maSV.toLowerCase() === studentCode.toLowerCase()
+        (a) => studentCode && a.maSV?.trim().toLowerCase() === studentCode.trim().toLowerCase()
       );
+      // Ensure all subjects that have attendance records are added to courseMap
+      svAtt.forEach((a) => {
+        if (a.maMH && !courseMap.has(a.maMH)) {
+          courseMap.set(a.maMH, {
+            maMH: a.maMH,
+            tenMH: a.tenMH || a.maMH,
+            soTinChi: 3,
+          });
+        }
+      });
+      // Fallback: if courseMap is still empty, include all schedule items for student
+      if (courseMap.size === 0) {
+        (schedule || []).forEach((sch) => {
+          if (sch.maMH && !courseMap.has(sch.maMH)) {
+            courseMap.set(sch.maMH, {
+              maMH: sch.maMH,
+              tenMH: sch.tenMH || sch.maMH,
+              soTinChi: sch.soTinChi || 3,
+            });
+          }
+        });
+      }
       courseMap.forEach((c) => {
         const totalPeriods = c.soTinChi * 15;
         const courseAtt = svAtt.filter((a) => a.maMH === c.maMH);
@@ -331,13 +362,17 @@ export const Header: React.FC<HeaderProps> = ({
         }
       });
       const courseCodes = new Set(courseMap.keys());
+      (schedule || []).forEach((s) => s.maMH && courseCodes.add(s.maMH));
+      (subjects || []).forEach((s) => s.maMH && courseCodes.add(s.maMH));
+      svAtt.forEach((a) => a.maMH && courseCodes.add(a.maMH));
+
       (examNotices || []).forEach((n) => {
-        if (courseCodes.has(n.maMH) && (!n.hocKy || n.hocKy === currentActiveSemCode)) {
+        if (!n.maMH || courseCodes.size === 0 || courseCodes.has(n.maMH)) {
           list.push({
             id: `exam-${n.id}`,
             type: 'EXAM',
             title: `Lịch kiểm tra: ${n.tieuDe}`,
-            content: `Môn ${n.tenMH || n.maMH} (${n.loai === '15_PHUT' ? 'KT 15 Phút' : 'KT Giữa Kỳ'}). Ngày: ${n.ngayKiemTra || 'Tuần tới'}. ${n.noiDung}`,
+            content: `Môn ${n.tenMH || n.maMH} (${n.loai === '15_PHUT' ? 'KT 15 Phút' : 'KT Giữa Kỳ'}). Ngày: ${n.ngayKiemTra || 'Sắp tới'}. ${n.noiDung || ''}`,
             time: `Tuần ${n.tuanKiemTra || 'hiện tại'}`,
             tag: 'LỊCH KIỂM TRA',
           });
@@ -408,16 +443,24 @@ export const Header: React.FC<HeaderProps> = ({
     }
     setIsNotificationOpen((prev) => !prev);
   };
+  const handleGoToDashboard = () => {
+    onSwitchView('dashboard');
+    try {
+      localStorage.setItem('app_current_view', 'dashboard');
+    } catch {}
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   return (
     <header id="app-header" className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800/80 px-4 lg:px-8 py-3 transition-colors shadow-xs">
       <div className="flex items-center justify-between gap-4 max-w-7xl mx-auto">
         <div
           id="header-brand-logo"
-          onClick={() => onSwitchView('dashboard')}
+          onClick={handleGoToDashboard}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
-              onSwitchView('dashboard');
+              handleGoToDashboard();
             }
           }}
           role="button"
@@ -590,14 +633,6 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="absolute -bottom-0.5 -right-0.5 bg-blue-600 text-white p-0.5 rounded-full shadow-md group-hover:scale-110 transition-transform">
                   <Camera className="w-2.5 h-2.5" />
                 </span>
-              </button>
-              <button
-                id="btn-logout"
-                onClick={onLogout}
-                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-2xl transition-colors cursor-pointer"
-                title="Đăng xuất"
-              >
-                <LogOut className="w-4 h-4" />
               </button>
               {isDropdownOpen && (
                 <div className="absolute right-0 top-12 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150">

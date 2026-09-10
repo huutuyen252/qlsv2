@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { RenLuyen, SinhVien, UserRole, User } from '../../types';
+import { apiService } from '../../services/apiService';
 import {
   Sparkles,
   Search,
@@ -24,6 +25,11 @@ import {
   FileCheck,
   User as UserIcon,
   Filter,
+  Trash2,
+  Edit3,
+  AlertTriangle,
+  Check,
+  RefreshCw,
 } from 'lucide-react';
 
 interface TrainingPointModuleProps {
@@ -36,6 +42,7 @@ interface TrainingPointModuleProps {
     maSV: string;
     thang: number;
     nam: number;
+    namHoc?: string;
     diemRL: number;
     nhanXet: string;
     nguoiDanhGia: string;
@@ -45,20 +52,34 @@ interface TrainingPointModuleProps {
     hocKy?: string;
   }) => void;
   onImportExcel?: (data: Partial<RenLuyen>[]) => void;
+  onUpdateTrainingPoint?: (id: string, data: Partial<RenLuyen>) => Promise<void> | void;
+  onDeleteTrainingPoint?: (id: string) => Promise<void> | void;
+  onDeleteClassTrainingPoints?: (lop: string, params?: { thang?: number; nam?: number; hocKy?: string }) => Promise<void> | void;
+  onRefreshData?: () => void;
 }
 
+/**
+ * Xếp loại điểm rèn luyện theo Điều 16 Quy chế 1519/QC-TĐN:
+ * - 90 - 100: Loại Xuất sắc
+ * - 80 - dưới 90: Loại Tốt
+ * - 65 - dưới 80: Loại Khá
+ * - 50 - dưới 65: Loại Trung bình
+ * - 35 - dưới 50: Loại Yếu
+ * - Dưới 35: Loại Kém
+ */
 export const calculateTrainingRank = (score: number): string => {
-  if (score >= 90) return 'Xuất sắc';
-  if (score >= 80) return 'Tốt';
-  if (score >= 70) return 'Khá';
-  if (score >= 60) return 'TBK';
-  if (score >= 50) return 'TB';
-  if (score >= 35) return 'Yếu';
+  const s = Math.round(Number(score) || 0);
+  if (s >= 90) return 'Xuất sắc';
+  if (s >= 80) return 'Tốt';
+  if (s >= 65) return 'Khá';
+  if (s >= 50) return 'Trung bình';
+  if (s >= 35) return 'Yếu';
   return 'Kém';
 };
 
 export const getRankBadgeClass = (rank: string) => {
-  switch (rank) {
+  const norm = rank === 'Tt' ? 'Tốt' : rank;
+  switch (norm) {
     case 'Xuất sắc':
       return 'bg-purple-100 text-purple-800 dark:bg-purple-950/80 dark:text-purple-300 border-purple-300';
     case 'Tốt':
@@ -66,9 +87,8 @@ export const getRankBadgeClass = (rank: string) => {
     case 'Khá':
       return 'bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 border-blue-300';
     case 'TBK':
-      return 'bg-teal-100 text-teal-800 dark:bg-teal-950/80 dark:text-teal-300 border-teal-300';
-    case 'TB':
     case 'Trung bình':
+    case 'TB':
       return 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border-amber-300';
     case 'Yếu':
       return 'bg-orange-100 text-orange-800 dark:bg-orange-950/80 dark:text-orange-300 border-orange-300';
@@ -85,6 +105,10 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
   currentUser,
   onSaveComment,
   onImportExcel,
+  onUpdateTrainingPoint,
+  onDeleteTrainingPoint,
+  onDeleteClassTrainingPoints,
+  onRefreshData,
 }) => {
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -92,6 +116,22 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
   const [selectedSemester, setSelectedSemester] = useState<string>('');
   const [selectedYear, setSelectedYear] = useState<number | ''>('');
   const [viewMode, setViewMode] = useState<'HIERARCHICAL' | 'FLAT'>('HIERARCHICAL');
+
+  // Local state to keep UI immediately responsive
+  const [localPoints, setLocalPoints] = useState<RenLuyen[]>(trainingPoints);
+  useEffect(() => {
+    setLocalPoints(trainingPoints);
+  }, [trainingPoints]);
+
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Individual Edit & Delete Modals
+  const [editingRecord, setEditingRecord] = useState<RenLuyen | null>(null);
+  const [deleteIndividualRecord, setDeleteIndividualRecord] = useState<RenLuyen | null>(null);
+
+  // Class-wide Delete Modal
+  const [isDeleteClassModalOpen, setIsDeleteClassModalOpen] = useState(false);
 
   const isStudentRole = userRole === 'STUDENT';
   const studentCodeLower = (currentStudentCode || currentUser?.studentCode || currentUser?.username || '').toLowerCase();
@@ -118,34 +158,36 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
   // Dynamic available filters derived strictly from real entered trainingPoints data
   const availableMonths = React.useMemo(() => {
     const months = new Set<number>();
-    (trainingPoints || []).forEach((r) => {
+    (localPoints || []).forEach((r) => {
       if (r && r.thang) months.add(Number(r.thang));
     });
     return Array.from(months).sort((a, b) => a - b);
-  }, [trainingPoints]);
+  }, [localPoints]);
 
   const availableSemesters = React.useMemo(() => {
     const semesters = new Set<string>();
-    (trainingPoints || []).forEach((r) => {
+    (localPoints || []).forEach((r) => {
       if (r && r.hocKy) semesters.add(r.hocKy.trim());
     });
     return Array.from(semesters).sort();
-  }, [trainingPoints]);
+  }, [localPoints]);
 
   const availableYears = React.useMemo(() => {
     const years = new Set<number>();
-    (trainingPoints || []).forEach((r) => {
+    (localPoints || []).forEach((r) => {
       if (r && r.nam) years.add(Number(r.nam));
     });
     return Array.from(years).sort((a, b) => a - b);
-  }, [trainingPoints]);
+  }, [localPoints]);
 
   // Modal State for 3 Evaluation Categories Entry
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form, setForm] = useState({
+    id: '',
     maSV: students[0]?.maSV || '25DDS0904101',
-    thang: 11,
-    nam: 2025,
+    thang: 8,
+    nam: 2026,
+    namHoc: '2026-2027',
     hocKy: 'HK1',
     diemMuc1: 35, // Tối đa 40 điểm: Ý thức học tập & kỷ luật
     diemMuc2: 30, // Tối đa 35 điểm: Chấp hành nội quy & phong trào
@@ -160,10 +202,15 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
   const [importFileName, setImportFileName] = useState<string>('');
   const [importStatus, setImportStatus] = useState<string | null>(null);
 
+  // Target academic period for Excel Import (Defaults to 2026-2027 HK1)
+  const [importTargetNamHoc, setImportTargetNamHoc] = useState('2026-2027');
+  const [importTargetHocKy, setImportTargetHocKy] = useState('HK1');
+  const [importTargetThang, setImportTargetThang] = useState('AUTO');
+
   const totalFormScore = Math.min(100, Math.max(0, (Number(form.diemMuc1) || 0) + (Number(form.diemMuc2) || 0) + (Number(form.diemMuc3) || 0)));
   const calculatedRank = calculateTrainingRank(totalFormScore);
 
-  const filteredPoints = trainingPoints.filter((r) => {
+  const filteredPoints = localPoints.filter((r) => {
     // If student role, ONLY show training points for this student
     if (isStudentRole) {
       const isMatchStudent =
@@ -188,90 +235,200 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
     return matchesSearch && matchesMonth && matchesSemester && matchesYear;
   });
 
-  const handleOpenComment = (r?: RenLuyen) => {
-    if (r) {
-      const m1 = r.diemMuc1 !== undefined ? r.diemMuc1 : Math.min(40, Math.round(r.diemRL * 0.4));
-      const m2 = r.diemMuc2 !== undefined ? r.diemMuc2 : Math.min(35, Math.round(r.diemRL * 0.35));
-      const m3 = r.diemMuc3 !== undefined ? r.diemMuc3 : Math.min(25, r.diemRL - m1 - m2);
-      setForm({
-        maSV: r.maSV,
-        thang: r.thang,
-        nam: r.nam,
-        hocKy: r.hocKy || 'HK1',
-        diemMuc1: m1,
-        diemMuc2: m2,
-        diemMuc3: m3,
-        nhanXet: r.nhanXet || '',
-        nguoiDanhGia: r.nguoiDanhGia || 'Giảng viên Chủ nhiệm',
-      });
-    } else {
-      setForm({
-        maSV: students[0]?.maSV || '25DDS0904101',
-        thang: 11,
-        nam: 2025,
-        hocKy: 'HK1',
-        diemMuc1: 35,
-        diemMuc2: 30,
-        diemMuc3: 20,
-        nhanXet: 'Chấp hành tốt kỷ luật lớp học, năng nổ trong sinh hoạt Đoàn.',
-        nguoiDanhGia: 'TS. Nguyễn Văn Hùng',
-      });
-    }
+  const handleOpenNew = () => {
+    setEditingRecord(null);
+    setForm({
+      id: '',
+      maSV: students[0]?.maSV || '25DDS0904101',
+      thang: 8,
+      nam: 2026,
+      namHoc: '2026-2027',
+      hocKy: 'HK1',
+      diemMuc1: 35,
+      diemMuc2: 30,
+      diemMuc3: 20,
+      nhanXet: 'Chấp hành tốt kỷ luật lớp học, năng nổ trong sinh hoạt Đoàn.',
+      nguoiDanhGia: currentUser?.fullName || 'Cố vấn học tập',
+    });
     setIsModalOpen(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSaveComment({
-      maSV: form.maSV,
-      thang: form.thang,
-      nam: form.nam,
-      hocKy: form.hocKy,
-      diemRL: totalFormScore,
-      diemMuc1: Number(form.diemMuc1) || 0,
-      diemMuc2: Number(form.diemMuc2) || 0,
-      diemMuc3: Number(form.diemMuc3) || 0,
-      nhanXet: form.nhanXet,
-      nguoiDanhGia: form.nguoiDanhGia,
+  const handleOpenEdit = (r: RenLuyen) => {
+    setEditingRecord(r);
+    const m1 = r.diemMuc1 !== undefined ? r.diemMuc1 : Math.min(40, Math.round(r.diemRL * 0.4));
+    const m2 = r.diemMuc2 !== undefined ? r.diemMuc2 : Math.min(35, Math.round(r.diemRL * 0.35));
+    const m3 = r.diemMuc3 !== undefined ? r.diemMuc3 : Math.min(25, r.diemRL - m1 - m2);
+    setForm({
+      id: r.id,
+      maSV: r.maSV,
+      thang: r.thang || 8,
+      nam: r.nam || 2026,
+      namHoc: r.namHoc || (r.nam >= 2026 ? '2026-2027' : `${r.nam}-${r.nam + 1}`),
+      hocKy: r.hocKy || 'HK1',
+      diemMuc1: m1,
+      diemMuc2: m2,
+      diemMuc3: m3,
+      nhanXet: r.nhanXet || '',
+      nguoiDanhGia: r.nguoiDanhGia || currentUser?.fullName || 'Giảng viên Chủ nhiệm',
     });
-    setIsModalOpen(false);
+    setIsModalOpen(true);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      const totalScore = Math.min(100, Math.max(0, (Number(form.diemMuc1) || 0) + (Number(form.diemMuc2) || 0) + (Number(form.diemMuc3) || 0)));
+      const rank = calculateTrainingRank(totalScore);
+
+      if (editingRecord && editingRecord.id) {
+        // Edit existing record
+        const updatedPayload: Partial<RenLuyen> = {
+          diemMuc1: Number(form.diemMuc1) || 0,
+          diemMuc2: Number(form.diemMuc2) || 0,
+          diemMuc3: Number(form.diemMuc3) || 0,
+          diemRL: totalScore,
+          xepLoai: rank,
+          thang: Number(form.thang),
+          nam: Number(form.nam),
+          namHoc: form.namHoc,
+          hocKy: form.hocKy,
+          nhanXet: form.nhanXet,
+          nguoiDanhGia: form.nguoiDanhGia,
+        };
+
+        if (onUpdateTrainingPoint) {
+          await onUpdateTrainingPoint(editingRecord.id, updatedPayload);
+        } else {
+          await apiService.updateTrainingPoint(editingRecord.id, updatedPayload);
+        }
+
+        setLocalPoints((prev) =>
+          prev.map((p) => (p.id === editingRecord.id ? { ...p, ...updatedPayload } : p))
+        );
+        setToastMessage('Đã cập nhật thành công điểm rèn luyện!');
+      } else {
+        // Create new or save comment
+        await onSaveComment({
+          maSV: form.maSV,
+          thang: form.thang,
+          nam: form.nam,
+          namHoc: form.namHoc,
+          diemRL: totalScore,
+          diemMuc1: Number(form.diemMuc1) || 0,
+          diemMuc2: Number(form.diemMuc2) || 0,
+          diemMuc3: Number(form.diemMuc3) || 0,
+          hocKy: form.hocKy,
+          nhanXet: form.nhanXet,
+          nguoiDanhGia: form.nguoiDanhGia,
+        });
+        setToastMessage('Đã lưu đánh giá điểm rèn luyện!');
+      }
+
+      if (onRefreshData) onRefreshData();
+      setIsModalOpen(false);
+      setEditingRecord(null);
+    } catch (err: any) {
+      setToastMessage(err?.message || 'Có lỗi xảy ra khi lưu');
+    } finally {
+      setIsSubmitting(false);
+      setTimeout(() => setToastMessage(null), 3000);
+    }
+  };
+
+  const handleConfirmDeleteIndividual = async () => {
+    if (!deleteIndividualRecord) return;
+    setIsSubmitting(true);
+    try {
+      if (onDeleteTrainingPoint) {
+        await onDeleteTrainingPoint(deleteIndividualRecord.id);
+      } else {
+        await apiService.deleteTrainingPoint(deleteIndividualRecord.id);
+      }
+      setLocalPoints((prev) => prev.filter((p) => p.id !== deleteIndividualRecord.id));
+      setToastMessage(`Đã xóa điểm rèn luyện của sinh viên ${deleteIndividualRecord.maSV}`);
+      if (onRefreshData) onRefreshData();
+      setDeleteIndividualRecord(null);
+    } catch (err: any) {
+      setToastMessage('Lỗi khi xóa điểm rèn luyện');
+    } finally {
+      setIsSubmitting(false);
+      setTimeout(() => setToastMessage(null), 3000);
+    }
+  };
+
+  const handleConfirmDeleteClass = async () => {
+    if (!selectedClass) return;
+    setIsSubmitting(true);
+    try {
+      const params: { thang?: number; nam?: number; hocKy?: string } = {};
+      if (selectedMonth) params.thang = Number(selectedMonth);
+      if (selectedYear) params.nam = Number(selectedYear);
+      if (selectedSemester && selectedSemester !== 'ALL') params.hocKy = selectedSemester;
+
+      if (onDeleteClassTrainingPoints) {
+        await onDeleteClassTrainingPoints(selectedClass, params);
+      } else {
+        await apiService.deleteClassTrainingPoints(selectedClass, params);
+      }
+
+      setLocalPoints((prev) =>
+        prev.filter((p) => {
+          const matchLop = p.lop === selectedClass || classStudentIds.has(p.maSV);
+          if (!matchLop) return true;
+          if (params.thang && p.thang !== params.thang) return true;
+          if (params.nam && p.nam !== params.nam) return true;
+          if (params.hocKy && p.hocKy !== params.hocKy) return true;
+          return false; // delete this
+        })
+      );
+
+      setToastMessage(`Đã xóa thành công điểm rèn luyện của lớp ${selectedClass}`);
+      if (onRefreshData) onRefreshData();
+      setIsDeleteClassModalOpen(false);
+    } catch (err: any) {
+      setToastMessage('Lỗi khi xóa điểm rèn luyện của lớp');
+    } finally {
+      setIsSubmitting(false);
+      setTimeout(() => setToastMessage(null), 3000);
+    }
   };
 
   // Download Sample Template for Class Master Excel Import
   const handleDownloadTemplate = () => {
-    const targetStudents = selectedClass ? students.filter(s => s.lop === selectedClass) : students;
-    
+    const targetStudents = selectedClass ? students.filter((s) => s.lop === selectedClass) : students;
+
     const sampleRows = targetStudents.map((sv, idx) => ({
-      'STT': idx + 1,
+      STT: idx + 1,
       'Mã Sinh Viên': sv.maSV,
       'Họ và Tên': sv.hoTen,
       'Lớp Học': sv.lop || 'Chưa phân lớp',
-      'Tháng Đánh Giá': 11,
+      'Tháng Đánh Giá': 8,
       'Mục I (Học tập & Kỷ luật - Max 40)': 35,
       'Mục II (Phong trào & Nội quy - Max 35)': 30,
       'Mục III (Đạo đức & Lối sống - Max 25)': 20,
       'Tổng Điểm Rèn Luyện (Excel =SUM)': 85,
       'Xếp Loại Rèn Luyện (Excel =IF)': 'Tốt',
       'Học Kỳ': 'HK1',
-      'Năm Học': 2025,
+      'Năm Học': '2026-2027',
       'Nhận Xét Đánh Giá': 'Chấp hành đầy đủ nội quy, tích cực sinh hoạt lớp.',
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(sampleRows);
 
-    // Embed Excel formulas for Total and Rank in template rows
+    // Embed Excel formulas for Total and Rank according to Quy chế 1519/QC-TĐN
     targetStudents.forEach((_, idx) => {
       const r = idx + 2; // header is row 1
       worksheet[`I${r}`] = {
         t: 'n',
         v: 85,
-        f: `SUM(F${r}:H${r})`
+        f: `SUM(F${r}:H${r})`,
       };
-      const rankFormula = `IF(I${r}>=90,"Xuất sắc",IF(I${r}>=80,"Tốt",IF(I${r}>=70,"Khá",IF(I${r}>=60,"TBK",IF(I${r}>=50,"TB",IF(I${r}>=35,"Yếu","Kém"))))))`;
+      const rankFormula = `IF(I${r}>=90,"Xuất sắc",IF(I${r}>=80,"Tốt",IF(I${r}>=65,"Khá",IF(I${r}>=50,"Trung bình",IF(I${r}>=35,"Yếu","Kém")))))`;
       worksheet[`J${r}`] = {
         t: 's',
         v: 'Tốt',
-        f: rankFormula
+        f: rankFormula,
       };
     });
 
@@ -281,7 +438,7 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
     XLSX.writeFile(workbook, fileName);
   };
 
-  // Parse Excel File on Upload
+  // Parse Excel File on Upload with Dynamic Target Academic Period Handling
   const handleExcelFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -319,9 +476,50 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
           const totalScore = Math.min(100, Math.max(0, m1 + m2 + m3));
           const autoRank = calculateTrainingRank(totalScore);
 
-          const thang = Number(row['Tháng Đánh Giá'] ?? row['Tháng'] ?? row['thang'] ?? 11);
-          const hocKy = String(row['Học Kỳ'] ?? row['hocKy'] ?? 'HK1');
-          const nam = Number(row['Năm Học'] ?? row['Năm'] ?? row['nam'] ?? 2025);
+          // Handle Month resolution
+          let thang = 8;
+          if (importTargetThang !== 'AUTO') {
+            thang = Number(importTargetThang);
+          } else {
+            const rawThang =
+              row['Tháng Đánh Giá'] ??
+              row['Tháng'] ??
+              row['thang'] ??
+              row['Tháng/Năm'] ??
+              row['Tháng 8/2025 (HK1)'] ??
+              row['Tháng 8'];
+            if (rawThang !== undefined && rawThang !== null) {
+              const mMatch = String(rawThang).match(/(\d+)/);
+              if (mMatch) thang = parseInt(mMatch[1], 10);
+            }
+          }
+
+          // Target academic year resolution
+          let namHoc = importTargetNamHoc || '2026-2027';
+          const rawNamHoc = row['Năm Học'] ?? row['namHoc'] ?? row['Năm học'];
+          if (rawNamHoc) {
+            const strNam = String(rawNamHoc).trim();
+            if (strNam.includes('-')) namHoc = strNam;
+            else if (/^\d{4}$/.test(strNam)) namHoc = `${strNam}-${parseInt(strNam, 10) + 1}`;
+          }
+
+          // Academic semester
+          let hocKy = importTargetHocKy || 'HK1';
+          const rawHocKy = row['Học Kỳ'] ?? row['hocKy'] ?? row['Học kỳ'];
+          if (rawHocKy) {
+            const strHK = String(rawHocKy).trim();
+            if (strHK.toLowerCase().includes('2') || strHK.toLowerCase().includes('ii')) hocKy = 'HK2';
+            else hocKy = 'HK1';
+          }
+
+          // Compute calendar year based on namHoc (e.g. 2026-2027) and month
+          let startYear = 2026;
+          if (namHoc && namHoc.includes('-')) {
+            startYear = parseInt(namHoc.split('-')[0], 10) || 2026;
+          }
+          // In academic calendar, months >= 8 belong to startYear (e.g. Month 8/2026 for 2026-2027 HK1)
+          const nam = thang >= 8 ? startYear : startYear + 1;
+
           const nhanXet = String(row['Nhận Xét Đánh Giá'] ?? row['Nhận Xét'] ?? row['nhanXet'] ?? 'Chấp hành tốt kỷ luật trường lớp.');
 
           parsed.push({
@@ -336,10 +534,11 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
             autoRank,
             xepLoai: autoRank,
             thang,
-            hocKy,
             nam,
+            namHoc,
+            hocKy,
             nhanXet,
-            nguoiDanhGia: 'Cố vấn HT (Import Excel)',
+            nguoiDanhGia: `Cố vấn HT (Import Excel - ${namHoc})`,
           });
         });
 
@@ -347,10 +546,10 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
           setImportStatus('Không tìm thấy cột Mã Sinh Viên hợp lệ trong file Excel.');
         } else {
           setParsedImportData(parsed);
-          setImportStatus(`Đã đọc thành công ${parsed.length} sinh viên với điểm 3 tiêu chí, tự động tính tổng & xếp loại.`);
+          setImportStatus(`Đã đọc thành công ${parsed.length} sinh viên cho Tháng ${parsed[0]?.thang}/${parsed[0]?.nam} (Năm học ${parsed[0]?.namHoc}), tự động tính tổng & xếp loại theo Quy chế 1519.`);
         }
       } catch (err) {
-        setImportStatus('Lỗi khi đọc file Excel. Vui lòng kiểm tra địđịnh dạng file .xlsx.');
+        setImportStatus('Lỗi khi đọc file Excel. Vui lòng kiểm tra định dạng file .xlsx.');
       }
     };
     reader.readAsBinaryString(file);
@@ -369,14 +568,14 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
 
   // Export Monthly Excel for All Class Students with Formulas
   const handleExportMonthlyExcel = () => {
-    const exportStudents = selectedClass ? students.filter(s => s.lop === selectedClass) : students;
+    const exportStudents = selectedClass ? students.filter((s) => s.lop === selectedClass) : students;
     if (exportStudents.length === 0) {
       alert('Không có dữ liệu sinh viên để xuất file Excel!');
       return;
     }
 
     const exportData = exportStudents.map((sv, index) => {
-      const records = trainingPoints.filter(
+      const records = localPoints.filter(
         (r) => r.maSV.toLowerCase() === sv.maSV.toLowerCase() && (!selectedMonth || r.thang === selectedMonth)
       );
 
@@ -388,11 +587,11 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
       const rank = latestRecord?.xepLoai || calculateTrainingRank(totalScore);
 
       return {
-        'STT': index + 1,
+        STT: index + 1,
         'Mã Sinh Viên': sv.maSV,
         'Họ và Tên': sv.hoTen,
-        'Lớp': sv.lop || 'Chưa phân lớp',
-        'Tháng Đánh Giá': latestRecord ? `Tháng ${latestRecord.thang}/${latestRecord.nam}` : (selectedMonth ? `Tháng ${selectedMonth}` : 'Tháng 11/2025'),
+        Lớp: sv.lop || 'Chưa phân lớp',
+        'Tháng Đánh Giá': latestRecord ? `Tháng ${latestRecord.thang}/${latestRecord.nam}` : (selectedMonth ? `Tháng ${selectedMonth}` : 'Tháng 8/2026'),
         'Mục I: Học tập & Kỷ luật (Max 40)': m1,
         'Mục II: Phong trào & Nội quy (Max 35)': m2,
         'Mục III: Đạo đức & Lối sống (Max 25)': m3,
@@ -405,45 +604,44 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
 
-    // Embed Excel formulas in exported sheet
+    // Embed Excel formulas in exported sheet according to Quy chế 1519
     exportStudents.forEach((_, idx) => {
       const r = idx + 2; // Row 2 onwards
       worksheet[`I${r}`] = {
         t: 'n',
         v: exportData[idx]['Tổng Điểm Rèn Luyện (Công thức SUM)'],
-        f: `SUM(F${r}:H${r})`
+        f: `SUM(F${r}:H${r})`,
       };
-      const rankFormula = `IF(I${r}>=90,"Xuất sắc",IF(I${r}>=80,"Tốt",IF(I${r}>=70,"Khá",IF(I${r}>=60,"TBK",IF(I${r}>=50,"TB",IF(I${r}>=35,"Yếu","Kém"))))))`;
+      const rankFormula = `IF(I${r}>=90,"Xuất sắc",IF(I${r}>=80,"Tốt",IF(I${r}>=65,"Khá",IF(I${r}>=50,"Trung bình",IF(I${r}>=35,"Yếu","Kém")))))`;
       worksheet[`J${r}`] = {
         t: 's',
         v: exportData[idx]['Xếp Loại Rèn Luyện (Công thức IF)'],
-        f: rankFormula
+        f: rankFormula,
       };
     });
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'DiemRenLuyen_3TieuChi');
-    const fileName = `DiemRenLuyen_3TieuChi_${selectedMonth ? `Thang_${selectedMonth}` : 'Thang_11'}_${selectedClass || 'TatCaLop'}.xlsx`;
+    const fileName = `DiemRenLuyen_3TieuChi_${selectedMonth ? `Thang_${selectedMonth}` : 'Thang_8'}_${selectedClass || 'TatCaLop'}.xlsx`;
     XLSX.writeFile(workbook, fileName);
   };
 
   // Export Semester & Academic Year Total Excel storing 9 months & computing Average + Auto Rank
   const handleExportSemesterYearExcel = () => {
-    const exportStudents = selectedClass ? students.filter(s => s.lop === selectedClass) : students;
+    const exportStudents = selectedClass ? students.filter((s) => s.lop === selectedClass) : students;
     if (exportStudents.length === 0) {
       alert('Không có dữ liệu sinh viên để xuất báo cáo!');
       return;
     }
 
     const exportData = exportStudents.map((sv, index) => {
-      const svPoints = trainingPoints.filter(
+      const svPoints = localPoints.filter(
         (r) => r.maSV.toLowerCase() === sv.maSV.toLowerCase()
       );
 
       const getScoreForMonth = (m: number) => {
         const found = svPoints.find((r) => r.thang === m);
         if (found) return found.diemRL;
-        // Default base score if not explicitly recorded for month
         return svPoints[0]?.diemRL || 82;
       };
 
@@ -461,11 +659,11 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
       const finalRank = calculateTrainingRank(avgScore);
 
       return {
-        'STT': index + 1,
+        STT: index + 1,
         'Mã Sinh Viên': sv.maSV,
         'Họ và Tên': sv.hoTen,
         'Lớp Học': sv.lop || 'Chưa phân lớp',
-        'Khoa': sv.khoa || 'Khoa Chuyên Ngành',
+        Khoa: sv.khoa || 'Khoa Chuyên Ngành',
         'Tháng 9': m9,
         'Tháng 10': m10,
         'Tháng 11': m11,
@@ -477,38 +675,58 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
         'Tháng 5': m5,
         'Điểm TB Rèn Luyện (Excel =AVERAGE)': avgScore,
         'Xếp Loại Tổng Kết (Excel =IF)': finalRank,
-        'Ghi Chú Admin / Đào Tạo': finalRank === 'Xuất sắc' ? 'Khen thưởng cấp Khoa / Trường' : (finalRank === 'Yếu' || finalRank === 'Kém' ? 'Cần cố vấn học tập nhắc nhở' : 'Đạt yêu cầu rèn luyện'),
+        'Ghi Chú Admin / Đào Tạo':
+          finalRank === 'Xuất sắc'
+            ? 'Khen thưởng cấp Khoa / Trường'
+            : finalRank === 'Yếu' || finalRank === 'Kém'
+            ? 'Cần cố vấn học tập nhắc nhở'
+            : 'Đạt yêu cầu rèn luyện',
       };
     });
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
 
-    // Embed Excel formulas for 9-month Average (Col O) and Final Auto Rank (Col P)
+    // Embed Excel formulas for 9-month Average (Col O) and Final Auto Rank (Col P) according to Quy chế 1519
     exportStudents.forEach((_, idx) => {
       const r = idx + 2;
       worksheet[`O${r}`] = {
         t: 'n',
         v: exportData[idx]['Điểm TB Rèn Luyện (Excel =AVERAGE)'],
-        f: `ROUND(AVERAGE(F${r}:N${r}),0)`
+        f: `ROUND(AVERAGE(F${r}:N${r}),0)`,
       };
 
-      const rankFormula = `IF(O${r}>=90,"Xuất sắc",IF(O${r}>=80,"Tốt",IF(O${r}>=70,"Khá",IF(O${r}>=60,"TBK",IF(O${r}>=50,"TB",IF(O${r}>=35,"Yếu","Kém"))))))`;
+      const rankFormula = `IF(O${r}>=90,"Xuất sắc",IF(O${r}>=80,"Tốt",IF(O${r}>=65,"Khá",IF(O${r}>=50,"Trung bình",IF(O${r}>=35,"Yếu","Kém")))))`;
       worksheet[`P${r}`] = {
         t: 's',
         v: exportData[idx]['Xếp Loại Tổng Kết (Excel =IF)'],
-        f: rankFormula
+        f: rankFormula,
       };
     });
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'TongKet_Diem_9Thang');
-    const nextYear = Number(selectedYear) + 1;
-    const fileName = `BaoCao_TongKet_DiemRenLuyen_9Thang_NamHoc_${selectedYear}-${nextYear}_${selectedClass || 'TatCaLop'}.xlsx`;
+    const displayYear = selectedYear || 2026;
+    const nextYear = Number(displayYear) + 1;
+    const fileName = `BaoCao_TongKet_DiemRenLuyen_9Thang_NamHoc_${displayYear}-${nextYear}_${selectedClass || 'TatCaLop'}.xlsx`;
     XLSX.writeFile(workbook, fileName);
   };
 
   return (
     <div className="space-y-6">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-3 rounded-2xl shadow-2xl border border-zinc-700 animate-in fade-in slide-in-from-bottom-4">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 dark:text-emerald-600 shrink-0" />
+          <span className="text-sm font-semibold">{toastMessage}</span>
+          <button
+            onClick={() => setToastMessage(null)}
+            className="p-1 hover:bg-zinc-800 dark:hover:bg-zinc-200 rounded-lg ml-2"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Title & Actions Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-zinc-900 p-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm">
         <div>
@@ -535,7 +753,7 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
             <span>{viewMode === 'HIERARCHICAL' ? 'Xem Tất Cả (Dạng Danh Sách)' : 'Phân Cấp Theo Lớp'}</span>
           </button>
 
-          {userRole === 'LECTURER' && (
+          {(userRole === 'LECTURER' || userRole === 'ADMIN') && (
             <>
               <button
                 id="btn-import-training-excel"
@@ -548,11 +766,11 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
 
               <button
                 id="btn-add-comment"
-                onClick={() => handleOpenComment()}
+                onClick={() => handleOpenNew()}
                 className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs px-4 py-2.5 rounded-xl shadow-md shadow-blue-500/20 transition-all cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
-                Nhập Đánh Giá Rèn Luyện
+                <span>Nhập Đánh Giá Mới</span>
               </button>
             </>
           )}
@@ -570,9 +788,6 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
                   <span>Nhập File Cho Cả Lớp</span>
                 </div>
                 <h4 className="text-sm font-bold mt-1">Import Excel Đánh Giá Rèn Luyện</h4>
-                <p className="text-[11px] text-emerald-100/80 mt-0.5">
-                  Nhập bảng điểm rèn luyện cho sinh viên cả lớp. Tự động xếp loại.
-                </p>
               </div>
               <button
                 onClick={() => setIsImportModalOpen(true)}
@@ -591,9 +806,6 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
                 <span>Xuất Excel Theo Tháng</span>
               </div>
               <h4 className="text-sm font-bold mt-1">Bảng Điểm Rèn Luyện (Công Thức Excel)</h4>
-              <p className="text-[11px] text-blue-100/80 mt-0.5">
-                Xuất danh sách điểm rèn luyện của lớp. Nhúng công thức Excel tự động.
-              </p>
             </div>
             <button
               onClick={handleExportMonthlyExcel}
@@ -611,9 +823,6 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
                 <span>Báo Cáo Tổng Admin</span>
               </div>
               <h4 className="text-sm font-bold mt-1">File Báo Cáo 9 Tháng & Năm Học</h4>
-              <p className="text-[11px] text-purple-100/80 mt-0.5">
-                Lưu trữ và tổng hợp điểm rèn luyện 9 tháng trong năm học.
-              </p>
             </div>
             <button
               onClick={handleExportSemesterYearExcel}
@@ -751,9 +960,6 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
                   <Sparkles className="w-5 h-5 text-amber-600" />
                   <span>Bảng Điểm Rèn Luyện Lớp: {selectedClass}</span>
                 </h3>
-                <p className="text-xs text-amber-800 dark:text-amber-300 mt-0.5">
-                  Đánh giá chi tiết 3 mục nội dung, xếp loại 7 mức (Xuất sắc, Tốt, Khá, TBK, TB, Yếu, Kém) & xuất báo cáo Admin
-                </p>
               </div>
 
               <div className="flex items-center gap-2">
@@ -878,7 +1084,7 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
                         </span>
                         <span className="text-xs font-semibold text-zinc-600 dark:text-zinc-300 flex items-center gap-1">
                           <Calendar className="w-3.5 h-3.5 text-zinc-400" />
-                          Tháng {r.thang}/{r.nam} ({r.hocKy || 'HK1'})
+                          Tháng {r.thang}/{r.nam} • {r.hocKy || 'HK1'}
                         </span>
                       </div>
 
@@ -914,12 +1120,24 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
                     <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-2 border-t border-zinc-100 dark:border-zinc-800">
                       <span>Đánh giá bởi: {r.nguoiDanhGia || 'Cố vấn HT'}</span>
                       {(userRole === 'ADMIN' || userRole === 'LECTURER') && (
-                        <button
-                          onClick={() => handleOpenComment(r)}
-                          className="text-blue-600 hover:underline font-semibold cursor-pointer"
-                        >
-                          Chỉnh sửa điểm 3 mục
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleOpenEdit(r)}
+                            className="inline-flex items-center gap-1 text-xs font-bold text-blue-600 dark:text-blue-400 hover:text-blue-700 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 px-2.5 py-1.5 rounded-lg border border-blue-200 dark:border-blue-800 transition-all cursor-pointer"
+                            title="Sửa điểm rèn luyện của sinh viên này"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span>Sửa điểm</span>
+                          </button>
+                          <button
+                            onClick={() => setDeleteIndividualRecord(r)}
+                            className="inline-flex items-center gap-1 text-xs font-bold text-rose-600 dark:text-rose-400 hover:text-rose-700 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 dark:hover:bg-rose-900/60 px-2.5 py-1.5 rounded-lg border border-rose-200 dark:border-rose-800 transition-all cursor-pointer"
+                            title="Xóa điểm rèn luyện của sinh viên này"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Xóa</span>
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -952,10 +1170,72 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
               </h3>
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-5">
-              Hệ thống tự động đọc điểm rèn luyện, tính tổng điểm và tự động xếp mức phân loại (Xuất sắc, Tốt, Khá, TBK, TB, Yếu, Kém).
+              Hệ thống tự động đọc điểm rèn luyện, tính tổng điểm và tự động phân loại 6 mức chuẩn Quy chế 1519 (Xuất sắc, Tốt, Khá, Trung bình, Yếu, Kém).
             </p>
 
             <div className="space-y-5">
+              {/* Target Academic Year & Period Configuration */}
+              <div className="bg-zinc-50 dark:bg-zinc-800/60 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-700">
+                <div className="flex items-center gap-2 mb-2 text-xs font-bold text-zinc-900 dark:text-white">
+                  <Calendar className="w-4 h-4 text-blue-500" />
+                  <span>Cấu hình Đợt Đánh Giá Mục Tiêu (Quy chuẩn dữ liệu khi nhập)</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
+                      Năm Học Mục Tiêu *
+                    </label>
+                    <select
+                      value={importTargetNamHoc}
+                      onChange={(e) => setImportTargetNamHoc(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl font-medium"
+                    >
+                      <option value="2026-2027">Năm học 2026-2027 (Mặc định)</option>
+                      <option value="2025-2026">Năm học 2025-2026</option>
+                      <option value="2024-2025">Năm học 2024-2025</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
+                      Học Kỳ Mục Tiêu *
+                    </label>
+                    <select
+                      value={importTargetHocKy}
+                      onChange={(e) => setImportTargetHocKy(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl font-medium"
+                    >
+                      <option value="HK1">Học kỳ 1 (HK1)</option>
+                      <option value="HK2">Học kỳ 2 (HK2)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
+                      Tháng Đánh Giá
+                    </label>
+                    <select
+                      value={importTargetThang}
+                      onChange={(e) => setImportTargetThang(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl font-medium"
+                    >
+                      <option value="AUTO">Tự động nhận theo file Excel</option>
+                      <option value="8">Tháng 8 (Bắt đầu HK1)</option>
+                      <option value="9">Tháng 9</option>
+                      <option value="10">Tháng 10</option>
+                      <option value="11">Tháng 11</option>
+                      <option value="12">Tháng 12</option>
+                      <option value="1">Tháng 1</option>
+                      <option value="2">Tháng 2</option>
+                      <option value="3">Tháng 3</option>
+                      <option value="4">Tháng 4</option>
+                      <option value="5">Tháng 5</option>
+                    </select>
+                  </div>
+                </div>
+                <p className="text-[11px] text-zinc-500 mt-2">
+                  * Ghi chú: Nếu file Excel có tiêu đề cột "Tháng 8/2025 (HK1)", khi nhập vào năm học <strong>{importTargetNamHoc}</strong>, hệ thống tự động chuẩn hóa ghi nhận vào Năm học <strong>{importTargetNamHoc}</strong> (lịch năm 2026) theo đúng thời gian đào tạo.
+                </p>
+              </div>
+
               {/* Step 1: Download Template */}
               <div className="bg-emerald-50/70 dark:bg-emerald-950/40 p-4 rounded-2xl border border-emerald-200 dark:border-emerald-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
@@ -1105,20 +1385,23 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
             <div className="flex items-center gap-2 mb-2">
               <Award className="w-5 h-5 text-amber-500" />
               <h3 className="text-lg font-bold text-zinc-900 dark:text-white">
-                Nhập Điểm Rèn Luyện 3 Mục & Nhận Xét
+                {editingRecord ? 'Chỉnh Sửa Điểm Rèn Luyện 3 Mục' : 'Nhập Điểm Rèn Luyện 3 Mục & Nhận Xét'}
               </h3>
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-              Nhập chi tiết 3 nội dung đánh giá. Hệ thống tự động tính tổng điểm (Max 100) & phân mức xếp loại.
+              Nhập chi tiết 3 nội dung đánh giá theo Quy chế 1519/QC-TĐN. Hệ thống tự động tính tổng điểm và phân loại 6 mức chuẩn.
             </p>
 
             <form onSubmit={handleSubmit} className="space-y-4 text-xs">
               <div>
-                <label className="font-semibold block mb-1">Chọn Sinh viên *</label>
+                <label className="font-semibold block mb-1">
+                  Chọn Sinh viên * {editingRecord && <span className="text-blue-600 font-normal">(Đang chỉnh sửa)</span>}
+                </label>
                 <select
                   value={form.maSV}
+                  disabled={Boolean(editingRecord)}
                   onChange={(e) => setForm({ ...form, maSV: e.target.value })}
-                  className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
+                  className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl disabled:opacity-75"
                   required
                 >
                   {students.map((s) => (
@@ -1129,7 +1412,24 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
                 </select>
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                <div>
+                  <label className="font-semibold block mb-1">Năm Học</label>
+                  <select
+                    value={form.namHoc}
+                    onChange={(e) => {
+                      const nh = e.target.value;
+                      const y = parseInt(nh.split('-')[0], 10) || 2026;
+                      setForm({ ...form, namHoc: nh, nam: form.thang >= 8 ? y : y + 1 });
+                    }}
+                    className="w-full p-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
+                  >
+                    <option value="2026-2027">2026-2027</option>
+                    <option value="2025-2026">2025-2026</option>
+                    <option value="2024-2025">2024-2025</option>
+                  </select>
+                </div>
+
                 <div>
                   <label className="font-semibold block mb-1">Học Kỳ</label>
                   <select
@@ -1143,12 +1443,17 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
                 </div>
 
                 <div>
-                  <label className="font-semibold block mb-1">Tháng</label>
+                  <label className="font-semibold block mb-1">Tháng Đánh Giá</label>
                   <select
                     value={form.thang}
-                    onChange={(e) => setForm({ ...form, thang: Number(e.target.value) })}
+                    onChange={(e) => {
+                      const m = Number(e.target.value);
+                      const y = parseInt((form.namHoc || '2026-2027').split('-')[0], 10) || 2026;
+                      setForm({ ...form, thang: m, nam: m >= 8 ? y : y + 1 });
+                    }}
                     className="w-full p-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
                   >
+                    <option value={8}>Tháng 8 (Bắt đầu HK1)</option>
                     <option value={9}>Tháng 9</option>
                     <option value={10}>Tháng 10</option>
                     <option value={11}>Tháng 11</option>
@@ -1162,7 +1467,7 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
                 </div>
 
                 <div>
-                  <label className="font-semibold block mb-1">Năm</label>
+                  <label className="font-semibold block mb-1">Năm Lịch</label>
                   <input
                     type="number"
                     value={form.nam}
@@ -1263,17 +1568,142 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
               <div className="pt-3 flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={() => {
+                    setIsModalOpen(false);
+                    setEditingRecord(null);
+                  }}
                   className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 font-semibold cursor-pointer"
                 >
                   Hủy
                 </button>
-                <button type="submit" className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold flex items-center gap-1.5 cursor-pointer shadow-md shadow-blue-600/20">
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold flex items-center gap-1.5 cursor-pointer shadow-md shadow-blue-600/20"
+                >
                   <Send className="w-3.5 h-3.5" />
-                  Lưu Đánh Giá
+                  {isSubmitting ? 'Đang lưu...' : editingRecord ? 'Cập Nhật Điểm' : 'Lưu Đánh Giá'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CONFIRM DELETE INDIVIDUAL TRAINING POINT */}
+      {deleteIndividualRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl max-w-md w-full p-6 shadow-2xl relative">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-3 bg-rose-100 dark:bg-rose-950/60 rounded-2xl text-rose-600">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-zinc-900 dark:text-white">
+                  Xác Nhận Xóa Điểm Rèn Luyện
+                </h3>
+                <p className="text-xs text-zinc-500">Hành động này không thể hoàn tác</p>
+              </div>
+            </div>
+
+            <div className="bg-zinc-50 dark:bg-zinc-800/60 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-700/80 mb-5 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Sinh viên:</span>
+                <strong className="text-zinc-900 dark:text-white">
+                  {deleteIndividualRecord.hoTenSV || 'Sinh viên'} ({deleteIndividualRecord.maSV})
+                </strong>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Lớp:</span>
+                <span className="font-medium text-zinc-800 dark:text-zinc-200">{deleteIndividualRecord.lop || selectedClass}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Kỳ đánh giá:</span>
+                <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                  Tháng {deleteIndividualRecord.thang}/{deleteIndividualRecord.nam} ({deleteIndividualRecord.hocKy || 'HK1'})
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Điểm & Xếp loại:</span>
+                <strong className="text-blue-600 dark:text-blue-400">
+                  {deleteIndividualRecord.diemRL} điểm — {deleteIndividualRecord.xepLoai || calculateTrainingRank(deleteIndividualRecord.diemRL)}
+                </strong>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setDeleteIndividualRecord(null)}
+                className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-semibold text-xs cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={handleConfirmDeleteIndividual}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-rose-600/20"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{isSubmitting ? 'Đang xóa...' : 'Xóa Bản Ghi'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CONFIRM DELETE CLASS TRAINING POINTS */}
+      {isDeleteClassModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl max-w-md w-full p-6 shadow-2xl relative">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-3 bg-rose-100 dark:bg-rose-950/60 rounded-2xl text-rose-600">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-zinc-900 dark:text-white">
+                  Xác Nhận Xóa ĐRL Cả Lớp
+                </h3>
+                <p className="text-xs text-rose-600 font-semibold">Cảnh báo: Toàn bộ bản ghi của lớp sẽ bị xóa</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-600 dark:text-zinc-300 mb-4 leading-relaxed">
+              Bạn có chắc chắn muốn xóa điểm rèn luyện của toàn bộ sinh viên thuộc lớp <strong className="text-zinc-900 dark:text-white">{selectedClass}</strong>?
+            </p>
+
+            <div className="bg-amber-50 dark:bg-amber-950/40 p-4 rounded-2xl border border-amber-200 dark:border-amber-800 mb-5 space-y-1.5 text-xs text-amber-900 dark:text-amber-200">
+              <p className="font-semibold">Phạm vi áp dụng theo bộ lọc hiện tại:</p>
+              <ul className="list-disc list-inside space-y-0.5 text-[11px] text-amber-800 dark:text-amber-300">
+                <li>Lớp: <strong>{selectedClass}</strong></li>
+                <li>Tháng: <strong>{selectedMonth ? `Tháng ${selectedMonth}` : 'Tất cả các tháng'}</strong></li>
+                <li>Học kỳ: <strong>{selectedSemester || 'Tất cả học kỳ'}</strong></li>
+                <li>Năm: <strong>{selectedYear || 'Tất cả các năm'}</strong></li>
+              </ul>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsDeleteClassModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-semibold text-xs cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={async () => {
+                  await handleConfirmDeleteClass();
+                  setIsDeleteClassModalOpen(false);
+                }}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-rose-600/20"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{isSubmitting ? 'Đang xóa...' : 'Xác Nhận Xóa Cả Lớp'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

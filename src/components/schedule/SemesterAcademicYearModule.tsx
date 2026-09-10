@@ -294,7 +294,7 @@ export const SemesterAcademicYearModule: React.FC<SemesterAcademicYearModuleProp
                   <label className="font-semibold block mb-1">Mã Năm Học (NamHocID)</label>
                   <input
                     type="text"
-                    placeholder="VD: NH2026-2027 (f trng sẽ tự sinh)"
+                    placeholder="VD: NH2026-2027 (để trống sẽ tự sinh)"
                     value={namHocForm.namHocID}
                     onChange={(e) => setNamHocForm({ ...namHocForm, namHocID: e.target.value })}
                     className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border rounded-xl font-mono"
@@ -350,7 +350,7 @@ export const SemesterAcademicYearModule: React.FC<SemesterAcademicYearModuleProp
                   <label className="font-semibold block mb-1">Mã Học Kỳ (HocKyID)</label>
                   <input
                     type="text"
-                    placeholder="VD: HK1-2026-2027 (tự sinh nếu f trng)"
+                    placeholder="VD: HK1-2026-2027 (tự sinh nếu để trống)"
                     value={hocKyForm.hocKyID}
                     onChange={(e) => setHocKyForm({ ...hocKyForm, hocKyID: e.target.value })}
                     className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border rounded-xl font-mono"

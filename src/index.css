@@ -3,11 +3,14 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
-  html, body {
+  html, body, input, select, textarea, button, optgroup {
     font-family: 'Be Vietnam Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+  }
+
+  html, body {
     scroll-behavior: smooth;
   }
 
