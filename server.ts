@@ -1309,13 +1309,10 @@ async function startServer() {
         createdAt: new Date().toISOString(),
       };
       const saved = await createDiemDanh(item);
-      // Auto-calculate & sync student training points (Mục I: Chuyên cần & Ý thức học tập)
-      const syncedRL = await syncTrainingPointFromAttendance(item.maSV, item.lop, item.ngay);
       return res.status(201).json({
         success: true,
-        message: 'Ghi nhận điểm danh và cập nhật điểm rèn luyện chuyên cần thành công',
+        message: 'Ghi nhận điểm danh thành công',
         data: saved,
-        trainingPoint: syncedRL,
       });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
@@ -1325,8 +1322,7 @@ async function startServer() {
     try {
       const { id } = req.params;
       await deleteDiemDanh(id);
-      await syncAllTrainingPointsFromAttendance();
-      return res.json({ success: true, message: 'Đã xóa bản ghi điểm danh và cập nhật lại điểm rèn luyện chuyên cần' });
+      return res.json({ success: true, message: 'Đã xóa bản ghi điểm danh thành công' });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
     }

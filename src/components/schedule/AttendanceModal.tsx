@@ -64,28 +64,6 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({
   const [formCoPhep, setFormCoPhep] = useState<boolean>(false);
   const [formGhiChu, setFormGhiChu] = useState<string>('');
 
-  // Sync Training Points State
-  const [isSyncingTrainingPoints, setIsSyncingTrainingPoints] = useState<boolean>(false);
-  const [syncStatusMessage, setSyncStatusMessage] = useState<string>('');
-
-  const handleSyncTrainingPoints = async () => {
-    setIsSyncingTrainingPoints(true);
-    setSyncStatusMessage('');
-    try {
-      const res = await apiService.syncAttendanceTrainingPoints();
-      if (res.success) {
-        setSyncStatusMessage(res.message || 'Đã tính và đồng bộ điểm rèn luyện chuyên cần thành công!');
-      } else {
-        setSyncStatusMessage(res.message || 'Lỗi khi đồng bộ điểm rèn luyện');
-      }
-    } catch {
-      setSyncStatusMessage('Đồng bộ thất bại');
-    } finally {
-      setIsSyncingTrainingPoints(false);
-      setTimeout(() => setSyncStatusMessage(''), 5000);
-    }
-  };
-
   if (!isOpen) return null;
 
   // Filter subjects accessible by Lecturer or Admin
@@ -386,29 +364,13 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({
                           {attendanceContext.tenMH} ({attendanceContext.maMH}) • Lớp {attendanceContext.lop || 'chưa xác định'} • Ngày {attendanceContext.ngay}
                         </p>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={handleSyncTrainingPoints}
-                          disabled={isSyncingTrainingPoints}
-                          className="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all"
-                        >
-                          <UserCheck className="w-4 h-4" />
-                          {isSyncingTrainingPoints ? 'Đang tính...' : 'Tính điểm rèn luyện chuyên cần'}
-                        </button>
-                        <button
-                          onClick={() => handleExportAttendanceExcel()}
-                          className="inline-flex items-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl"
-                        >
-                          <FileSpreadsheet className="w-4 h-4" /> Xuất Excel tổng hợp
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => handleExportAttendanceExcel()}
+                        className="inline-flex items-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl"
+                      >
+                        <FileSpreadsheet className="w-4 h-4" /> Xuất Excel tổng hợp
+                      </button>
                     </div>
-                    {syncStatusMessage && (
-                      <div className="mt-3 p-2.5 bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-700 rounded-xl text-emerald-800 dark:text-emerald-200 text-xs font-semibold flex items-center gap-2">
-                        <CheckCircle className="w-4 h-4 text-emerald-600" />
-                        <span>{syncStatusMessage}</span>
-                      </div>
-                    )}
                   </div>
 
                   <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
@@ -512,48 +474,28 @@ export const AttendanceModal: React.FC<AttendanceModalProps> = ({
                 </div>
               </div>
 
-              {/* Excel Export & Sync Action Row */}
+              {/* Excel Export Action Row */}
               <div className="flex flex-wrap items-center justify-between gap-3 bg-indigo-50/70 dark:bg-indigo-950/40 p-3.5 rounded-2xl border border-indigo-200 dark:border-indigo-800/60">
                 <p className="text-xs text-indigo-950 dark:text-indigo-200 font-medium flex items-center gap-2">
                   <Users className="w-4 h-4 text-indigo-600" />
                   <span>Danh sách điểm danh lớp: <strong className="font-bold">{selectedClass === 'ALL' ? 'Tất cả Lớp' : selectedClass}</strong> ({filteredSummaries.length} sinh viên)</span>
                 </p>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <button
-                    onClick={handleSyncTrainingPoints}
-                    disabled={isSyncingTrainingPoints}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
-                  >
-                    <UserCheck className="w-4 h-4" />
-                    <span>{isSyncingTrainingPoints ? 'Đang tính điểm...' : 'Tính Điểm Rèn Luyện Chuyên Cần'}</span>
-                  </button>
-                  <button
-                    onClick={handleExportAttendanceExcel}
-                    className="inline-flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
-                  >
-                    <FileSpreadsheet className="w-4 h-4" />
-                    <span>Xuất File Excel Điểm Danh</span>
-                  </button>
-                </div>
+                <button
+                  onClick={handleExportAttendanceExcel}
+                  className="inline-flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Xuất File Excel Điểm Danh</span>
+                </button>
               </div>
-
-              {syncStatusMessage && (
-                <div className="p-3 bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-700 rounded-xl text-emerald-800 dark:text-emerald-200 text-xs font-semibold flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-emerald-600" />
-                  <span>{syncStatusMessage}</span>
-                </div>
-              )}
 
               {/* Attendance Rule Banner */}
               <div className="flex items-start gap-3 p-4 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 rounded-2xl text-amber-800 dark:text-amber-300 text-xs">
                 <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-                <div className="space-y-1">
-                  <p className="font-bold">Quy chế Chuyên cần & Tính Điểm Rèn Luyện (Mục I):</p>
-                  <p>
-                    • Điểm danh tự động cập nhật <span className="font-bold text-indigo-700 dark:text-indigo-300">Mục I: Ý thức học tập & Chuyên cần (tối đa 40 điểm)</span> trong Điểm rèn luyện của sinh viên (chuẩn 40 điểm, trừ 4 điểm/lần vắng không phép, trừ 1.5 điểm/lần có phép).
-                  </p>
-                  <p>
-                    • Nếu tổng số tiết nghỉ của sinh viên đạt từ <span className="font-bold text-red-600 dark:text-red-400">20% trở lên</span>, sinh viên thuộc diện <span className="font-bold text-red-600 dark:text-red-400">CẤM THI</span> học phần đó và sẽ tự động nhận cảnh báo khẩn ở chuông thông báo.
+                <div>
+                  <p className="font-bold">Quy chế Chuyên cần & Cấm Thi (Nghỉ học 20%):</p>
+                  <p className="mt-1">
+                    Số tiết quy định = <span className="font-semibold">Số tín chỉ × 15 tiết</span>. Nếu tổng số tiết nghỉ của sinh viên đạt từ <span className="font-bold text-red-600 dark:text-red-400">20% trở lên</span>, sinh viên thuộc diện <span className="font-bold text-red-600 dark:text-red-400">NGUY CƠ BỊ CẤM THI</span> học phần đó và sẽ tự động nhận cảnh báo khẩn ở chuông thông báo.
                   </p>
                 </div>
               </div>

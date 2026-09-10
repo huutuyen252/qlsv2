@@ -20,8 +20,13 @@ import { ImportWizard } from './components/admin/ImportWizard';
 import { AdminBackupModule } from './components/admin/AdminBackupModule';
 import { AdminAuditLogsModule } from './components/admin/AdminAuditLogsModule';
 import { getAcademicPeriod } from './utils/academicCalendar';
+import { parseRouteFromPath, getRouteMeta, updateBrowserUrl } from './utils/navigation';
+import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
+  // Initial route resolution from window.location.pathname
+  const initialRoute = typeof window !== 'undefined' ? parseRouteFromPath(window.location.pathname) : { view: 'dashboard' };
+
   // Restore current user and last active timestamp (10 min timeout)
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     try {
@@ -50,18 +55,24 @@ export default function App() {
     return null;
   });
 
-  // Restore current view on F5 / reload
+  // Restore current view on F5 / reload or direct URL route
   const [currentView, setCurrentView] = useState<string>(() => {
+    if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+      return initialRoute.view;
+    }
     try {
       const savedView = localStorage.getItem('app_current_view');
-      return savedView || 'dashboard';
+      return savedView || initialRoute.view || 'dashboard';
     } catch {
-      return 'dashboard';
+      return initialRoute.view || 'dashboard';
     }
   });
 
-  // Restore admin sub-tab on F5 / reload
+  // Restore admin sub-tab on F5 / reload or direct URL route
   const [adminSubTab, setAdminSubTab] = useState<string>(() => {
+    if (initialRoute.adminTab) {
+      return initialRoute.adminTab;
+    }
     try {
       const savedAdminTab = localStorage.getItem('app_admin_subtab');
       return savedAdminTab || 'admin-overview';
@@ -101,8 +112,37 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // Persist Current View & Admin Tab on change
+  // Handle navigation across all modules and update browser address bar
+  const handleNavigate = (view: string, adminTab?: string) => {
+    const canonicalView = view === 'retake' ? 'retakes' : view;
+    if (adminTab) {
+      setAdminSubTab(adminTab);
+    }
+    setCurrentView(canonicalView);
+    updateBrowserUrl(canonicalView, adminTab || adminSubTab, false);
+  };
+
+  // Browser Back & Forward (popstate) event listener
   useEffect(() => {
+    const handlePopState = () => {
+      const parsed = parseRouteFromPath(window.location.pathname);
+      setCurrentView(parsed.view);
+      if (parsed.adminTab) {
+        setAdminSubTab(parsed.adminTab);
+      }
+      const meta = getRouteMeta(parsed.view, parsed.adminTab);
+      if (meta.title) {
+        document.title = meta.title;
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Persist Current View & Admin Tab on change and update Browser URL Bar
+  useEffect(() => {
+    updateBrowserUrl(currentView, adminSubTab, false);
     try {
       localStorage.setItem('app_current_view', currentView);
     } catch {
@@ -111,6 +151,9 @@ export default function App() {
   }, [currentView]);
 
   useEffect(() => {
+    if (currentView === 'admin' || currentView === 'users') {
+      updateBrowserUrl(currentView, adminSubTab, false);
+    }
     try {
       localStorage.setItem('app_admin_subtab', adminSubTab);
     } catch {
@@ -639,9 +682,13 @@ export default function App() {
           currentAdminTab={currentView === 'users' ? 'admin-users' : adminSubTab}
           onSelectAdminTab={(tab) => {
             setAdminSubTab(tab);
-            setCurrentView('admin');
+            if (tab === 'admin-users') {
+              handleNavigate('users', tab);
+            } else {
+              handleNavigate('admin', tab);
+            }
           }}
-          onExitAdminConsole={() => setCurrentView('dashboard')}
+          onExitAdminConsole={() => handleNavigate('dashboard')}
           onLogout={() => {
             setCurrentUser(null);
             showToast('Đã đăng xuất tài khoản');
@@ -672,7 +719,14 @@ export default function App() {
               retakes={retakes}
               subjects={subjects}
               activeSemester={activeSemester}
-              onNavigateTab={(tab) => setAdminSubTab(tab)}
+              onNavigateTab={(tab) => {
+                setAdminSubTab(tab);
+                if (tab === 'admin-users') {
+                  handleNavigate('users', tab);
+                } else {
+                  handleNavigate('admin', tab);
+                }
+              }}
             />
           )}
 
@@ -711,7 +765,7 @@ export default function App() {
             }}
             activeSemester={activeSemester}
             onChangeSemester={setActiveSemester}
-            onSwitchView={setCurrentView}
+            onSwitchView={handleNavigate}
             onUpdateUser={handleUpdateUser}
             showToast={showToast}
             schedule={filteredSchedule}
@@ -725,124 +779,135 @@ export default function App() {
           <div className="flex-1 flex flex-col md:flex-row max-w-7xl w-full mx-auto">
             <Sidebar
               currentView={currentView}
-              onSelectView={setCurrentView}
+              onSelectView={handleNavigate}
               userRole={currentUser?.role}
             />
 
             <main className="flex-1 p-4 md:p-6 lg:p-8 min-w-0">
-              {currentView === 'dashboard' && (
-                <ReportsModule
-                  userRole={currentUser?.role || 'STUDENT'}
-                  currentStudentCode={currentStudentCode}
-                  activeSemester={activeSemester}
-                  semesters={semesters}
-                  academicYears={academicYears}
-                  students={filteredStudents}
-                  grades={filteredGrades}
-                  schedule={filteredSchedule}
-                  subjects={subjects}
-                  trainingPoints={filteredTrainingPoints}
-                  onSwitchView={setCurrentView}
-                />
-              )}
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={currentView === 'retake' ? 'retakes' : currentView}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.22, ease: 'easeOut' }}
+                  className="w-full"
+                >
+                  {currentView === 'dashboard' && (
+                    <ReportsModule
+                      userRole={currentUser?.role || 'STUDENT'}
+                      currentStudentCode={currentStudentCode}
+                      activeSemester={activeSemester}
+                      semesters={semesters}
+                      academicYears={academicYears}
+                      students={filteredStudents}
+                      grades={filteredGrades}
+                      schedule={filteredSchedule}
+                      subjects={subjects}
+                      trainingPoints={filteredTrainingPoints}
+                      onSwitchView={handleNavigate}
+                    />
+                  )}
 
-              {currentView === 'subjects' && (
-                <SubjectListModule
-                  subjects={subjects}
-                  students={students}
-                  userRole={currentUser?.role || 'STUDENT'}
-                  studentClass={studentClass}
-                  onRefreshData={loadAllData}
-                  showToast={showToast}
-                />
-              )}
+                  {currentView === 'subjects' && (
+                    <SubjectListModule
+                      subjects={subjects}
+                      students={students}
+                      userRole={currentUser?.role || 'STUDENT'}
+                      studentClass={studentClass}
+                      onRefreshData={loadAllData}
+                      showToast={showToast}
+                    />
+                  )}
 
-              {currentView === 'students' && (
-                <StudentProfileModule
-                  students={filteredStudents}
-                  userRole={currentUser?.role || 'STUDENT'}
-                  currentStudentCode={currentStudentCode}
-                  currentUser={currentUser}
-                  onAddStudent={handleAddStudent}
-                  onUpdateStudent={handleUpdateStudent}
-                  onDeleteStudent={handleDeleteStudent}
-                  onDeleteClassStudents={handleDeleteClassStudents}
-                  onUploadHoSo={handleUploadHoSo}
-                  onImportStudents={handleImportStudentsExcel}
-                />
-              )}
+                  {currentView === 'students' && (
+                    <StudentProfileModule
+                      students={filteredStudents}
+                      userRole={currentUser?.role || 'STUDENT'}
+                      currentStudentCode={currentStudentCode}
+                      currentUser={currentUser}
+                      onAddStudent={handleAddStudent}
+                      onUpdateStudent={handleUpdateStudent}
+                      onDeleteStudent={handleDeleteStudent}
+                      onDeleteClassStudents={handleDeleteClassStudents}
+                      onUploadHoSo={handleUploadHoSo}
+                      onImportStudents={handleImportStudentsExcel}
+                    />
+                  )}
 
-              {currentView === 'grades' && (
-                <GradeManagementModule
-                  grades={filteredGrades}
-                  students={filteredStudents}
-                  subjects={subjects}
-                  userRole={currentUser?.role || 'STUDENT'}
-                  currentStudentCode={currentStudentCode}
-                  currentUser={currentUser}
-                  onSaveGrade={handleSaveGrade}
-                  onImportExcel={handleImportExcelGrades}
-                  onCalculateGpa={handleCalculateGpa}
-                  onOpenRetakeRegister={(maMH) => {
-                    setCurrentView('retake');
-                  }}
-                  onDeleteGrade={async (id) => {
-                    const res = await apiService.deleteGrade(id);
-                    showToast(res.message);
-                    await loadAllData();
-                  }}
-                />
-              )}
+                  {currentView === 'grades' && (
+                    <GradeManagementModule
+                      grades={filteredGrades}
+                      students={filteredStudents}
+                      subjects={subjects}
+                      userRole={currentUser?.role || 'STUDENT'}
+                      currentStudentCode={currentStudentCode}
+                      currentUser={currentUser}
+                      onSaveGrade={handleSaveGrade}
+                      onImportExcel={handleImportExcelGrades}
+                      onCalculateGpa={handleCalculateGpa}
+                      onOpenRetakeRegister={(maMH) => {
+                        handleNavigate('retakes');
+                      }}
+                      onDeleteGrade={async (id) => {
+                        const res = await apiService.deleteGrade(id);
+                        showToast(res.message);
+                        await loadAllData();
+                      }}
+                    />
+                  )}
 
-              {currentView === 'training' && (
-                <TrainingPointModule
-                  trainingPoints={filteredTrainingPoints}
-                  students={filteredStudents}
-                  userRole={currentUser?.role || 'STUDENT'}
-                  currentStudentCode={currentStudentCode}
-                  currentUser={currentUser}
-                  onSaveComment={handleSaveTrainingComment}
-                  onImportExcel={handleImportTrainingExcel}
-                  onUpdateTrainingPoint={handleUpdateTrainingPoint}
-                  onDeleteTrainingPoint={handleDeleteTrainingPoint}
-                  onDeleteClassTrainingPoints={handleDeleteClassTrainingPoints}
-                  onRefreshData={loadAllData}
-                />
-              )}
+                  {currentView === 'training' && (
+                    <TrainingPointModule
+                      trainingPoints={filteredTrainingPoints}
+                      students={filteredStudents}
+                      userRole={currentUser?.role || 'STUDENT'}
+                      currentStudentCode={currentStudentCode}
+                      currentUser={currentUser}
+                      onSaveComment={handleSaveTrainingComment}
+                      onImportExcel={handleImportTrainingExcel}
+                      onUpdateTrainingPoint={handleUpdateTrainingPoint}
+                      onDeleteTrainingPoint={handleDeleteTrainingPoint}
+                      onDeleteClassTrainingPoints={handleDeleteClassTrainingPoints}
+                      onRefreshData={loadAllData}
+                    />
+                  )}
 
-              {currentView === 'schedule' && (
-                <ScheduleModule
-                  schedule={filteredSchedule}
-                  students={filteredStudents}
-                  subjects={subjects}
-                  activeSemester={activeSemester}
-                  userRole={currentUser?.role || 'STUDENT'}
-                  userPermissions={currentUser?.permissions}
-                  currentStudentCode={currentStudentCode}
-                  onAddSchedule={handleAddSchedule}
-                  onUpdateSchedule={handleUpdateSchedule}
-                  onImportSchedule={handleImportScheduleExcel}
-                  onDeleteSchedule={handleDeleteSchedule}
-                  onDeleteScheduleByYear={handleDeleteScheduleByYear}
-                />
-              )}
+                  {currentView === 'schedule' && (
+                    <ScheduleModule
+                      schedule={filteredSchedule}
+                      students={filteredStudents}
+                      subjects={subjects}
+                      activeSemester={activeSemester}
+                      userRole={currentUser?.role || 'STUDENT'}
+                      userPermissions={currentUser?.permissions}
+                      currentStudentCode={currentStudentCode}
+                      onAddSchedule={handleAddSchedule}
+                      onUpdateSchedule={handleUpdateSchedule}
+                      onImportSchedule={handleImportScheduleExcel}
+                      onDeleteSchedule={handleDeleteSchedule}
+                      onDeleteScheduleByYear={handleDeleteScheduleByYear}
+                    />
+                  )}
 
-              {currentView === 'retakes' && (
-                <RetakeModule
-                  retakes={filteredRetakes}
-                  students={filteredStudents}
-                  subjects={subjects}
-                  userRole={currentUser?.role || 'STUDENT'}
-                  currentStudentCode={currentStudentCode}
-                  onRegisterRetake={handleRegisterRetake}
-                  onApproveRetake={handleApproveRetake}
-                  onDeleteRetake={async (id) => {
-                    const res = await apiService.deleteRetake(id);
-                    showToast(res.message);
-                    await loadAllData();
-                  }}
-                />
-              )}
+                  {(currentView === 'retakes' || currentView === 'retake') && (
+                    <RetakeModule
+                      retakes={filteredRetakes}
+                      students={filteredStudents}
+                      subjects={subjects}
+                      userRole={currentUser?.role || 'STUDENT'}
+                      currentStudentCode={currentStudentCode}
+                      onRegisterRetake={handleRegisterRetake}
+                      onApproveRetake={handleApproveRetake}
+                      onDeleteRetake={async (id) => {
+                        const res = await apiService.deleteRetake(id);
+                        showToast(res.message);
+                        await loadAllData();
+                      }}
+                    />
+                  )}
+                </motion.div>
+              </AnimatePresence>
             </main>
           </div>
 

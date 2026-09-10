@@ -37,6 +37,7 @@ export const MAIN_MENU_ITEMS: MenuItem[] = [
     description: 'Thống kê kết quả đào tạo',
     icon: LayoutDashboard,
     roles: ['ADMIN', 'LECTURER', 'TEACHER', 'STUDENT'],
+    href: '/dashboard',
   },
   {
     id: 'students',
@@ -44,6 +45,7 @@ export const MAIN_MENU_ITEMS: MenuItem[] = [
     description: 'Thông tin cá nhân & lý lịch',
     icon: Users,
     roles: ['ADMIN', 'LECTURER', 'TEACHER', 'STUDENT'],
+    href: '/students',
   },
   {
     id: 'schedule',
@@ -51,6 +53,7 @@ export const MAIN_MENU_ITEMS: MenuItem[] = [
     description: 'Lịch học tuần & phòng học',
     icon: Calendar,
     roles: ['ADMIN', 'LECTURER', 'TEACHER', 'STUDENT'],
+    href: '/schedule',
   },
   {
     id: 'grades',
@@ -58,6 +61,7 @@ export const MAIN_MENU_ITEMS: MenuItem[] = [
     description: 'Kết quả học tập & rèn luyện',
     icon: Award,
     roles: ['ADMIN', 'LECTURER', 'TEACHER', 'STUDENT'],
+    href: '/grades',
   },
   {
     id: 'training',
@@ -65,6 +69,7 @@ export const MAIN_MENU_ITEMS: MenuItem[] = [
     description: 'Đánh giá & Nhận xét tháng',
     icon: Sparkles,
     roles: ['ADMIN', 'LECTURER', 'TEACHER', 'STUDENT'],
+    href: '/training',
   },
   {
     id: 'subjects',
@@ -72,6 +77,7 @@ export const MAIN_MENU_ITEMS: MenuItem[] = [
     description: 'Danh mục môn học & tín chỉ',
     icon: BookOpen,
     roles: ['ADMIN', 'LECTURER', 'TEACHER', 'STUDENT'],
+    href: '/subjects',
   },
   {
     id: 'retakes',
@@ -79,6 +85,7 @@ export const MAIN_MENU_ITEMS: MenuItem[] = [
     description: 'Đăng ký & xét duyệt thi lại',
     icon: RotateCcw,
     roles: ['ADMIN', 'LECTURER', 'TEACHER', 'STUDENT'],
+    href: '/retakes',
   },
   // ADMIN CONSOLE: Được phân quyền cho ADMIN nhưng ẩn khỏi menu chính thông thường
   {
@@ -88,6 +95,7 @@ export const MAIN_MENU_ITEMS: MenuItem[] = [
     icon: Shield,
     roles: ['ADMIN'],
     hiddenInMenu: true,
+    href: '/admin',
   },
 ];
 
@@ -99,6 +107,7 @@ export const ADMIN_MENU_ITEMS: MenuItem[] = [
     description: 'Số liệu & Chỉ số hoạt động',
     icon: LayoutDashboard,
     roles: ['ADMIN'],
+    href: '/admin/overview',
   },
   {
     id: 'admin-users',
@@ -106,6 +115,7 @@ export const ADMIN_MENU_ITEMS: MenuItem[] = [
     description: 'Phân cấp tài khoản & Phân quyền RBAC',
     icon: ShieldCheck,
     roles: ['ADMIN'],
+    href: '/admin/users',
   },
   {
     id: 'admin-import',
@@ -113,6 +123,7 @@ export const ADMIN_MENU_ITEMS: MenuItem[] = [
     description: 'Upload, xem trước & mapping cột',
     icon: FileSpreadsheet,
     roles: ['ADMIN'],
+    href: '/admin/import',
   },
   {
     id: 'admin-backup',
@@ -120,6 +131,7 @@ export const ADMIN_MENU_ITEMS: MenuItem[] = [
     description: 'Xuất & khôi phục dữ liệu PostgreSQL',
     icon: Database,
     roles: ['ADMIN'],
+    href: '/admin/backup',
   },
   {
     id: 'admin-auditlogs',
@@ -127,5 +139,6 @@ export const ADMIN_MENU_ITEMS: MenuItem[] = [
     description: 'Lịch sử thao tác & giám sát hệ thống',
     icon: History,
     roles: ['ADMIN'],
+    href: '/admin/audit-logs',
   },
 ];

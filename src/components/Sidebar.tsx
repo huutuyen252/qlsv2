@@ -109,17 +109,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <nav className="space-y-1.5" aria-label="Danh sách phân hệ">
             {visibleMenuItems.map((item) => {
               const Icon = item.icon;
-              const isActive = currentView === item.id;
+              const isActive = currentView === item.id || (item.id === 'retakes' && currentView === 'retake');
+              const itemHref = item.href || `/${item.id}`;
               return (
-                <button
+                <a
                   key={item.id}
                   id={`nav-item-${item.id}`}
-                  type="button"
-                  onClick={() => onSelectView(item.id)}
+                  href={itemHref}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onSelectView(item.id);
+                  }}
                   title={isCollapsed ? item.title : undefined}
                   className={`group w-full flex items-center ${
                     isCollapsed ? 'justify-center px-2 py-2.5' : 'justify-between px-3.5 py-2.5'
-                  } rounded-2xl text-left transition-all duration-200 cursor-pointer ${
+                  } rounded-2xl text-left transition-all duration-200 cursor-pointer select-none no-underline ${
                     isActive
                       ? 'bg-blue-600 text-white font-semibold shadow-md shadow-blue-600/25 ring-1 ring-blue-400/30'
                       : 'text-slate-300 hover:bg-slate-800/70 hover:text-white'
@@ -157,7 +161,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   {!isCollapsed && isActive && (
                     <ChevronRight className="w-4 h-4 text-white/80 shrink-0 ml-1" />
                   )}
-                </button>
+                </a>
               );
             })}
           </nav>

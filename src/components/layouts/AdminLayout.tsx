@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { User, UserRole, SinhVien, Diem, ThoiKhoaBieu, ThiLaiHocLai, MonHoc } from '../../types';
 import { ProtectedRoute } from '../auth/ProtectedRoute';
 import { ADMIN_MENU_ITEMS } from '../../config/menu.config';
@@ -119,11 +120,16 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                 {ADMIN_MENU_ITEMS.map((item) => {
                   const Icon = item.icon;
                   const isActive = currentAdminTab === item.id;
+                  const itemHref = item.href || `/admin/${item.id.replace('admin-', '')}`;
                   return (
-                    <button
+                    <a
                       key={item.id}
-                      onClick={() => onSelectAdminTab(item.id)}
-                      className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-left text-xs font-bold transition-all cursor-pointer ${
+                      href={itemHref}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        onSelectAdminTab(item.id);
+                      }}
+                      className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-left text-xs font-bold transition-all cursor-pointer no-underline select-none ${
                         isActive
                           ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
                           : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/80 hover:text-slate-900 dark:hover:text-slate-100'
@@ -134,7 +140,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                         <div className="truncate">{item.title}</div>
                       </div>
                       {isActive && <ChevronRight className="w-3.5 h-3.5 shrink-0 opacity-80" />}
-                    </button>
+                    </a>
                   );
                 })}
               </nav>
@@ -176,7 +182,18 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
               </div>
             </div>
 
-            {children}
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={currentAdminTab}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.22, ease: 'easeOut' }}
+                className="w-full"
+              >
+                {children}
+              </motion.div>
+            </AnimatePresence>
           </main>
         </div>
       </div>
