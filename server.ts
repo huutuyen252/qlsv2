@@ -72,6 +72,18 @@ import {
   FACULTY_O_TO,
 } from './src/utils/classHelper';
 const failedLoginAttempts: Record<string, number> = {};
+
+function getReqIp(req: Request): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded) {
+    return forwarded.split(',')[0].trim();
+  }
+  if (Array.isArray(forwarded) && forwarded.length > 0) {
+    return forwarded[0].split(',')[0].trim();
+  }
+  return req.socket.remoteAddress || '127.0.0.1';
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -137,7 +149,7 @@ async function startServer() {
             target: 'Tài khoản người dùng',
             details: `Tài khoản [${user.username}] đã bị khóa do nhập sai thông tin quá 5 lần`,
             status: 'WARNING',
-            ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
+            ip: getReqIp(req),
           });
           return res.status(403).json({
             success: false,
@@ -157,7 +169,7 @@ async function startServer() {
         target: 'Hệ thống Quản trị & Đào tạo',
         details: `Đăng nhập thành công vào hệ thống qua trình duyệt với vai trò ${user.role} (${user.fullName})`,
         status: 'SUCCESS',
-        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
+        ip: getReqIp(req),
       });
       const mockToken = `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.user_${user.id}_role_${user.role}.${Date.now()}`;
       return res.json({

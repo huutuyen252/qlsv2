@@ -5,10 +5,12 @@ import {
   Download,
   Trash2,
   RefreshCw,
-  ShieldCheck,
   AlertCircle,
   Clock,
-  Laptop
+  Laptop,
+  CheckCircle2,
+  AlertTriangle,
+  XCircle
 } from 'lucide-react';
 import { User, AuditLogEntry } from '../../types';
 import { apiService } from '../../services/apiService';
@@ -107,31 +109,71 @@ export const AdminAuditLogsModule: React.FC<AdminAuditLogsModuleProps> = ({ curr
   const getActionBadge = (action: string) => {
     switch (action) {
       case 'LOGIN':
-        return <span className="px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold text-[10px]">LOGIN</span>;
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 font-bold text-[11px] border border-blue-500/20">
+            LOGIN
+          </span>
+        );
       case 'IMPORT':
       case 'IMPORT_EXCEL':
-        return <span className="px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold text-[10px]">IMPORT</span>;
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold text-[11px] border border-emerald-500/20">
+            IMPORT
+          </span>
+        );
       case 'RBAC':
       case 'UPDATE_ROLE':
-        return <span className="px-2 py-0.5 rounded-md bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-bold text-[10px]">RBAC</span>;
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 font-bold text-[11px] border border-purple-500/20">
+            RBAC
+          </span>
+        );
       case 'CREATE_USER':
-        return <span className="px-2 py-0.5 rounded-md bg-cyan-100 dark:bg-cyan-950 text-cyan-700 dark:text-cyan-300 font-bold text-[10px]">TẠO USER</span>;
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 font-bold text-[11px] border border-cyan-500/20">
+            TẠO USER
+          </span>
+        );
       case 'DELETE_USER':
       case 'DELETE_STUDENT':
-        return <span className="px-2 py-0.5 rounded-md bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 font-bold text-[10px]">XÓA BẢN GHI</span>;
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-rose-500/10 text-rose-600 dark:text-rose-400 font-bold text-[11px] border border-rose-500/20">
+            XÓA BẢN GHI
+          </span>
+        );
       case 'UPDATE_GRADE':
       case 'ĐIỂM SỐ':
-        return <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 font-bold text-[10px]">ĐIỂM SỐ</span>;
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold text-[11px] border border-amber-500/20">
+            ĐIỂM SỐ
+          </span>
+        );
       case 'BACKUP':
       case 'BACKUP_DB':
-        return <span className="px-2 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold text-[10px]">BACKUP</span>;
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-bold text-[11px] border border-indigo-500/20">
+            BACKUP
+          </span>
+        );
       case 'CLEAR_DATA':
       case 'CLEAR_LOGS':
-        return <span className="px-2 py-0.5 rounded-md bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300 font-bold text-[10px]">DỌN DẸP</span>;
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-red-500/10 text-red-600 dark:text-red-400 font-bold text-[11px] border border-red-500/20">
+            DỌN DẸP
+          </span>
+        );
       case 'ATTENDANCE':
-        return <span className="px-2 py-0.5 rounded-md bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300 font-bold text-[10px]">ĐIỂM DANH</span>;
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-teal-500/10 text-teal-600 dark:text-teal-400 font-bold text-[11px] border border-teal-500/20">
+            ĐIỂM DANH
+          </span>
+        );
       default:
-        return <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-[10px]">{action}</span>;
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-slate-500/10 text-slate-700 dark:text-slate-300 font-bold text-[11px] border border-slate-500/20">
+            {action}
+          </span>
+        );
     }
   };
 
@@ -139,29 +181,57 @@ export const AdminAuditLogsModule: React.FC<AdminAuditLogsModuleProps> = ({ curr
     switch (status) {
       case 'SUCCESS':
         return (
-          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] font-bold">
-            Thành công
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[11px] font-bold border border-emerald-500/20">
+            <CheckCircle2 className="w-3 h-3" />
+            <span>Thành công</span>
           </span>
         );
       case 'WARNING':
         return (
-          <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 text-[10px] font-bold">
-            Cảnh báo
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[11px] font-bold border border-amber-500/20">
+            <AlertTriangle className="w-3 h-3" />
+            <span>Cảnh báo</span>
           </span>
         );
       case 'FAILED':
         return (
-          <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 text-[10px] font-bold">
-            Thất bại
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 text-[11px] font-bold border border-rose-500/20">
+            <XCircle className="w-3 h-3" />
+            <span>Thất bại</span>
           </span>
         );
       default:
         return (
-          <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 text-[10px] font-bold">
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-slate-500/10 text-slate-700 dark:text-slate-300 text-[11px] font-bold border border-slate-500/20">
             {status}
           </span>
         );
     }
+  };
+
+  // Format IP addresses cleanly, separating client IP from proxy hops
+  const renderIpAddress = (rawIp?: string) => {
+    const ipStr = rawIp || '127.0.0.1';
+    const parts = ipStr.split(',').map((s) => s.trim()).filter(Boolean);
+    const clientIp = parts[0] || '127.0.0.1';
+    const proxyHops = parts.slice(1);
+
+    return (
+      <div className="flex items-center gap-1.5" title={`IP Chi tiết: ${ipStr}`}>
+        <Laptop className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+        <span className="font-mono text-[11px] font-medium text-slate-700 dark:text-slate-300">
+          {clientIp}
+        </span>
+        {proxyHops.length > 0 && (
+          <span
+            className="px-1.5 py-0.2 rounded text-[9px] font-mono bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700 cursor-help shrink-0"
+            title={`Các máy chủ chuyển tiếp (Proxy): ${proxyHops.join(' -> ')}`}
+          >
+            +{proxyHops.length}
+          </span>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -172,13 +242,13 @@ export const AdminAuditLogsModule: React.FC<AdminAuditLogsModuleProps> = ({ curr
           <div className="flex items-center gap-2">
             <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <History className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-              <span>Nhật Ký Hoạt Động & Bảo Mật Thực Tế (Live Audit Logs)</span>
+              <span>Nhật Ký Hoạt Động & Bảo Mật Thực Tế (Audit Logs)</span>
             </h3>
-            <span className="px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 text-xs font-bold">
-              {logs.length} sự kiện
+            <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 text-xs font-bold border border-indigo-200 dark:border-indigo-800">
+              {logs.length} bản ghi
             </span>
           </div>
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
             Ghi nhận và lưu vết thời gian thực mọi thao tác đăng nhập, chỉnh sửa điểm số, thay đổi quyền RBAC, import và sao lưu CSDL PostgreSQL.
           </p>
         </div>
@@ -188,7 +258,7 @@ export const AdminAuditLogsModule: React.FC<AdminAuditLogsModuleProps> = ({ curr
             type="button"
             onClick={() => fetchLogs(true)}
             disabled={refreshing}
-            className="px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+            className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
             title="Làm mới nhật ký hệ thống"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-indigo-600' : ''}`} />
@@ -199,7 +269,7 @@ export const AdminAuditLogsModule: React.FC<AdminAuditLogsModuleProps> = ({ curr
             type="button"
             onClick={handleExportLogs}
             disabled={filteredLogs.length === 0}
-            className="px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+            className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Xuất CSV</span>
@@ -210,7 +280,7 @@ export const AdminAuditLogsModule: React.FC<AdminAuditLogsModuleProps> = ({ curr
               type="button"
               onClick={handleClearLogs}
               disabled={isClearing || logs.length === 0}
-              className="px-3 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/40 text-rose-700 dark:text-rose-300 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+              className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/40 text-rose-700 dark:text-rose-300 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 border border-rose-200 dark:border-rose-900/50"
               title="Xóa toàn bộ nhật ký"
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -224,8 +294,8 @@ export const AdminAuditLogsModule: React.FC<AdminAuditLogsModuleProps> = ({ curr
         <div
           className={`p-3 rounded-xl text-xs font-semibold flex items-center justify-between ${
             feedback.type === 'success'
-              ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
-              : 'bg-rose-50 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300'
+              ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+              : 'bg-rose-50 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
           }`}
         >
           <span>{feedback.message}</span>
@@ -248,14 +318,14 @@ export const AdminAuditLogsModule: React.FC<AdminAuditLogsModuleProps> = ({ curr
             placeholder="Tìm kiếm theo người thực hiện, vai trò, hành động, IP, chi tiết sự kiện..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-medium"
+            className="w-full pl-9 pr-4 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-medium text-slate-900 dark:text-white"
           />
         </div>
 
         <select
           value={filterAction}
           onChange={(e) => setFilterAction(e.target.value)}
-          className="w-full sm:w-44 px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
+          className="w-full sm:w-44 px-3 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
         >
           <option value="ALL">Tất cả hành động</option>
           <option value="LOGIN">Đăng nhập (LOGIN)</option>
@@ -272,7 +342,7 @@ export const AdminAuditLogsModule: React.FC<AdminAuditLogsModuleProps> = ({ curr
         <select
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value)}
-          className="w-full sm:w-36 px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
+          className="w-full sm:w-36 px-3 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
         >
           <option value="ALL">Tất cả trạng thái</option>
           <option value="SUCCESS">Thành công</option>
@@ -281,70 +351,96 @@ export const AdminAuditLogsModule: React.FC<AdminAuditLogsModuleProps> = ({ curr
         </select>
       </div>
 
-      {/* Logs Table */}
-      <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-x-auto">
-        <table className="w-full text-left text-xs border-collapse">
+      {/* Logs Table with generous column widths & professional layout */}
+      <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-x-auto shadow-inner bg-slate-50/30 dark:bg-slate-900/30">
+        <table className="min-w-[1050px] w-full text-left text-xs border-collapse">
           <thead>
-            <tr className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-700">
-              <th className="p-3 whitespace-nowrap">Thời gian</th>
-              <th className="p-3 whitespace-nowrap">Người thực hiện</th>
-              <th className="p-3 whitespace-nowrap">Hành động</th>
-              <th className="p-3 whitespace-nowrap">Đối tượng</th>
-              <th className="p-3">Chi tiết sự kiện</th>
-              <th className="p-3 whitespace-nowrap">Địa chỉ IP</th>
-              <th className="p-3 text-center whitespace-nowrap">Trạng thái</th>
+            <tr className="bg-slate-100/90 dark:bg-slate-800/90 text-slate-700 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-700">
+              <th className="p-3.5 w-[165px] min-w-[165px] whitespace-nowrap">Thời gian</th>
+              <th className="p-3.5 w-[150px] min-w-[150px] whitespace-nowrap">Người thực hiện</th>
+              <th className="p-3.5 w-[110px] min-w-[110px] whitespace-nowrap">Hành động</th>
+              <th className="p-3.5 w-[190px] min-w-[190px] whitespace-nowrap">Đối tượng</th>
+              <th className="p-3.5 min-w-[380px]">Chi tiết sự kiện</th>
+              <th className="p-3.5 w-[150px] min-w-[150px] whitespace-nowrap">Địa chỉ IP</th>
+              <th className="p-3.5 w-[120px] min-w-[120px] text-center whitespace-nowrap">Trạng thái</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80 bg-white dark:bg-slate-900">
             {loading ? (
               <tr>
-                <td colSpan={7} className="p-8 text-center text-slate-400">
-                  <div className="flex flex-col items-center justify-center gap-2">
+                <td colSpan={7} className="p-10 text-center text-slate-400">
+                  <div className="flex flex-col items-center justify-center gap-2.5">
                     <RefreshCw className="w-5 h-5 animate-spin text-indigo-600" />
-                    <span>Đang tải dữ liệu nhật ký hệ thống...</span>
+                    <span className="font-medium text-xs">Đang tải dữ liệu nhật ký hệ thống...</span>
                   </div>
                 </td>
               </tr>
             ) : filteredLogs.length === 0 ? (
               <tr>
-                <td colSpan={7} className="p-8 text-center text-slate-400">
+                <td colSpan={7} className="p-10 text-center text-slate-400">
                   <div className="flex flex-col items-center justify-center gap-2">
                     <AlertCircle className="w-6 h-6 text-slate-300 dark:text-slate-600" />
-                    <span>Không tìm thấy nhật ký hoạt động phù hợp</span>
+                    <span className="font-medium text-xs">Không tìm thấy nhật ký hoạt động phù hợp</span>
                   </div>
                 </td>
               </tr>
             ) : (
               filteredLogs.map((log) => (
-                <tr key={log.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
-                  <td className="p-3 text-slate-500 whitespace-nowrap text-[11px] font-mono">
-                    <div className="flex items-center gap-1">
-                      <Clock className="w-3 h-3 text-slate-400" />
+                <tr key={log.id} className="hover:bg-slate-50/90 dark:hover:bg-slate-800/50 transition-colors">
+                  {/* Thời gian */}
+                  <td className="p-3.5 whitespace-nowrap w-[165px] min-w-[165px]">
+                    <div className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400 text-[11px] font-mono font-medium">
+                      <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                       <span>{log.timestamp}</span>
                     </div>
                   </td>
-                  <td className="p-3 font-bold text-slate-900 dark:text-white whitespace-nowrap">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-semibold">{log.user}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono">
-                        {log.role}
-                      </span>
+
+                  {/* Người thực hiện */}
+                  <td className="p-3.5 whitespace-nowrap w-[150px] min-w-[150px]">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold text-[10px] flex items-center justify-center uppercase shrink-0">
+                        {log.user.charAt(0)}
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="font-bold text-slate-900 dark:text-white text-xs leading-tight">
+                          {log.user}
+                        </span>
+                        <span className="text-[10px] text-slate-500 font-mono">
+                          {log.role}
+                        </span>
+                      </div>
                     </div>
                   </td>
-                  <td className="p-3 whitespace-nowrap">{getActionBadge(log.action)}</td>
-                  <td className="p-3 font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap max-w-[180px] truncate" title={log.target}>
-                    {log.target}
+
+                  {/* Hành động */}
+                  <td className="p-3.5 whitespace-nowrap w-[110px] min-w-[110px]">
+                    {getActionBadge(log.action)}
                   </td>
-                  <td className="p-3 text-slate-600 dark:text-slate-400 text-[11px] max-w-sm break-words">
-                    {log.details}
+
+                  {/* Đối tượng */}
+                  <td className="p-3.5 whitespace-nowrap w-[190px] min-w-[190px]">
+                    <span
+                      className="font-semibold text-slate-800 dark:text-slate-200 text-xs block max-w-[185px] truncate"
+                      title={log.target}
+                    >
+                      {log.target}
+                    </span>
                   </td>
-                  <td className="p-3 text-slate-500 whitespace-nowrap text-[11px] font-mono">
-                    <div className="flex items-center gap-1">
-                      <Laptop className="w-3 h-3 text-slate-400" />
-                      <span>{log.ip || '127.0.0.1'}</span>
+
+                  {/* Chi tiết sự kiện - Wide, beautiful readable text */}
+                  <td className="p-3.5 min-w-[380px]">
+                    <div className="text-[12px] text-slate-800 dark:text-slate-200 leading-relaxed font-normal bg-slate-50/70 dark:bg-slate-800/40 px-3 py-2 rounded-xl border border-slate-100 dark:border-slate-800/60">
+                      {log.details}
                     </div>
                   </td>
-                  <td className="p-3 text-center whitespace-nowrap">
+
+                  {/* Địa chỉ IP */}
+                  <td className="p-3.5 whitespace-nowrap w-[150px] min-w-[150px]">
+                    {renderIpAddress(log.ip)}
+                  </td>
+
+                  {/* Trạng thái */}
+                  <td className="p-3.5 text-center whitespace-nowrap w-[120px] min-w-[120px]">
                     {getStatusBadge(log.status)}
                   </td>
                 </tr>

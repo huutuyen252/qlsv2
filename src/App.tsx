@@ -612,6 +612,15 @@ export default function App() {
       <LoginScreen
         onLoginSuccess={(user) => {
           setCurrentUser(user);
+          setCurrentView('dashboard');
+          setAdminSubTab('admin-overview');
+          try {
+            localStorage.setItem('app_current_view', 'dashboard');
+            localStorage.setItem('app_admin_subtab', 'admin-overview');
+          } catch {
+            // ignore
+          }
+          updateBrowserUrl('dashboard', 'admin-overview', true);
           showToast(`Đăng nhập thành công với vai trò: ${user.role} - ${user.fullName}`);
         }}
         users={users}
@@ -927,6 +936,16 @@ export default function App() {
         onClose={() => setIsLoginModalOpen(false)}
         onLoginSuccess={(user) => {
           setCurrentUser(user);
+          setCurrentView('dashboard');
+          setAdminSubTab('admin-overview');
+          try {
+            localStorage.setItem('app_current_view', 'dashboard');
+            localStorage.setItem('app_admin_subtab', 'admin-overview');
+          } catch {
+            // ignore
+          }
+          updateBrowserUrl('dashboard', 'admin-overview', true);
+          setIsLoginModalOpen(false);
           showToast(`Đã đăng nhập với tư cách: ${user.fullName} (${user.role})`);
         }}
         users={users}
