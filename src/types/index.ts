@@ -257,3 +257,16 @@ export interface NghiLe {
   createdAt?: string;
 }
 
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string;
+  user: string;
+  role: string;
+  action: string;
+  target: string;
+  details: string;
+  status: 'SUCCESS' | 'WARNING' | 'FAILED';
+  ip?: string;
+  createdAt?: string;
+}
+

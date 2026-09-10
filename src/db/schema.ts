@@ -171,4 +171,17 @@ export const nghiLe = pgTable('nghi_le', {
   createdAt: text('created_at'),
 });
 
+export const auditLogs = pgTable('audit_logs', {
+  id: text('id').primaryKey(),
+  timestamp: text('timestamp').notNull(),
+  user: text('user').notNull(),
+  role: text('role').notNull(),
+  action: text('action').notNull(),
+  target: text('target').notNull(),
+  details: text('details').notNull(),
+  status: text('status').notNull().default('SUCCESS'),
+  ip: text('ip'),
+  createdAt: text('created_at'),
+});
+
 

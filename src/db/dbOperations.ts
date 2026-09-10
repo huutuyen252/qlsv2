@@ -18,6 +18,7 @@ import {
   diemDanh,
   thongBaoKiemTra,
   nghiLe,
+  auditLogs,
 } from './schema';
 import { eq, and, sql, ilike, or } from 'drizzle-orm';
 import { INITIAL_USERS } from '../data/initialData';
@@ -39,6 +40,7 @@ let memoryLop: any[] = [];
 let memoryDiemDanh: any[] = [];
 let memoryThongBaoKiemTra: any[] = [];
 let memoryNghiLe: any[] = [];
+let memoryAuditLogs: any[] = [];
 
 export function saveToDisk() {
   try {
@@ -56,6 +58,7 @@ export function saveToDisk() {
       memoryDiemDanh,
       memoryThongBaoKiemTra,
       memoryNghiLe,
+      memoryAuditLogs,
     };
     fs.writeFileSync(DATA_STORE_PATH, JSON.stringify(payload, null, 2), 'utf-8');
   } catch (err) {
@@ -81,7 +84,41 @@ export function loadFromDisk() {
       if (Array.isArray(data.memoryDiemDanh)) memoryDiemDanh = data.memoryDiemDanh;
       if (Array.isArray(data.memoryThongBaoKiemTra)) memoryThongBaoKiemTra = data.memoryThongBaoKiemTra;
       if (Array.isArray(data.memoryNghiLe)) memoryNghiLe = data.memoryNghiLe;
-      console.log(`[Storage] Loaded persistent store: ${memorySinhVien.length} SV, ${memoryDiemDanh.length} điểm danh, ${memoryThongBaoKiemTra.length} thông báo KT`);
+      if (Array.isArray(data.memoryAuditLogs)) memoryAuditLogs = data.memoryAuditLogs;
+      console.log(`[Storage] Loaded persistent store: ${memorySinhVien.length} SV, ${memoryDiemDanh.length} điểm danh, ${memoryThongBaoKiemTra.length} thông báo KT, ${memoryAuditLogs.length} audit logs`);
+    }
+
+    if (memoryAuditLogs.length === 0) {
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const formatTime = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+      memoryAuditLogs = [
+        {
+          id: `LOG-INIT-${Date.now()}-1`,
+          timestamp: formatTime(new Date(now.getTime() - 60000)),
+          user: 'system',
+          role: 'SYSTEM',
+          action: 'LOGIN',
+          target: 'Hệ thống Quản trị & CSDL',
+          details: 'Khởi động máy chủ cơ sở dữ liệu TDNU EDU và nạp toàn bộ cấu hình hệ thống',
+          status: 'SUCCESS',
+          ip: '127.0.0.1',
+          createdAt: new Date(now.getTime() - 60000).toISOString(),
+        },
+        {
+          id: `LOG-INIT-${Date.now()}-2`,
+          timestamp: formatTime(now),
+          user: 'system',
+          role: 'SYSTEM',
+          action: 'RBAC',
+          target: 'Phân quyền Role-Based Access Control',
+          details: 'Kích hoạt chính sách bảo mật RBAC và xác thực quyền hạn tài khoản Quản trị viên',
+          status: 'SUCCESS',
+          ip: '127.0.0.1',
+          createdAt: now.toISOString(),
+        },
+      ];
+      saveToDisk();
     }
   } catch (err) {
     console.warn('[Storage] Error reading persistent store:', err);
@@ -277,6 +314,19 @@ export async function ensureDatabaseSchema() {
           "lop" text,
           "hoc_ky" text,
           "nam_hoc" text,
+          "created_at" text
+        );
+
+        CREATE TABLE IF NOT EXISTS "audit_logs" (
+          "id" text PRIMARY KEY NOT NULL,
+          "timestamp" text NOT NULL,
+          "user" text NOT NULL,
+          "role" text NOT NULL,
+          "action" text NOT NULL,
+          "target" text NOT NULL,
+          "details" text NOT NULL,
+          "status" text NOT NULL DEFAULT 'SUCCESS',
+          "ip" text,
           "created_at" text
         );
 
@@ -1454,3 +1504,96 @@ export async function clearAllOperationalData() {
   saveToDisk();
   return true;
 }
+
+export async function getAllAuditLogs(limit: number = 300): Promise<any[]> {
+  if (pool) {
+    try {
+      const res = await pool.query(`SELECT * FROM "audit_logs" ORDER BY "created_at" DESC LIMIT $1`, [limit]);
+      if (res && res.rows && res.rows.length > 0) {
+        return res.rows.map((row: any) => ({
+          id: row.id,
+          timestamp: row.timestamp,
+          user: row.user,
+          role: row.role,
+          action: row.action,
+          target: row.target,
+          details: row.details,
+          status: row.status,
+          ip: row.ip,
+          createdAt: row.created_at,
+        }));
+      }
+    } catch (e) {
+      console.warn('[DB] Could not fetch audit_logs from postgres, using memory fallback:', e);
+    }
+  }
+  return [...memoryAuditLogs].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')).slice(0, limit);
+}
+
+export async function createAuditLog(entry: {
+  id?: string;
+  user?: string;
+  role?: string;
+  action: string;
+  target: string;
+  details: string;
+  status?: string;
+  ip?: string;
+}): Promise<any> {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const hours = pad(now.getHours());
+  const minutes = pad(now.getMinutes());
+  const seconds = pad(now.getSeconds());
+  const day = pad(now.getDate());
+  const month = pad(now.getMonth() + 1);
+  const year = now.getFullYear();
+  const formattedTime = `${hours}:${minutes}:${seconds} ${day}/${month}/${year}`;
+
+  const newLog = {
+    id: entry.id || `LOG-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    timestamp: formattedTime,
+    user: entry.user || 'admin',
+    role: entry.role || 'ADMIN',
+    action: entry.action || 'OPERATION',
+    target: entry.target || 'Hệ thống',
+    details: entry.details || '',
+    status: entry.status || 'SUCCESS',
+    ip: entry.ip || '127.0.0.1',
+    createdAt: now.toISOString(),
+  };
+
+  memoryAuditLogs.unshift(newLog);
+  if (memoryAuditLogs.length > 1000) {
+    memoryAuditLogs = memoryAuditLogs.slice(0, 1000);
+  }
+  saveToDisk();
+
+  if (pool) {
+    try {
+      await pool.query(
+        `INSERT INTO "audit_logs" ("id", "timestamp", "user", "role", "action", "target", "details", "status", "ip", "created_at")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT ("id") DO NOTHING`,
+        [newLog.id, newLog.timestamp, newLog.user, newLog.role, newLog.action, newLog.target, newLog.details, newLog.status, newLog.ip, newLog.createdAt]
+      );
+    } catch (e) {
+      console.warn('[DB] Error writing audit log to postgres:', e);
+    }
+  }
+
+  return newLog;
+}
+
+export async function clearAuditLogs(): Promise<void> {
+  memoryAuditLogs = [];
+  saveToDisk();
+  if (pool) {
+    try {
+      await pool.query(`DELETE FROM "audit_logs"`);
+    } catch (e) {
+      console.warn('[DB] Error clearing audit logs:', e);
+    }
+  }
+}
+

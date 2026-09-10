@@ -57,8 +57,11 @@ import {
   deleteClassRenLuyen,
   syncTrainingPointFromAttendance,
   syncAllTrainingPointsFromAttendance,
+  getAllAuditLogs,
+  createAuditLog,
+  clearAuditLogs,
 } from './src/db/dbOperations';
-import { SinhVien, Diem, RenLuyen, ThoiKhoaBieu, ThiLaiHocLai, NamHoc, HocKy, Lop, DiemDanh, ThongBaoKiemTra, MonHoc, NghiLe } from './src/types/index';
+import { SinhVien, Diem, RenLuyen, ThoiKhoaBieu, ThiLaiHocLai, NamHoc, HocKy, Lop, DiemDanh, ThongBaoKiemTra, MonHoc, NghiLe, AuditLogEntry } from './src/types/index';
 import { uploadToCloudStorage, getStorageStatus } from './src/lib/cloudStorage';
 import {
   normalizeClassName,
@@ -116,8 +119,26 @@ async function startServer() {
       if (!isPasswordCorrect) {
         failedLoginAttempts[key] = (failedLoginAttempts[key] || 0) + 1;
         const count = failedLoginAttempts[key];
+        await createAuditLog({
+          user: key,
+          role: 'GUEST',
+          action: 'LOGIN',
+          target: 'Cổng xác thực',
+          details: `Đăng nhập thất bại: Mật khẩu không chính xác (Lần ${count}/5)`,
+          status: 'FAILED',
+          ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
+        });
         if (count >= 5) {
           await updateUser(user.id, { status: 'LOCKED' });
+          await createAuditLog({
+            user: user.username,
+            role: user.role,
+            action: 'LOGIN',
+            target: 'Tài khoản người dùng',
+            details: `Tài khoản [${user.username}] đã bị khóa do nhập sai thông tin quá 5 lần`,
+            status: 'WARNING',
+            ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
+          });
           return res.status(403).json({
             success: false,
             message: `Tài khoản [${user.username}] đã bị KHÓA do nhập sai thông tin quá 5 lần! Chỉ có Quản trị viên (Admin) mới có thể mở khóa tài khoản này.`,
@@ -129,6 +150,15 @@ async function startServer() {
         });
       }
       failedLoginAttempts[key] = 0;
+      await createAuditLog({
+        user: user.username,
+        role: user.role,
+        action: 'LOGIN',
+        target: 'Hệ thống Quản trị & Đào tạo',
+        details: `Đăng nhập thành công vào hệ thống qua trình duyệt với vai trò ${user.role} (${user.fullName})`,
+        status: 'SUCCESS',
+        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
+      });
       const mockToken = `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.user_${user.id}_role_${user.role}.${Date.now()}`;
       return res.json({
         success: true,
@@ -234,6 +264,15 @@ async function startServer() {
         },
       };
       const created = await createUser(newUser);
+      await createAuditLog({
+        user: 'admin',
+        role: 'ADMIN',
+        action: 'CREATE_USER',
+        target: `User: ${created.username}`,
+        details: `Tạo tài khoản mới [${created.username}] - Vai trò ${created.role} (${created.fullName})`,
+        status: 'SUCCESS',
+        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
+      });
       return res.status(201).json({ success: true, message: 'Đã tạo tài khoản và cấp quyền thành công trong PostgreSQL', data: created });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
@@ -306,6 +345,15 @@ async function startServer() {
         updateData.permissions = { ...((existingUser.permissions as any) || {}), ...permissions };
       }
       const updated = await updateUser(id, updateData);
+      await createAuditLog({
+        user: 'admin',
+        role: 'ADMIN',
+        action: 'RBAC',
+        target: `User: ${existingUser.username}`,
+        details: `Thay đổi vai trò người dùng [${existingUser.username}] từ ${existingUser.role} sang ${updated?.role}`,
+        status: 'SUCCESS',
+        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
+      });
       return res.json({ success: true, message: `Đã cập nhật role thành ${updated?.role} và phân quyền`, data: updated });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
@@ -348,7 +396,17 @@ async function startServer() {
   app.delete('/api/users/:id', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
+      const targetUser = await getUserById(id);
       await deleteUser(id);
+      await createAuditLog({
+        user: 'admin',
+        role: 'ADMIN',
+        action: 'DELETE_USER',
+        target: `User ID: ${targetUser ? targetUser.username : id}`,
+        details: `Xóa tài khoản người dùng [${targetUser ? targetUser.username : id}] khỏi hệ thống`,
+        status: 'SUCCESS',
+        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
+      });
       return res.json({ success: true, message: 'Đã xóa tài khoản thành công khỏi CSDL PostgreSQL' });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
@@ -393,6 +451,15 @@ async function startServer() {
         return res.status(400).json({ success: false, message: 'Mã sinh viên đã tồn tại' });
       }
       const created = await createSinhVien(newStudent);
+      await createAuditLog({
+        user: 'admin',
+        role: 'ADMIN',
+        action: 'CREATE_STUDENT',
+        target: `Sinh viên: ${created.maSV}`,
+        details: `Thêm mới hồ sơ sinh viên ${created.hoTen} (${created.maSV}) - Lớp ${created.lop}`,
+        status: 'SUCCESS',
+        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
+      });
       return res.status(201).json({ success: true, message: 'Thêm hồ sơ sinh viên thành công vào PostgreSQL', data: created });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
@@ -430,6 +497,15 @@ async function startServer() {
     try {
       const { maSV } = req.params;
       await deleteSinhVien(maSV);
+      await createAuditLog({
+        user: 'admin',
+        role: 'ADMIN',
+        action: 'DELETE_STUDENT',
+        target: `Sinh viên: ${maSV}`,
+        details: `Xóa hồ sơ sinh viên mã ${maSV} khỏi CSDL PostgreSQL`,
+        status: 'SUCCESS',
+        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
+      });
       return res.json({ success: true, message: 'Xóa sinh viên thành công khỏi PostgreSQL' });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
@@ -490,9 +566,18 @@ async function startServer() {
           }
         }
       }
+      await createAuditLog({
+        user: 'admin',
+        role: 'ADMIN',
+        action: 'IMPORT',
+        target: 'Hồ sơ Sinh viên',
+        details: `Import thành công ${importedCount} sinh viên từ file Excel, đồng bộ ${newUsersCreated} tài khoản người dùng`,
+        status: 'SUCCESS',
+        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
+      });
       return res.json({
         success: true,
-        message: `Đã import thành công ${importedCount} hồ sơ sinh viên vào PostgreSQL và "ng bộ ${newUsersCreated} tài khoản người dùng!`,
+        message: `Đã import thành công ${importedCount} hồ sơ sinh viên vào PostgreSQL và đồng bộ ${newUsersCreated} tài khoản người dùng!`,
         importedCount,
         newUsersCreated,
       });
@@ -601,6 +686,15 @@ async function startServer() {
         newGrade.id = `d-${newGrade.maSV}-${newGrade.maMH}-${newGrade.hocKy || 'HK1'}-${newGrade.namHoc || '2025-2026'}`.replace(/\s+/g, '');
       }
       const saved = await upsertDiem(newGrade);
+      await createAuditLog({
+        user: req.body.nguoiNhap || 'admin',
+        role: 'LECTURER',
+        action: 'ĐIỂM SỐ',
+        target: `Môn: ${newGrade.tenMH || newGrade.maMH}`,
+        details: `Cập nhật điểm môn ${newGrade.tenMH || newGrade.maMH} (${newGrade.maMH}) cho sinh viên ${newGrade.maSV} - TK10: ${newGrade.diemTongKet10}`,
+        status: 'SUCCESS',
+        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
+      });
       return res.json({ success: true, message: 'Cập nhật điểm thành công vào PostgreSQL', data: saved });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
@@ -671,6 +765,15 @@ async function startServer() {
           importedCount++;
         }
       }
+      await createAuditLog({
+        user: 'admin',
+        role: 'ADMIN',
+        action: 'IMPORT',
+        target: 'Bảng Điểm Sinh Viên',
+        details: `Import thành công ${importedCount} đầu điểm sinh viên từ file Excel vào PostgreSQL`,
+        status: 'SUCCESS',
+        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
+      });
       return res.json({
         success: true,
         message: `Đã import thành công ${importedCount} đầu điểm sinh viên theo học kỳ & năm học của môn học vào cơ sở dữ liệu`,
@@ -1558,10 +1661,67 @@ async function startServer() {
   app.post('/api/admin/clear-all-data', async (req: Request, res: Response) => {
     try {
       await clearAllOperationalData();
+      await createAuditLog({
+        user: 'admin',
+        role: 'ADMIN',
+        action: 'CLEAR_DATA',
+        target: 'Toàn bộ CSDL',
+        details: 'Đã làm sạch toàn bộ dữ liệu nghiệp vụ trên hệ thống CSDL TDNU EDU',
+        status: 'WARNING',
+        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
+      });
       return res.json({
         success: true,
         message: 'Đã làm sạch toàn bộ dữ liệu nghiệp vụ thành công trên CSDL PostgreSQL! Hệ thống giữ nguyên các tài khoản Quản trị viên (Admin).',
       });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  // Real Audit Logs Endpoints
+  app.get('/api/audit-logs', async (req: Request, res: Response) => {
+    try {
+      const limit = req.query.limit ? Number(req.query.limit) : 300;
+      const logs = await getAllAuditLogs(limit);
+      return res.json({ success: true, data: logs });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.post('/api/audit-logs', async (req: Request, res: Response) => {
+    try {
+      const { user, role, action, target, details, status, ip } = req.body;
+      const clientIp = ip || (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1';
+      const created = await createAuditLog({
+        user: user || 'admin',
+        role: role || 'ADMIN',
+        action: action || 'OPERATION',
+        target: target || 'Hệ thống Quản trị',
+        details: details || '',
+        status: status || 'SUCCESS',
+        ip: clientIp,
+      });
+      return res.status(201).json({ success: true, data: created });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.delete('/api/audit-logs', async (req: Request, res: Response) => {
+    try {
+      await clearAuditLogs();
+      await createAuditLog({
+        user: 'admin',
+        role: 'ADMIN',
+        action: 'CLEAR_LOGS',
+        target: 'Nhật ký Audit Logs',
+        details: 'Quản trị viên đã xóa sạch toàn bộ lịch sử nhật ký hệ thống',
+        status: 'SUCCESS',
+        ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
+      });
+      return res.json({ success: true, message: 'Đã xóa toàn bộ nhật ký hệ thống thành công' });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
     }

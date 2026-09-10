@@ -854,5 +854,33 @@ export const apiService = {
       return { success: false, message: 'Lỗi khi kết nối máy chủ làm sạch dữ liệu' };
     }
   },
+  async getAuditLogs(limit: number = 300): Promise<{ success: boolean; data: any[] }> {
+    try {
+      const res = await fetch(`${API_BASE}/audit-logs?limit=${limit}`);
+      return await res.json();
+    } catch {
+      return { success: false, data: [] };
+    }
+  },
+  async createAuditLog(log: any): Promise<{ success: boolean; data?: any }> {
+    try {
+      const res = await fetch(`${API_BASE}/audit-logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(log),
+      });
+      return await res.json();
+    } catch {
+      return { success: false };
+    }
+  },
+  async clearAuditLogs(): Promise<{ success: boolean; message: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/audit-logs`, { method: 'DELETE' });
+      return await res.json();
+    } catch {
+      return { success: false, message: 'Lỗi khi xóa nhật ký hệ thống' };
+    }
+  },
 };
 
