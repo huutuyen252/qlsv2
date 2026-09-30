@@ -315,7 +315,7 @@ export const AdminAuditLogsModule: React.FC<AdminAuditLogsModuleProps> = ({ curr
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            placeholder="Tìm kiếm theo người thực hiện, vai trò, hành động, IP, chi tiết sự kiện..."
+            placeholder="Tìm kiếm theo người thực hiện, vai trò, hành động, IP, chi tiết hành động..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-9 pr-4 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-medium text-slate-900 dark:text-white"
@@ -353,14 +353,14 @@ export const AdminAuditLogsModule: React.FC<AdminAuditLogsModuleProps> = ({ curr
 
       {/* Logs Table with generous column widths & professional layout */}
       <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-x-auto shadow-inner bg-slate-50/30 dark:bg-slate-900/30">
-        <table className="min-w-[1050px] w-full text-left text-xs border-collapse">
+        <table className="min-w-[1150px] w-full text-left text-xs border-collapse">
           <thead>
             <tr className="bg-slate-100/90 dark:bg-slate-800/90 text-slate-700 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-700">
               <th className="p-3.5 w-[165px] min-w-[165px] whitespace-nowrap">Thời gian</th>
               <th className="p-3.5 w-[150px] min-w-[150px] whitespace-nowrap">Người thực hiện</th>
               <th className="p-3.5 w-[110px] min-w-[110px] whitespace-nowrap">Hành động</th>
               <th className="p-3.5 w-[190px] min-w-[190px] whitespace-nowrap">Đối tượng</th>
-              <th className="p-3.5 min-w-[380px]">Chi tiết sự kiện</th>
+              <th className="p-3.5 min-w-[450px]">Chi tiết hành động</th>
               <th className="p-3.5 w-[150px] min-w-[150px] whitespace-nowrap">Địa chỉ IP</th>
               <th className="p-3.5 w-[120px] min-w-[120px] text-center whitespace-nowrap">Trạng thái</th>
             </tr>
@@ -427,11 +427,14 @@ export const AdminAuditLogsModule: React.FC<AdminAuditLogsModuleProps> = ({ curr
                     </span>
                   </td>
 
-                  {/* Chi tiết sự kiện - Wide, beautiful readable text */}
-                  <td className="p-3.5 min-w-[380px]">
-                    <div className="text-[12px] text-slate-800 dark:text-slate-200 leading-relaxed font-normal bg-slate-50/70 dark:bg-slate-800/40 px-3 py-2 rounded-xl border border-slate-100 dark:border-slate-800/60">
+                  {/* Chi tiết hành động */}
+                  <td
+                    className="p-3.5 min-w-[450px] max-w-[650px] text-wrap line-clamp-3 text-[12px] text-slate-800 dark:text-slate-200 leading-relaxed font-normal cursor-help"
+                    title={log.details}
+                  >
+                    <span className="text-wrap line-clamp-3 block" title={log.details}>
                       {log.details}
-                    </div>
+                    </span>
                   </td>
 
                   {/* Địa chỉ IP */}

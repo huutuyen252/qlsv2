@@ -63,6 +63,7 @@ import {
 } from './src/db/dbOperations';
 import { SinhVien, Diem, RenLuyen, ThoiKhoaBieu, ThiLaiHocLai, NamHoc, HocKy, Lop, DiemDanh, ThongBaoKiemTra, MonHoc, NghiLe, AuditLogEntry } from './src/types/index';
 import { uploadToCloudStorage, getStorageStatus } from './src/lib/cloudStorage';
+import { hashPassword, verifyPassword, isBcryptHash } from './src/utils/security';
 import {
   normalizeClassName,
   normalizeFacultyName,
@@ -126,8 +127,9 @@ async function startServer() {
           message: 'Tài khoản này đã bị KHÓA! Do nhập sai thông tin quá 5 lần hoặc bị Quản trị viên khóa. Chỉ có Quản trị viên (Admin) mới có quyền mở khóa tài khoản này.',
         });
       }
-      const validPasswords = ['admin123', '123456', 'admin', 'gv123', 'sv123', user.password];
-      const isPasswordCorrect = validPasswords.includes(password.trim());
+      // Thống nhất chỉ mật khẩu lưu trong hệ thống mới đăng nhập được (Sử dụng bcrypt)
+      const storedPassword = (user.password && user.password.trim()) || (user.role === 'ADMIN' ? 'admin123' : user.role === 'LECTURER' ? 'gv123' : '123456');
+      const isPasswordCorrect = verifyPassword(password.trim(), storedPassword);
       if (!isPasswordCorrect) {
         failedLoginAttempts[key] = (failedLoginAttempts[key] || 0) + 1;
         const count = failedLoginAttempts[key];
@@ -162,6 +164,17 @@ async function startServer() {
         });
       }
       failedLoginAttempts[key] = 0;
+
+      // Tự động nâng cấp mật khẩu lên chuỗi hash Bcrypt nếu tài khoản chưa được mã hóa
+      if (isPasswordCorrect && !isBcryptHash(user.password || '')) {
+        try {
+          const bcryptHashed = hashPassword(password.trim());
+          await updateUser(user.id, { password: bcryptHashed });
+          user.password = bcryptHashed;
+        } catch (upgradeErr) {
+          console.warn('[Security] Không thể tự động nâng cấp mật khẩu sang bcrypt:', upgradeErr);
+        }
+      }
       await createAuditLog({
         user: user.username,
         role: user.role,
@@ -210,7 +223,7 @@ async function startServer() {
         fullName: fullName.trim(),
         role,
         email: email.trim() || `${username}@tdnu.edu.vn`,
-        password: password.trim(),
+        password: hashPassword(password.trim()),
         studentCode: role === 'STUDENT' ? (studentCode || username).trim() : undefined,
         faculty: faculty || (role === 'STUDENT' ? 'Khoa Cơ khí' : 'Khoa Cơ khí'),
         status: 'ACTIVE' as const,
@@ -260,7 +273,7 @@ async function startServer() {
         fullName: fullName.trim(),
         role,
         email: email || `${username}@tdnu.edu.vn`,
-        password: password?.trim() || '123456',
+        password: hashPassword(password?.trim() || '123456'),
         studentCode: role === 'STUDENT' ? (studentCode || username).trim() : undefined,
         faculty: faculty || 'BT môn Đào tạo',
         status: 'ACTIVE' as const,
@@ -308,7 +321,7 @@ async function startServer() {
       if (username !== undefined) updateData.username = username.trim();
       if (fullName !== undefined) updateData.fullName = fullName.trim();
       if (email !== undefined) updateData.email = email.trim();
-      if (password !== undefined && password.trim() !== '') updateData.password = password.trim();
+      if (password !== undefined && password.trim() !== '') updateData.password = hashPassword(password.trim());
       if (faculty !== undefined) updateData.faculty = faculty.trim();
       if (studentCode !== undefined) updateData.studentCode = studentCode.trim();
       if (role !== undefined) updateData.role = role;
@@ -331,6 +344,7 @@ async function startServer() {
           if (fullName !== undefined) svUpdate.hoTen = fullName.trim();
           if (email !== undefined) svUpdate.email = email.trim();
           if (faculty !== undefined) svUpdate.khoa = faculty.trim();
+          if (avatar !== undefined) svUpdate.avatar = avatar;
           await updateSinhVien(codeToSync, svUpdate);
         }
       }
@@ -492,12 +506,21 @@ async function startServer() {
         updateData.khoa = normalizeFacultyName(updateData.khoa, updateData.lop);
       }
       const updated = await updateSinhVien(maSV, updateData);
-      const user = await getUserByUsername(maSV);
+      let user = await getUserByUsername(maSV);
+      if (!user) {
+        const allUsers = await getAllUsers();
+        user = allUsers.find(
+          (u) =>
+            u.username.toLowerCase() === maSV.toLowerCase() ||
+            u.studentCode?.toLowerCase() === maSV.toLowerCase()
+        ) || null;
+      }
       if (user) {
         const uUpdate: any = {};
         if (req.body.hoTen) uUpdate.fullName = req.body.hoTen.trim();
         if (req.body.email) uUpdate.email = req.body.email.trim();
         if (updateData.khoa) uUpdate.faculty = updateData.khoa;
+        if (req.body.avatar !== undefined) uUpdate.avatar = req.body.avatar;
         await updateUser(user.id, uUpdate);
       }
       return res.json({ success: true, message: 'Cập nhật thông tin sinh viên thành công', data: updated });
@@ -560,7 +583,7 @@ async function startServer() {
               username: st.maSV.trim(),
               fullName: st.hoTen.trim(),
               email: st.email || `${st.maSV.trim().toLowerCase()}@tdnu.edu.vn`,
-              password: '123456',
+              password: hashPassword('123456'),
               studentCode: st.maSV.trim(),
               faculty: normKhoa,
               role: 'STUDENT',
@@ -621,6 +644,18 @@ async function startServer() {
         const student = await getSinhVienByMaSV(maSV);
         if (student) {
           await updateSinhVien(maSV, { avatar: uploadResult.url });
+        }
+        let user = await getUserByUsername(maSV);
+        if (!user) {
+          const allUsers = await getAllUsers();
+          user = allUsers.find(
+            (u) =>
+              u.username.toLowerCase() === maSV.toLowerCase() ||
+              u.studentCode?.toLowerCase() === maSV.toLowerCase()
+          ) || null;
+        }
+        if (user) {
+          await updateUser(user.id, { avatar: uploadResult.url });
         }
       }
 

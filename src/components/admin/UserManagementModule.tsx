@@ -139,7 +139,12 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
     }
   };
   const getUserPasswordDisplay = (user: User) => {
-    if (user.password) return user.password;
+    if (user.password) {
+      if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$') || user.password.startsWith('$2y$')) {
+        return '•••••••• [Bcrypt]';
+      }
+      return user.password;
+    }
     if (user.role === 'ADMIN') return 'admin123';
     if (user.role === 'LECTURER') return 'gv123';
     return '123456';
@@ -148,7 +153,8 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
     setEditingUser(user);
     setEditUsername(user.username);
     setEditFullName(user.fullName);
-    setEditPassword(getUserPasswordDisplay(user));
+    const isBcrypt = user.password?.startsWith('$2a$') || user.password?.startsWith('$2b$') || user.password?.startsWith('$2y$');
+    setEditPassword(isBcrypt ? '' : (user.password || ''));
     setShowEditPassword(false);
     setEditEmail(user.email || '');
     setEditFaculty(user.faculty || 'Khoa Cơ khí');
@@ -175,13 +181,12 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
     setEditModalError('');
     setEditModalSuccess('');
     if (!editUsername.trim() || !editFullName.trim()) {
-      setEditModalError('Vui lòng iền Tên fng nhập và Họ tên người dùng');
+      setEditModalError('Vui lòng điền Tên đăng nhập và Họ tên người dùng');
       return;
     }
     const updatedData: Partial<User> = {
       username: editUsername.trim(),
       fullName: editFullName.trim(),
-      password: editPassword.trim(),
       email: editEmail.trim(),
       faculty: editFaculty,
       studentCode: editRole === 'STUDENT' ? editStudentCode.trim() : undefined,
@@ -189,6 +194,9 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
       status: editStatus,
       permissions: editPermissions,
     };
+    if (editPassword && editPassword.trim() !== '' && !editPassword.includes('••••••••')) {
+      updatedData.password = editPassword.trim();
+    }
     if (onUpdateUser) {
       const res = await onUpdateUser(editingUser.id, updatedData);
       if (res && res.success === false) {
@@ -374,6 +382,10 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
                 const isUserAdmin = user.role === 'ADMIN';
                 const isUserLecturer = user.role === 'LECTURER';
                 const isUserStudent = user.role === 'STUDENT';
+                const studentMatch = isUserStudent
+                  ? students.find((s) => s.maSV.toLowerCase() === (user.studentCode || user.username).toLowerCase())
+                  : null;
+                const displayAvatar = user.avatar || studentMatch?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80';
                 const currentPasswordStr = getUserPasswordDisplay(user);
                 const isPassVisible = showAllPasswords || visiblePasswords[user.id];
                 return (
@@ -381,10 +393,7 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
                     <td className="p-4">
                       <div className="flex items-center gap-3">
                         <img
-                          src={
-                            user.avatar ||
-                            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'
-                          }
+                          src={displayAvatar}
                           alt={user.fullName}
                           className="w-9 h-9 rounded-full object-cover ring-2 ring-slate-200 dark:ring-slate-700"
                         />
@@ -854,7 +863,7 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
                       type={showEditPassword ? 'text' : 'password'}
                       value={editPassword}
                       onChange={(e) => setEditPassword(e.target.value)}
-                      placeholder="Mật khẩu mới..."
+                      placeholder="Để trống nếu giữ nguyên mật khẩu Bcrypt, hoặc nhập mật khẩu mới..."
                       className="w-full bg-slate-900 border border-amber-500/60 rounded-xl pl-3 pr-10 py-2 text-xs text-amber-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
                     />
                     <button

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { User } from '../types';
-import { GraduationCap, X, KeyRound, User as UserIcon, CheckCircle2, Lock } from 'lucide-react';
+import { apiService } from '../services/apiService';
+import { verifyPassword } from '../utils/security';
+import { GraduationCap, X, KeyRound, User as UserIcon, CheckCircle2, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -17,19 +19,66 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
-    const user = users.find(u => u.username.toLowerCase() === username.trim().toLowerCase());
-    if (user) {
-      onLoginSuccess(user);
+    const cleanUsername = username.trim();
+    const cleanPassword = password.trim();
+
+    if (!cleanUsername || !cleanPassword) {
+      setErrorMsg('Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu!');
+      return;
+    }
+
+    setIsLoading(true);
+    const key = cleanUsername.toLowerCase();
+
+    try {
+      const res = await apiService.login(cleanUsername, cleanPassword);
+      if (res.success && res.user) {
+        setIsLoading(false);
+        setUsername('');
+        setPassword('');
+        setErrorMsg('');
+        onLoginSuccess(res.user);
+        onClose();
+        return;
+      } else {
+        setIsLoading(false);
+        setErrorMsg(res.message || 'Mật khẩu không chính xác! Vui lòng thử lại.');
+        return;
+      }
+    } catch {
+      // Fallback cục bộ khi không kết nối được backend
+      const foundUser = users.find(u => u.username.toLowerCase() === key);
+      if (!foundUser) {
+        setIsLoading(false);
+        setErrorMsg('Tên đăng nhập hoặc Mã sinh viên không tồn tại trên hệ thống!');
+        return;
+      }
+      if (foundUser.status === 'LOCKED') {
+        setIsLoading(false);
+        setErrorMsg('Tài khoản này đã bị KHÓA! Chỉ có Quản trị viên (Admin) mới có thể mở khóa.');
+        return;
+      }
+      const storedPassword = (foundUser.password && foundUser.password.trim()) || (foundUser.role === 'ADMIN' ? 'admin123' : foundUser.role === 'LECTURER' ? 'gv123' : '123456');
+      if (!verifyPassword(cleanPassword, storedPassword)) {
+        setIsLoading(false);
+        setErrorMsg('Mật khẩu không chính xác! Vui lòng kiểm tra lại.');
+        return;
+      }
+      setIsLoading(false);
+      setUsername('');
+      setPassword('');
+      setErrorMsg('');
+      onLoginSuccess(foundUser);
       onClose();
-    } else {
-      setErrorMsg('Tên đăng nhập hoặc Mã sinh viên không tồn tại trên hệ thống!');
     }
   };
 
@@ -39,7 +88,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         <button
           id="btn-close-login"
           type="button"
-          onClick={onClose}
+          onClick={() => {
+            setErrorMsg('');
+            onClose();
+          }}
           className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
         >
           <X className="w-5 h-5" />
@@ -94,24 +146,42 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
               <input
                 id="input-password"
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Nhập mật khẩu của bạn"
-                autoComplete="new-password"
-                className="w-full pl-10 pr-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-2xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 font-medium"
+                autoComplete="current-password"
+                className="w-full pl-10 pr-10 py-2.5 text-xs bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-2xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 font-medium"
                 required
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-2.5 p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
             </div>
           </div>
 
           <button
             id="btn-submit-login"
             type="submit"
-            className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-blue-600/20 hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer mt-2"
+            disabled={isLoading}
+            className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-blue-600/20 hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer mt-2 disabled:opacity-50"
           >
-            <CheckCircle2 className="w-4 h-4" />
-            <span>Xác thực & Đăng nhập</span>
+            {isLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Đang xác thực...</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Xác thực & Đăng nhập</span>
+              </>
+            )}
           </button>
         </form>
       </div>

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { User, UserRole, ThoiKhoaBieu, ThiLaiHocLai, SinhVien, MonHoc, DiemDanh, ThongBaoKiemTra } from '../types';
 import { apiService } from '../services/apiService';
+import { verifyPassword } from '../utils/security';
 import { getAcademicPeriod } from '../utils/academicCalendar';
 import { useTheme } from '../context/ThemeContext';
 import {
@@ -87,6 +88,17 @@ export const Header: React.FC<HeaderProps> = ({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
+
+  const matchedStudent = (currentUser?.role === 'STUDENT' && students)
+    ? students.find(
+        (s) =>
+          s.maSV.toLowerCase() === (currentUser.studentCode || currentUser.username).toLowerCase()
+      )
+    : null;
+  const currentAvatar =
+    currentUser?.avatar ||
+    matchedStudent?.avatar ||
+    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80';
   useEffect(() => {
     let isMounted = true;
     const fetchBellData = async () => {
@@ -234,7 +246,8 @@ export const Header: React.FC<HeaderProps> = ({
       setErrorMsg('Vui lòng nhập mật khẩu cũ!');
       return;
     }
-    if (currentUser.password && oldPassword.trim() !== currentUser.password) {
+    const currentStoredPw = (currentUser.password && currentUser.password.trim()) || (currentUser.role === 'ADMIN' ? 'admin123' : currentUser.role === 'LECTURER' ? 'gv123' : '123456');
+    if (!verifyPassword(oldPassword.trim(), currentStoredPw)) {
       setErrorMsg('Mật khẩu cũ không chính xác. Vui lòng kiểm tra lại!');
       return;
     }
@@ -626,7 +639,7 @@ export const Header: React.FC<HeaderProps> = ({
                 title="Tùy chọn tài khoản"
               >
                 <img
-                  src={currentUser.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'}
+                  src={currentAvatar}
                   alt={currentUser.fullName}
                   className="w-9 h-9 rounded-2xl object-cover ring-2 ring-blue-500/30 group-hover:ring-blue-600 transition-all shadow-xs"
                 />
@@ -639,7 +652,7 @@ export const Header: React.FC<HeaderProps> = ({
                   <div className="px-4 py-3.5 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-800/30">
                     <div className="flex items-center gap-3">
                       <img
-                        src={currentUser.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'}
+                        src={currentAvatar}
                         alt={currentUser.fullName}
                         className="w-10 h-10 rounded-2xl object-cover ring-2 ring-blue-500/30"
                       />

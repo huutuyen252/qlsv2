@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { SinhVien, UserRole, HoSoFile, User } from '../../types';
 import { apiService } from '../../services/apiService';
@@ -290,6 +290,16 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
   const [viewingDocumentStudent, setViewingDocumentStudent] = useState<SinhVien | null>(null);
   const [viewingDetailStudent, setViewingDetailStudent] = useState<SinhVien | null>(null);
   const [copiedMaSV, setCopiedMaSV] = useState(false);
+
+  // Keep viewingDetailStudent synchronized when students prop updates
+  useEffect(() => {
+    if (viewingDetailStudent) {
+      const fresh = students.find((s) => s.maSV.toLowerCase() === viewingDetailStudent.maSV.toLowerCase());
+      if (fresh && (fresh.avatar !== viewingDetailStudent.avatar || fresh.hoTen !== viewingDetailStudent.hoTen)) {
+        setViewingDetailStudent(fresh);
+      }
+    }
+  }, [students]);
 
   // Excel Import state
   const [isExcelImportModalOpen, setIsExcelImportModalOpen] = useState(false);
@@ -1512,10 +1522,17 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                         reader.onload = () => {
                           const localData = reader.result as string;
                           setFormData((prev) => ({ ...prev, avatar: localData }));
-                          if (formData.maSV) {
-                            apiService.uploadAvatar(formData.maSV, localData).then((res) => {
+                          const targetMaSV = formData.maSV || editingStudent?.maSV;
+                          if (targetMaSV) {
+                            if (editingStudent) {
+                              onUpdateStudent(targetMaSV, { avatar: localData });
+                            }
+                            apiService.uploadAvatar(targetMaSV, localData).then((res) => {
                               if (res.success && res.avatarUrl) {
                                 setFormData((prev) => ({ ...prev, avatar: res.avatarUrl }));
+                                if (editingStudent) {
+                                  onUpdateStudent(targetMaSV, { avatar: res.avatarUrl });
+                                }
                               }
                             });
                           }

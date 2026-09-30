@@ -22,12 +22,16 @@ import {
 } from './schema';
 import { eq, and, sql, ilike, or } from 'drizzle-orm';
 import { INITIAL_USERS } from '../data/initialData';
+import { hashPassword, isBcryptHash } from '../utils/security';
 
 // Persistent storage file for uninterrupted durability
 const DATA_STORE_PATH = path.join(process.cwd(), '.app_data_storage.json');
 
 // In-memory fallback repositories
-let memoryUsers: any[] = [...INITIAL_USERS];
+let memoryUsers: any[] = INITIAL_USERS.map((u) => ({
+  ...u,
+  password: hashPassword(u.password || '123456'),
+}));
 let memorySinhVien: any[] = [];
 let memoryMonHoc: any[] = [];
 let memoryDiem: any[] = [];
@@ -337,6 +341,7 @@ export async function ensureDatabaseSchema() {
         ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "status" text DEFAULT 'ACTIVE';
         ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "created_at" text;
 
+        ALTER TABLE "sinh_vien" ADD COLUMN IF NOT EXISTS "avatar" text;
         ALTER TABLE "sinh_vien" ADD COLUMN IF NOT EXISTS "ho_so_file" text;
         ALTER TABLE "sinh_vien" ADD COLUMN IF NOT EXISTS "ho_so_file_name" text;
         ALTER TABLE "sinh_vien" ADD COLUMN IF NOT EXISTS "ho_so_files" jsonb;
@@ -373,7 +378,7 @@ export async function seedInitialDataIfNeeded() {
     await ensureDatabaseSchema();
     const existingUsers = await db.select().from(users).limit(1);
     if (existingUsers.length === 0) {
-      console.log('Seeding initial system users to PostgreSQL...');
+      console.log('Seeding initial system users to PostgreSQL with Bcrypt encryption...');
       for (const u of INITIAL_USERS) {
         await db.insert(users).values({
           id: u.id,
@@ -381,7 +386,7 @@ export async function seedInitialDataIfNeeded() {
           fullName: u.fullName,
           role: u.role,
           email: u.email,
-          password: u.password || '123456',
+          password: hashPassword(u.password || '123456'),
           avatar: u.avatar,
           faculty: u.faculty,
           status: u.status || 'ACTIVE',
@@ -389,7 +394,21 @@ export async function seedInitialDataIfNeeded() {
           createdAt: u.createdAt || new Date().toISOString().split('T')[0],
         }).onConflictDoNothing();
       }
-      console.log('Initial users seeded successfully.');
+      console.log('Initial users seeded with Bcrypt hash successfully.');
+    } else {
+      // Tự động quét và nâng cấp mật khẩu của người dùng hiện có trong PostgreSQL sang Bcrypt hash
+      try {
+        const allCurrentUsers = await db.select().from(users);
+        for (const u of allCurrentUsers) {
+          if (u.password && !isBcryptHash(u.password)) {
+            const hashed = hashPassword(u.password);
+            await db.update(users).set({ password: hashed }).where(eq(users.id, u.id));
+            console.log(`[Security] Đã mã hóa Bcrypt cho tài khoản [${u.username}] trong PostgreSQL.`);
+          }
+        }
+      } catch (migErr) {
+        console.warn('[Security] Không thể quét nâng cấp bcrypt trong CSDL:', (migErr as any)?.message);
+      }
     }
   } catch (error) {
     console.warn('[DB] Fallback in-memory state will be used:', (error as any)?.message);

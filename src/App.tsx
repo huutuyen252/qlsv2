@@ -279,12 +279,46 @@ export default function App() {
   };
 
   const handleUpdateUser = async (id: string, userData: Partial<User>) => {
+    setUsers((prev) =>
+      prev.map((u) => (u.id === id || u.username === id ? { ...u, ...userData } : u))
+    );
+
+    if (currentUser && (currentUser.id === id || currentUser.username === id)) {
+      const updated = { ...currentUser, ...userData };
+      setCurrentUser(updated);
+      try {
+        localStorage.setItem('app_current_user', JSON.stringify(updated));
+      } catch {}
+    }
+
+    const targetUser = users.find((u) => u.id === id || u.username === id);
+    const code = userData.studentCode || targetUser?.studentCode || targetUser?.username || currentUser?.studentCode || currentUser?.username;
+    if (code) {
+      setStudents((prev) =>
+        prev.map((s) => {
+          if (s.maSV.toLowerCase() === code.toLowerCase()) {
+            return {
+              ...s,
+              ...(userData.fullName ? { hoTen: userData.fullName } : {}),
+              ...(userData.email ? { email: userData.email } : {}),
+              ...(userData.faculty ? { khoa: userData.faculty } : {}),
+              ...(userData.avatar !== undefined ? { avatar: userData.avatar } : {}),
+            };
+          }
+          return s;
+        })
+      );
+    }
+
     const res = await apiService.updateUser(id, userData);
     if (res.success) {
       showToast(res.message || 'Cập nhật tài khoản thành công');
       if (currentUser && (currentUser.id === id || currentUser.username === id)) {
         const updated = res.data ? res.data : { ...currentUser, ...userData };
         setCurrentUser(updated);
+        try {
+          localStorage.setItem('app_current_user', JSON.stringify(updated));
+        } catch {}
       }
       loadAllData();
     }
@@ -365,24 +399,79 @@ export default function App() {
   };
 
   const handleUpdateStudent = async (maSV: string, updated: Partial<SinhVien>) => {
+    // 1. Optimistically update students list immediately so UI outside updates in real-time
+    setStudents((prev) =>
+      prev.map((s) => (s.maSV.toLowerCase() === maSV.toLowerCase() ? { ...s, ...updated } : s))
+    );
+
+    // 2. Optimistically update users list
+    setUsers((prev) =>
+      prev.map((u) => {
+        const matches =
+          u.username.toLowerCase() === maSV.toLowerCase() ||
+          u.studentCode?.toLowerCase() === maSV.toLowerCase();
+        if (matches) {
+          return {
+            ...u,
+            fullName: updated.hoTen || u.fullName,
+            email: updated.email || u.email,
+            faculty: updated.khoa || u.faculty,
+            avatar: updated.avatar !== undefined ? updated.avatar : u.avatar,
+          };
+        }
+        return u;
+      })
+    );
+
+    // 3. Optimistically update currentUser if logged in as this student
+    if (
+      currentUser &&
+      (currentUser.studentCode?.toLowerCase() === maSV.toLowerCase() ||
+        currentUser.username.toLowerCase() === maSV.toLowerCase())
+    ) {
+      setCurrentUser((prev) => {
+        if (!prev) return null;
+        const updatedUser: User = {
+          ...prev,
+          fullName: updated.hoTen || prev.fullName,
+          email: updated.email || prev.email,
+          faculty: updated.khoa || prev.faculty,
+          avatar: updated.avatar !== undefined ? updated.avatar : prev.avatar,
+        };
+        try {
+          localStorage.setItem('app_current_user', JSON.stringify(updatedUser));
+        } catch {}
+        return updatedUser;
+      });
+    }
+
     const res = await apiService.updateStudent(maSV, updated);
     if (res.success) {
       showToast('Cập nhật hồ sơ thành công');
-      if (
-        currentUser &&
-        (currentUser.studentCode?.toLowerCase() === maSV.toLowerCase() ||
-          currentUser.username.toLowerCase() === maSV.toLowerCase())
-      ) {
-        setCurrentUser((prev) =>
-          prev
-            ? {
-                ...prev,
-                fullName: updated.hoTen || prev.fullName,
-                email: updated.email || prev.email,
-                faculty: updated.khoa || prev.faculty,
-              }
-            : null
+      if (res.data) {
+        setStudents((prev) =>
+          prev.map((s) => (s.maSV.toLowerCase() === maSV.toLowerCase() ? { ...s, ...res.data } : s))
         );
+        if (
+          currentUser &&
+          (currentUser.studentCode?.toLowerCase() === maSV.toLowerCase() ||
+            currentUser.username.toLowerCase() === maSV.toLowerCase())
+        ) {
+          setCurrentUser((prev) => {
+            if (!prev) return null;
+            const updatedUser: User = {
+              ...prev,
+              fullName: res.data.hoTen || prev.fullName,
+              email: res.data.email || prev.email,
+              faculty: res.data.khoa || prev.faculty,
+              avatar: res.data.avatar !== undefined ? res.data.avatar : prev.avatar,
+            };
+            try {
+              localStorage.setItem('app_current_user', JSON.stringify(updatedUser));
+            } catch {}
+            return updatedUser;
+          });
+        }
       }
       loadAllData();
     }

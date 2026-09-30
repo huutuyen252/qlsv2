@@ -130,7 +130,7 @@ export const apiService = {
       return { success: false, message: 'Không thể thêm sinh viên' };
     }
   },
-  async updateStudent(maSV: string, student: Partial<SinhVien>): Promise<{ success: boolean; message: string }> {
+  async updateStudent(maSV: string, student: Partial<SinhVien>): Promise<{ success: boolean; message: string; data?: SinhVien }> {
     try {
       const res = await fetch(`${API_BASE}/students/${maSV}`, {
         method: 'PUT',
