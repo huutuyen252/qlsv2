@@ -18,6 +18,7 @@ export interface User {
   role: UserRole;
   email: string;
   password?: string;
+  plainPassword?: string;
   avatar?: string;
   studentCode?: string;
   faculty?: string;

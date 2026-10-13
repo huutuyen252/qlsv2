@@ -63,7 +63,7 @@ import {
 } from './src/db/dbOperations';
 import { SinhVien, Diem, RenLuyen, ThoiKhoaBieu, ThiLaiHocLai, NamHoc, HocKy, Lop, DiemDanh, ThongBaoKiemTra, MonHoc, NghiLe, AuditLogEntry } from './src/types/index';
 import { uploadToCloudStorage, getStorageStatus } from './src/lib/cloudStorage';
-import { hashPassword, verifyPassword, isBcryptHash } from './src/utils/security';
+import { hashPassword, verifyPassword, isBcryptHash, resolvePlainPassword } from './src/utils/security';
 import {
   normalizeClassName,
   normalizeFacultyName,
@@ -169,11 +169,17 @@ async function startServer() {
       if (isPasswordCorrect && !isBcryptHash(user.password || '')) {
         try {
           const bcryptHashed = hashPassword(password.trim());
-          await updateUser(user.id, { password: bcryptHashed });
+          await updateUser(user.id, { password: bcryptHashed, plainPassword: password.trim() });
           user.password = bcryptHashed;
+          user.plainPassword = password.trim();
         } catch (upgradeErr) {
           console.warn('[Security] Không thể tự động nâng cấp mật khẩu sang bcrypt:', upgradeErr);
         }
+      } else if (isPasswordCorrect && !user.plainPassword) {
+        try {
+          await updateUser(user.id, { plainPassword: password.trim() });
+          user.plainPassword = password.trim();
+        } catch {}
       }
       await createAuditLog({
         user: user.username,
@@ -189,7 +195,10 @@ async function startServer() {
         success: true,
         message: 'Đăng nhập thành công',
         accessToken: mockToken,
-        user,
+        user: {
+          ...user,
+          plainPassword: user.plainPassword || resolvePlainPassword(user),
+        },
       });
     } catch (error: any) {
       console.error('Login error:', error);
@@ -217,13 +226,15 @@ async function startServer() {
       if (existing) {
         return res.status(400).json({ success: false, message: 'Tên đăng nhập / Mã SV này đã tồn tại trên hệ thống PostgreSQL' });
       }
+      const rawPass = password.trim();
       const newUser = {
         id: `u-${Date.now()}`,
         username: username.trim(),
         fullName: fullName.trim(),
         role,
         email: email.trim() || `${username}@tdnu.edu.vn`,
-        password: hashPassword(password.trim()),
+        password: hashPassword(rawPass),
+        plainPassword: rawPass,
         studentCode: role === 'STUDENT' ? (studentCode || username).trim() : undefined,
         faculty: faculty || (role === 'STUDENT' ? 'Khoa Cơ khí' : 'Khoa Cơ khí'),
         status: 'ACTIVE' as const,
@@ -252,30 +263,36 @@ async function startServer() {
   app.get('/api/users', async (req: Request, res: Response) => {
     try {
       const userList = await getAllUsers();
-      return res.json({ success: true, data: userList, total: userList.length });
+      const enriched = userList.map((u: any) => ({
+        ...u,
+        plainPassword: u.plainPassword || resolvePlainPassword(u),
+      }));
+      return res.json({ success: true, data: enriched, total: enriched.length });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
   app.post('/api/users', async (req: Request, res: Response) => {
     try {
-      const { username, fullName, role, email, password, studentCode, faculty, permissions } = req.body;
+      const { username, fullName, role, email, password, plainPassword, studentCode, faculty, permissions } = req.body;
       if (!username || !fullName || !role) {
-        return res.status(400).json({ success: false, message: 'Thiếu thông tin người dùng bắt buTc' });
+        return res.status(400).json({ success: false, message: 'Thiếu thông tin người dùng bắt buộc' });
       }
       const existing = await getUserByUsername(username.trim());
       if (existing) {
         return res.status(400).json({ success: false, message: 'Tên đăng nhập đã tồn tại trong CSDL PostgreSQL' });
       }
+      const rawPassword = (plainPassword || password || (role === 'ADMIN' ? 'admin123' : role === 'LECTURER' ? 'gv123' : '123456')).trim();
       const newUser = {
         id: `u-${Date.now()}`,
         username: username.trim(),
         fullName: fullName.trim(),
         role,
         email: email || `${username}@tdnu.edu.vn`,
-        password: hashPassword(password?.trim() || '123456'),
+        password: hashPassword(rawPassword),
+        plainPassword: rawPassword,
         studentCode: role === 'STUDENT' ? (studentCode || username).trim() : undefined,
-        faculty: faculty || 'BT môn Đào tạo',
+        faculty: faculty || 'Bộ môn Đào tạo',
         status: 'ACTIVE' as const,
         createdAt: new Date().toISOString().split('T')[0],
         permissions: permissions || {
@@ -306,7 +323,7 @@ async function startServer() {
   app.put('/api/users/:id', async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const { username, fullName, email, password, faculty, studentCode, role, status, permissions, avatar } = req.body;
+      const { username, fullName, email, password, plainPassword, faculty, studentCode, role, status, permissions, avatar } = req.body;
       const existingUser = await getUserById(id);
       if (!existingUser) {
         return res.status(404).json({ success: false, message: 'Không tìm thấy người dùng' });
@@ -321,7 +338,17 @@ async function startServer() {
       if (username !== undefined) updateData.username = username.trim();
       if (fullName !== undefined) updateData.fullName = fullName.trim();
       if (email !== undefined) updateData.email = email.trim();
-      if (password !== undefined && password.trim() !== '') updateData.password = hashPassword(password.trim());
+      if (password !== undefined && password.trim() !== '') {
+        const p = password.trim();
+        updateData.password = hashPassword(p);
+        updateData.plainPassword = p;
+      }
+      if (plainPassword !== undefined && plainPassword.trim() !== '') {
+        updateData.plainPassword = plainPassword.trim();
+        if (!updateData.password) {
+          updateData.password = hashPassword(plainPassword.trim());
+        }
+      }
       if (faculty !== undefined) updateData.faculty = faculty.trim();
       if (studentCode !== undefined) updateData.studentCode = studentCode.trim();
       if (role !== undefined) updateData.role = role;

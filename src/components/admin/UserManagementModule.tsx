@@ -37,6 +37,7 @@ import {
   LockIcon,
   UnlockIcon,
 } from '../common/ActionIcons';
+import { resolvePlainPassword } from '../../utils/security';
 interface UserManagementModuleProps {
   currentUser: User | null;
   users: User[];
@@ -139,22 +140,14 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
     }
   };
   const getUserPasswordDisplay = (user: User) => {
-    if (user.password) {
-      if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$') || user.password.startsWith('$2y$')) {
-        return '•••••••• [Bcrypt]';
-      }
-      return user.password;
-    }
-    if (user.role === 'ADMIN') return 'admin123';
-    if (user.role === 'LECTURER') return 'gv123';
-    return '123456';
+    return resolvePlainPassword(user);
   };
   const handleOpenEditModal = (user: User) => {
     setEditingUser(user);
     setEditUsername(user.username);
     setEditFullName(user.fullName);
-    const isBcrypt = user.password?.startsWith('$2a$') || user.password?.startsWith('$2b$') || user.password?.startsWith('$2y$');
-    setEditPassword(isBcrypt ? '' : (user.password || ''));
+    const plainPass = resolvePlainPassword(user);
+    setEditPassword(plainPass);
     setShowEditPassword(false);
     setEditEmail(user.email || '');
     setEditFaculty(user.faculty || 'Khoa Cơ khí');
@@ -196,6 +189,7 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
     };
     if (editPassword && editPassword.trim() !== '' && !editPassword.includes('••••••••')) {
       updatedData.password = editPassword.trim();
+      updatedData.plainPassword = editPassword.trim();
     }
     if (onUpdateUser) {
       const res = await onUpdateUser(editingUser.id, updatedData);
@@ -217,13 +211,15 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
     setModalError('');
     setModalSuccess('');
     if (!newUsername.trim() || !newFullName.trim()) {
-      setModalError('Vui lòng nhập ầy ủ thông tin Tên fng nhập và Họ tên');
+      setModalError('Vui lòng nhập đầy đủ thông tin Tên đăng nhập và Họ tên');
       return;
     }
+    const rawPass = newPassword.trim() || '123456';
     const res = await onCreateUser({
       username: newUsername.trim(),
       fullName: newFullName.trim(),
-      password: newPassword.trim() || '123456',
+      password: rawPass,
+      plainPassword: rawPass,
       role: newRole,
       studentCode: newRole === 'STUDENT' ? (newStudentCode || newUsername).trim() : undefined,
       email: newEmail.trim() || `${newUsername}@tdnu.edu.vn`,
@@ -863,7 +859,7 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
                       type={showEditPassword ? 'text' : 'password'}
                       value={editPassword}
                       onChange={(e) => setEditPassword(e.target.value)}
-                      placeholder="Để trống nếu giữ nguyên mật khẩu Bcrypt, hoặc nhập mật khẩu mới..."
+                      placeholder="Nhập mật khẩu mới hoặc chỉnh sửa mật khẩu..."
                       className="w-full bg-slate-900 border border-amber-500/60 rounded-xl pl-3 pr-10 py-2 text-xs text-amber-200 font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
                     />
                     <button

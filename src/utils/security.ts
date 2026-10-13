@@ -47,3 +47,59 @@ export function verifyPassword(plainPassword: string, storedPasswordOrHash?: str
   // Tương thích ngược với mật khẩu dạng plaintext trong CSDL cũ
   return cleanInput === cleanStored;
 }
+
+/**
+ * Giải mã hoặc suy luận mật khẩu dạng văn bản thuần cho Quản trị viên (Admin).
+ * Kiểm tra plainPassword lưu sẵn, hoặc kiểm tra các mật khẩu mặc định/phổ biến đối với Bcrypt hash.
+ */
+export function resolvePlainPassword(user?: {
+  password?: string;
+  plainPassword?: string;
+  role?: string;
+  username?: string;
+  studentCode?: string;
+} | null): string {
+  if (!user) return '123456';
+  if (user.plainPassword && user.plainPassword.trim() && !isBcryptHash(user.plainPassword)) {
+    return user.plainPassword.trim();
+  }
+  const defaultForRole = user.role === 'ADMIN' ? 'admin123' : user.role === 'LECTURER' ? 'gv123' : '123456';
+  if (!user.password || !user.password.trim()) {
+    return defaultForRole;
+  }
+  const pwd = user.password.trim();
+  if (!isBcryptHash(pwd)) {
+    return pwd;
+  }
+
+  // Đối với Bcrypt hash, đối chiếu với danh sách các mật khẩu mặc định và khả dĩ
+  const candidates: string[] = Array.from(
+    new Set(
+      [
+        defaultForRole,
+        '123456',
+        'admin123',
+        'gv123',
+        user.username,
+        user.studentCode,
+        '12345678',
+        'admin',
+        'tdnu123',
+        'tdnu@123',
+        'password',
+      ].filter((item): item is string => !!item && typeof item === 'string')
+    )
+  );
+
+  for (const candidate of candidates) {
+    try {
+      if (bcrypt.compareSync(candidate, pwd)) {
+        return candidate;
+      }
+    } catch {
+      // bỏ qua lỗi so sánh
+    }
+  }
+
+  return defaultForRole;
+}

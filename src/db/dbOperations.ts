@@ -22,7 +22,7 @@ import {
 } from './schema';
 import { eq, and, sql, ilike, or } from 'drizzle-orm';
 import { INITIAL_USERS } from '../data/initialData';
-import { hashPassword, isBcryptHash } from '../utils/security';
+import { hashPassword, isBcryptHash, resolvePlainPassword } from '../utils/security';
 
 // Persistent storage file for uninterrupted durability
 const DATA_STORE_PATH = path.join(process.cwd(), '.app_data_storage.json');
@@ -30,6 +30,7 @@ const DATA_STORE_PATH = path.join(process.cwd(), '.app_data_storage.json');
 // In-memory fallback repositories
 let memoryUsers: any[] = INITIAL_USERS.map((u) => ({
   ...u,
+  plainPassword: u.plainPassword || u.password,
   password: hashPassword(u.password || '123456'),
 }));
 let memorySinhVien: any[] = [];
@@ -75,7 +76,12 @@ export function loadFromDisk() {
     if (fs.existsSync(DATA_STORE_PATH)) {
       const raw = fs.readFileSync(DATA_STORE_PATH, 'utf-8');
       const data = JSON.parse(raw);
-      if (Array.isArray(data.memoryUsers) && data.memoryUsers.length > 0) memoryUsers = data.memoryUsers;
+      if (Array.isArray(data.memoryUsers) && data.memoryUsers.length > 0) {
+        memoryUsers = data.memoryUsers.map((u: any) => ({
+          ...u,
+          plainPassword: u.plainPassword || resolvePlainPassword(u),
+        }));
+      }
       if (Array.isArray(data.memorySinhVien)) memorySinhVien = data.memorySinhVien;
       if (Array.isArray(data.memoryMonHoc)) memoryMonHoc = data.memoryMonHoc;
       if (Array.isArray(data.memoryDiem)) memoryDiem = data.memoryDiem;
@@ -145,6 +151,7 @@ export async function ensureDatabaseSchema() {
           "role" text NOT NULL,
           "email" text NOT NULL,
           "password" text,
+          "plain_password" text,
           "avatar" text,
           "student_code" text,
           "faculty" text,
@@ -340,6 +347,7 @@ export async function ensureDatabaseSchema() {
         ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "faculty" text;
         ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "status" text DEFAULT 'ACTIVE';
         ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "created_at" text;
+        ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "plain_password" text;
 
         ALTER TABLE "sinh_vien" ADD COLUMN IF NOT EXISTS "avatar" text;
         ALTER TABLE "sinh_vien" ADD COLUMN IF NOT EXISTS "ho_so_file" text;
@@ -387,6 +395,7 @@ export async function seedInitialDataIfNeeded() {
           role: u.role,
           email: u.email,
           password: hashPassword(u.password || '123456'),
+          plainPassword: u.plainPassword || u.password,
           avatar: u.avatar,
           faculty: u.faculty,
           status: u.status || 'ACTIVE',
