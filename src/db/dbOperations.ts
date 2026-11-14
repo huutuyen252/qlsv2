@@ -21,7 +21,7 @@ import {
   auditLogs,
 } from './schema';
 import { eq, and, sql, ilike, or } from 'drizzle-orm';
-import { INITIAL_USERS } from '../data/initialData';
+import { INITIAL_USERS, INITIAL_SINH_VIEN } from '../data/initialData';
 import { hashPassword, isBcryptHash, resolvePlainPassword } from '../utils/security';
 
 // Persistent storage file for uninterrupted durability
@@ -33,7 +33,7 @@ let memoryUsers: any[] = INITIAL_USERS.map((u) => ({
   plainPassword: u.plainPassword || u.password,
   password: hashPassword(u.password || '123456'),
 }));
-let memorySinhVien: any[] = [];
+let memorySinhVien: any[] = [...INITIAL_SINH_VIEN];
 let memoryMonHoc: any[] = [];
 let memoryDiem: any[] = [];
 let memoryRenLuyen: any[] = [];
@@ -46,6 +46,8 @@ let memoryDiemDanh: any[] = [];
 let memoryThongBaoKiemTra: any[] = [];
 let memoryNghiLe: any[] = [];
 let memoryAuditLogs: any[] = [];
+let memoryIdMapping: any[] = [];
+let memoryMigrationConflictLog: any[] = [];
 
 export function saveToDisk() {
   try {
@@ -64,6 +66,8 @@ export function saveToDisk() {
       memoryThongBaoKiemTra,
       memoryNghiLe,
       memoryAuditLogs,
+      memoryIdMapping,
+      memoryMigrationConflictLog,
     };
     fs.writeFileSync(DATA_STORE_PATH, JSON.stringify(payload, null, 2), 'utf-8');
   } catch (err) {
@@ -82,7 +86,11 @@ export function loadFromDisk() {
           plainPassword: u.plainPassword || resolvePlainPassword(u),
         }));
       }
-      if (Array.isArray(data.memorySinhVien)) memorySinhVien = data.memorySinhVien;
+      if (Array.isArray(data.memorySinhVien) && data.memorySinhVien.length > 0) {
+        memorySinhVien = data.memorySinhVien;
+      } else {
+        memorySinhVien = [...INITIAL_SINH_VIEN];
+      }
       if (Array.isArray(data.memoryMonHoc)) memoryMonHoc = data.memoryMonHoc;
       if (Array.isArray(data.memoryDiem)) memoryDiem = data.memoryDiem;
       if (Array.isArray(data.memoryRenLuyen)) memoryRenLuyen = data.memoryRenLuyen;
@@ -95,7 +103,9 @@ export function loadFromDisk() {
       if (Array.isArray(data.memoryThongBaoKiemTra)) memoryThongBaoKiemTra = data.memoryThongBaoKiemTra;
       if (Array.isArray(data.memoryNghiLe)) memoryNghiLe = data.memoryNghiLe;
       if (Array.isArray(data.memoryAuditLogs)) memoryAuditLogs = data.memoryAuditLogs;
-      console.log(`[Storage] Loaded persistent store: ${memorySinhVien.length} SV, ${memoryDiemDanh.length} điểm danh, ${memoryThongBaoKiemTra.length} thông báo KT, ${memoryAuditLogs.length} audit logs`);
+      if (Array.isArray(data.memoryIdMapping)) memoryIdMapping = data.memoryIdMapping;
+      if (Array.isArray(data.memoryMigrationConflictLog)) memoryMigrationConflictLog = data.memoryMigrationConflictLog;
+      console.log(`[Storage] Loaded persistent store: ${memorySinhVien.length} SV, ${memoryDiemDanh.length} điểm danh, ${memoryThongBaoKiemTra.length} thông báo KT, ${memoryAuditLogs.length} audit logs, ${memoryIdMapping.length} ID mappings`);
     }
 
     if (memoryAuditLogs.length === 0) {
@@ -350,9 +360,47 @@ export async function ensureDatabaseSchema() {
         ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "plain_password" text;
 
         ALTER TABLE "sinh_vien" ADD COLUMN IF NOT EXISTS "avatar" text;
+        ALTER TABLE "sinh_vien" ADD COLUMN IF NOT EXISTS "lop_id" text;
         ALTER TABLE "sinh_vien" ADD COLUMN IF NOT EXISTS "ho_so_file" text;
         ALTER TABLE "sinh_vien" ADD COLUMN IF NOT EXISTS "ho_so_file_name" text;
         ALTER TABLE "sinh_vien" ADD COLUMN IF NOT EXISTS "ho_so_files" jsonb;
+
+        ALTER TABLE "diem" ADD COLUMN IF NOT EXISTS "hoc_ky_id" text;
+        ALTER TABLE "diem" ADD COLUMN IF NOT EXISTS "nam_hoc_id" text;
+        ALTER TABLE "diem" ADD COLUMN IF NOT EXISTS "diem_chuyen_can_num" double precision;
+        ALTER TABLE "diem" ADD COLUMN IF NOT EXISTS "diem_giua_ky_num" double precision;
+        ALTER TABLE "diem" ADD COLUMN IF NOT EXISTS "diem_cuoi_ky_num" double precision;
+        ALTER TABLE "diem" ADD COLUMN IF NOT EXISTS "diem_tong_ket_10_num" double precision;
+        ALTER TABLE "diem" ADD COLUMN IF NOT EXISTS "diem_thang_4_num" double precision;
+
+        ALTER TABLE "thi_lai_hoc_lai" ADD COLUMN IF NOT EXISTS "hoc_ky_id" text;
+        ALTER TABLE "thi_lai_hoc_lai" ADD COLUMN IF NOT EXISTS "nam_hoc_id" text;
+
+        CREATE TABLE IF NOT EXISTS "id_mapping" (
+          "id" text PRIMARY KEY NOT NULL,
+          "entity_type" text NOT NULL,
+          "source_table" text NOT NULL,
+          "source_id" text NOT NULL,
+          "canonical_table" text NOT NULL,
+          "canonical_id" text NOT NULL,
+          "mapping_reason" text NOT NULL,
+          "migration_status" text DEFAULT 'MIGRATED',
+          "conflict_details" text,
+          "migrated_at" text
+        );
+
+        CREATE TABLE IF NOT EXISTS "migration_conflict_log" (
+          "id" text PRIMARY KEY NOT NULL,
+          "migration_batch" text NOT NULL,
+          "table_name" text NOT NULL,
+          "record_id" text NOT NULL,
+          "column_name" text NOT NULL,
+          "conflict_type" text NOT NULL,
+          "raw_value" text,
+          "expected_reference" text,
+          "notes" text,
+          "created_at" text
+        );
 
         ALTER TABLE "thoi_khoa_bieu" ADD COLUMN IF NOT EXISTS "tkb_id" text;
         ALTER TABLE "thoi_khoa_bieu" ADD COLUMN IF NOT EXISTS "lop_id" text;
@@ -365,6 +413,176 @@ export async function ensureDatabaseSchema() {
         ALTER TABLE "thoi_khoa_bieu" ADD COLUMN IF NOT EXISTS "giang_vien" text;
         ALTER TABLE "thoi_khoa_bieu" ADD COLUMN IF NOT EXISTS "phong_hoc" text;
         ALTER TABLE "thoi_khoa_bieu" ADD COLUMN IF NOT EXISTS "thong_bao_kiem_tra" jsonb;
+
+        CREATE TABLE IF NOT EXISTS "score_policies" (
+          "id" text PRIMARY KEY NOT NULL,
+          "code" text NOT NULL UNIQUE,
+          "name" text NOT NULL,
+          "academic_year_id" text NOT NULL,
+          "effective_from" text NOT NULL,
+          "effective_to" text,
+          "is_default" boolean DEFAULT false,
+          "rounding_precision" integer DEFAULT 1,
+          "officer_base_rule" text DEFAULT 'FIRST_DAY_OF_MONTH',
+          "is_active" boolean DEFAULT true,
+          "created_at" text,
+          "updated_at" text
+        );
+
+        CREATE TABLE IF NOT EXISTS "score_categories" (
+          "id" text PRIMARY KEY NOT NULL,
+          "policy_id" text NOT NULL,
+          "code" text NOT NULL,
+          "name" text NOT NULL,
+          "max_points" double precision NOT NULL,
+          "display_order" integer DEFAULT 1,
+          "description" text,
+          "is_active" boolean DEFAULT true,
+          "created_at" text,
+          "updated_at" text
+        );
+
+        CREATE TABLE IF NOT EXISTS "base_score_configs" (
+          "id" text PRIMARY KEY NOT NULL,
+          "policy_id" text NOT NULL,
+          "category_id" text NOT NULL,
+          "is_officer" boolean DEFAULT false,
+          "base_points" double precision NOT NULL,
+          "created_at" text,
+          "updated_at" text
+        );
+
+        CREATE TABLE IF NOT EXISTS "score_classifications" (
+          "id" text PRIMARY KEY NOT NULL,
+          "policy_id" text NOT NULL,
+          "code" text NOT NULL,
+          "name" text NOT NULL,
+          "min_score" double precision NOT NULL,
+          "max_score" double precision NOT NULL,
+          "display_order" integer DEFAULT 1,
+          "color_badge" text DEFAULT 'blue',
+          "created_at" text,
+          "updated_at" text
+        );
+
+        CREATE TABLE IF NOT EXISTS "class_officer_roles" (
+          "id" text PRIMARY KEY NOT NULL,
+          "code" text NOT NULL UNIQUE,
+          "name" text NOT NULL,
+          "base_score_bonus" double precision DEFAULT 5,
+          "is_active" boolean DEFAULT true,
+          "created_at" text,
+          "updated_at" text
+        );
+
+        CREATE TABLE IF NOT EXISTS "class_officer_assignments" (
+          "id" text PRIMARY KEY NOT NULL,
+          "student_code" text NOT NULL,
+          "student_name" text,
+          "class_id" text NOT NULL,
+          "role_id" text NOT NULL,
+          "academic_year" text NOT NULL,
+          "valid_from" text NOT NULL,
+          "valid_to" text,
+          "assigned_by" text NOT NULL,
+          "status" text DEFAULT 'ACTIVE',
+          "note" text,
+          "created_at" text,
+          "updated_at" text
+        );
+
+        CREATE TABLE IF NOT EXISTS "score_criteria" (
+          "id" text PRIMARY KEY NOT NULL,
+          "policy_id" text NOT NULL,
+          "category_id" text NOT NULL,
+          "code" text NOT NULL,
+          "name" text NOT NULL,
+          "direction" text NOT NULL,
+          "calculation_type" text NOT NULL,
+          "default_points" double precision NOT NULL,
+          "min_points" double precision,
+          "max_points" double precision,
+          "max_occurrences_per_day" integer,
+          "max_occurrences_per_month" integer,
+          "require_note" boolean DEFAULT false,
+          "require_evidence" boolean DEFAULT false,
+          "require_approval" boolean DEFAULT true,
+          "allow_batch" boolean DEFAULT true,
+          "effective_from" text NOT NULL,
+          "effective_to" text,
+          "is_active" boolean DEFAULT true,
+          "created_at" text,
+          "updated_at" text
+        );
+
+        CREATE TABLE IF NOT EXISTS "training_months" (
+          "id" text PRIMARY KEY NOT NULL,
+          "month" integer NOT NULL,
+          "year" integer NOT NULL,
+          "semester" text NOT NULL,
+          "academic_year" text NOT NULL,
+          "status" text DEFAULT 'DRAFT',
+          "opened_at" text,
+          "published_at" text,
+          "locked_at" text,
+          "locked_by" text,
+          "reopen_reason" text,
+          "is_applied" boolean DEFAULT true,
+          "created_at" text,
+          "updated_at" text
+        );
+
+        CREATE TABLE IF NOT EXISTS "score_transactions" (
+          "id" text PRIMARY KEY NOT NULL,
+          "student_code" text NOT NULL,
+          "student_name" text,
+          "class_id" text NOT NULL,
+          "month_id" text NOT NULL,
+          "month" integer NOT NULL,
+          "year" integer NOT NULL,
+          "semester" text NOT NULL,
+          "academic_year" text NOT NULL,
+          "category_id" text NOT NULL,
+          "criterion_id" text NOT NULL,
+          "occurred_at" text NOT NULL,
+          "occurrences" integer DEFAULT 1,
+          "points_per_occurrence" double precision NOT NULL,
+          "total_points_delta" double precision NOT NULL,
+          "note" text,
+          "evidence_url" text,
+          "evidence_file_name" text,
+          "batch_id" text,
+          "created_by" text NOT NULL,
+          "approved_by" text,
+          "approved_at" text,
+          "status" text DEFAULT 'DRAFT',
+          "rejection_reason" text,
+          "cancellation_reason" text,
+          "is_reversal" boolean DEFAULT false,
+          "reverses_transaction_id" text,
+          "version" integer DEFAULT 1,
+          "created_at" text,
+          "updated_at" text
+        );
+
+        CREATE TABLE IF NOT EXISTS "score_appeals" (
+          "id" text PRIMARY KEY NOT NULL,
+          "student_code" text NOT NULL,
+          "student_name" text,
+          "transaction_id" text,
+          "month_id" text NOT NULL,
+          "month" integer NOT NULL,
+          "year" integer NOT NULL,
+          "title" text NOT NULL,
+          "reason" text NOT NULL,
+          "evidence_url" text,
+          "status" text DEFAULT 'PENDING',
+          "reply_note" text,
+          "reviewed_by" text,
+          "reviewed_at" text,
+          "created_at" text,
+          "updated_at" text
+        );
       `);
       console.log('[DB] PostgreSQL schema checked & initialized successfully.');
     } finally {
@@ -1623,5 +1841,216 @@ export async function clearAuditLogs(): Promise<void> {
       console.warn('[DB] Error clearing audit logs:', e);
     }
   }
+}
+
+// ============================================================================
+// CHUẨN HÓA DỮ LIỆU & MIGRATION EXPAND-AND-CONTRACT OPERATIONS
+// ============================================================================
+
+export async function getAllIdMappings() {
+  if (pool) {
+    try {
+      const res = await pool.query(`SELECT * FROM "id_mapping" ORDER BY "migrated_at" DESC`);
+      return res.rows;
+    } catch {
+      // fallback
+    }
+  }
+  return [...memoryIdMapping];
+}
+
+export async function createIdMapping(entry: {
+  entityType: string;
+  sourceTable: string;
+  sourceId: string;
+  canonicalTable: string;
+  canonicalId: string;
+  mappingReason: string;
+  migrationStatus?: string;
+  conflictDetails?: string;
+}) {
+  const newMapping = {
+    id: `map-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    entityType: entry.entityType,
+    sourceTable: entry.sourceTable,
+    sourceId: entry.sourceId,
+    canonicalTable: entry.canonicalTable,
+    canonicalId: entry.canonicalId,
+    mappingReason: entry.mappingReason,
+    migrationStatus: entry.migrationStatus || 'MIGRATED',
+    conflictDetails: entry.conflictDetails || null,
+    migratedAt: new Date().toISOString(),
+  };
+
+  const existingIdx = memoryIdMapping.findIndex(
+    (m) => m.entityType === entry.entityType && m.sourceTable === entry.sourceTable && m.sourceId === entry.sourceId
+  );
+  if (existingIdx !== -1) {
+    memoryIdMapping[existingIdx] = { ...memoryIdMapping[existingIdx], ...newMapping };
+  } else {
+    memoryIdMapping.push(newMapping);
+  }
+  saveToDisk();
+
+  if (pool) {
+    try {
+      await pool.query(
+        `INSERT INTO "id_mapping" ("id", "entity_type", "source_table", "source_id", "canonical_table", "canonical_id", "mapping_reason", "migration_status", "conflict_details", "migrated_at")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT ("entity_type", "source_table", "source_id") DO UPDATE
+         SET "canonical_id" = EXCLUDED."canonical_id", "migrated_at" = EXCLUDED."migrated_at"`,
+        [newMapping.id, newMapping.entityType, newMapping.sourceTable, newMapping.sourceId, newMapping.canonicalTable, newMapping.canonicalId, newMapping.mappingReason, newMapping.migrationStatus, newMapping.conflictDetails, newMapping.migratedAt]
+      );
+    } catch (e) {
+      console.warn('[DB] Error writing id_mapping to postgres:', e);
+    }
+  }
+  return newMapping;
+}
+
+export async function getAllMigrationConflicts() {
+  if (pool) {
+    try {
+      const res = await pool.query(`SELECT * FROM "migration_conflict_log" ORDER BY "created_at" DESC`);
+      return res.rows;
+    } catch {
+      // fallback
+    }
+  }
+  return [...memoryMigrationConflictLog];
+}
+
+export async function logMigrationConflict(conflict: {
+  migrationBatch: string;
+  tableName: string;
+  recordId: string;
+  columnName: string;
+  conflictType: string;
+  rawValue?: string;
+  expectedReference?: string;
+  notes?: string;
+}) {
+  const newLog = {
+    id: `conf-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    migrationBatch: conflict.migrationBatch,
+    tableName: conflict.tableName,
+    recordId: conflict.recordId,
+    columnName: conflict.columnName,
+    conflictType: conflict.conflictType,
+    rawValue: conflict.rawValue || '',
+    expectedReference: conflict.expectedReference || '',
+    notes: conflict.notes || '',
+    createdAt: new Date().toISOString(),
+  };
+
+  memoryMigrationConflictLog.push(newLog);
+  saveToDisk();
+
+  if (pool) {
+    try {
+      await pool.query(
+        `INSERT INTO "migration_conflict_log" ("id", "migration_batch", "table_name", "record_id", "column_name", "conflict_type", "raw_value", "expected_reference", "notes", "created_at")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [newLog.id, newLog.migrationBatch, newLog.tableName, newLog.recordId, newLog.columnName, newLog.conflictType, newLog.rawValue, newLog.expectedReference, newLog.notes, newLog.createdAt]
+      );
+    } catch (e) {
+      console.warn('[DB] Error writing conflict log to postgres:', e);
+    }
+  }
+  return newLog;
+}
+
+export async function executeDataBackfill(batchTag: string = 'BATCH_20261108_APPLET') {
+  let mappedStudents = 0;
+  let unmappedStudents = 0;
+  let mappedGrades = 0;
+  let unmappedGrades = 0;
+  let mappedRenLuyen = 0;
+
+  // 1. Backfill sinh_vien -> lop_id
+  for (const sv of memorySinhVien) {
+    const matchedLop = memoryLop.find((l) => l.tenLop === sv.lop || l.lopID === sv.lop);
+    if (matchedLop) {
+      sv.lopId = matchedLop.lopID;
+      await createIdMapping({
+        entityType: 'CLASS_REFERENCE',
+        sourceTable: 'sinh_vien',
+        sourceId: `${sv.maSV}::${sv.lop}`,
+        canonicalTable: 'lop',
+        canonicalId: matchedLop.lopID,
+        mappingReason: 'Tự động ánh xạ tên chuỗi lớp sang canonical lop_id',
+      });
+      mappedStudents++;
+    } else {
+      unmappedStudents++;
+      await logMigrationConflict({
+        migrationBatch: batchTag,
+        tableName: 'sinh_vien',
+        recordId: sv.maSV,
+        columnName: 'lop',
+        conflictType: 'UNRESOLVED_FOREIGN_KEY',
+        rawValue: sv.lop,
+        expectedReference: 'lop.lop_id',
+        notes: `Lớp "${sv.lop}" của sinh viên ${sv.hoTen} (${sv.maSV}) chưa có bản ghi trong bảng danh mục lop`,
+      });
+    }
+  }
+
+  // 2. Backfill diem -> hocKyId, namHocId, numeric scores
+  for (const d of memoryDiem) {
+    const matchedYear = memoryNamHoc.find((y) => y.tenNamHoc === d.namHoc || y.namHocID === d.namHoc);
+    const matchedSem = memoryHocKy.find((s) => s.tenHocKy === d.hocKy || s.hocKyID === d.hocKy);
+
+    if (matchedYear) d.namHocId = matchedYear.namHocID;
+    if (matchedSem) d.hocKyId = matchedSem.hocKyID;
+
+    d.diemChuyenCanNum = Number(Number(d.diemChuyenCan || 0).toFixed(2));
+    d.diemGiuaKyNum = Number(Number(d.diemGiuaKy || 0).toFixed(2));
+    d.diemCuoiKyNum = Number(Number(d.diemCuoiKy || 0).toFixed(2));
+    d.diemTongKet10Num = Number(Number(d.diemTongKet10 || 0).toFixed(2));
+    d.diemThang4Num = Number(Number(d.diemThang4 || 0).toFixed(2));
+
+    if (matchedYear && matchedSem) {
+      mappedGrades++;
+    } else {
+      unmappedGrades++;
+      await logMigrationConflict({
+        migrationBatch: batchTag,
+        tableName: 'diem',
+        recordId: d.id,
+        columnName: 'hoc_ky_nam_hoc',
+        conflictType: 'UNRESOLVED_FOREIGN_KEY',
+        rawValue: `${d.namHoc} / ${d.hocKy}`,
+        expectedReference: 'nam_hoc.nam_hoc_id / hoc_ky.hoc_ky_id',
+        notes: `Bản ghi điểm môn ${d.maMH} của SV ${d.maSV} chứa chuỗi năm/kỳ chưa đăng ký trong danh mục`,
+      });
+    }
+  }
+
+  // 3. Sáp nhập ren_luyen cũ sang id_mapping
+  for (const rl of memoryRenLuyen) {
+    const canonicalAccId = `acc-${rl.maSV}-${rl.thang}-${rl.nam}`;
+    await createIdMapping({
+      entityType: 'TRAINING_SCORE',
+      sourceTable: 'ren_luyen',
+      sourceId: rl.id,
+      canonicalTable: 'monthly_score_accounts',
+      canonicalId: canonicalAccId,
+      mappingReason: 'Sáp nhập bản ghi điểm rèn luyện cũ sang tài khoản điểm tháng chuẩn',
+    });
+    mappedRenLuyen++;
+  }
+
+  saveToDisk();
+
+  return {
+    success: true,
+    batchTag,
+    students: { total: memorySinhVien.length, mapped: mappedStudents, unmapped: unmappedStudents },
+    grades: { total: memoryDiem.length, mapped: mappedGrades, unmapped: unmappedGrades },
+    renLuyen: { total: memoryRenLuyen.length, mapped: mappedRenLuyen },
+    conflictsLogged: memoryMigrationConflictLog.length,
+    idMappingsCount: memoryIdMapping.length,
+  };
 }
 

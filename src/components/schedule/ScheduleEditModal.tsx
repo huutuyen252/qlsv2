@@ -1,8 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useId } from 'react';
 import { ThoiKhoaBieu, MonHoc } from '../../types';
 import { apiService } from '../../services/apiService';
 import { isSubjectMatchingClass } from '../../utils/subjectHelper';
 import { Calendar, Edit3, X, Check } from 'lucide-react';
+import { StatusBadge } from '../common';
+
 interface ScheduleEditModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -11,6 +13,7 @@ interface ScheduleEditModalProps {
   onSuccess: (updatedData?: Partial<ThoiKhoaBieu>) => void;
   showToast: (msg: string) => void;
 }
+
 export const ScheduleEditModal: React.FC<ScheduleEditModalProps> = ({
   isOpen,
   onClose,
@@ -19,39 +22,88 @@ export const ScheduleEditModal: React.FC<ScheduleEditModalProps> = ({
   onSuccess,
   showToast,
 }) => {
-  if (!isOpen || !item) return null;
+  const titleId = useId();
   const [form, setForm] = useState({
-    tenMH: item.tenMH || '',
-    maMH: item.maMH || '',
-    soTinChi: item.soTinChi || 3,
-    giangVien: item.giangVien || '',
-    phongHoc: item.phongHoc || '',
-    hocKy: item.hocKy || 'HK1',
-    namHoc: item.namHoc || '2025-2026',
-    lop: item.lop || '',
-    tuanTu: item.tuanTu || 1,
-    tuanDen: item.tuanDen || 15,
-    thu: item.lichHoc && item.lichHoc[0] ? item.lichHoc[0].thu : 2,
-    tietBatDau: item.lichHoc && item.lichHoc[0] ? item.lichHoc[0].tietBatDau : 1,
-    soTiet: item.lichHoc && item.lichHoc[0] ? item.lichHoc[0].soTiet : 3,
+    tenMH: '',
+    maMH: '',
+    soTinChi: 3,
+    giangVien: '',
+    phongHoc: '',
+    hocKy: '',
+    namHoc: '',
+    lop: '',
+    tuanTu: 1,
+    tuanDen: 15,
+    thu: 2,
+    tietBatDau: 1,
+    soTiet: 3,
   });
 
-  const [weekMode, setWeekMode] = useState<'range' | 'custom_list'>(
-    item.danhSachTuan && item.danhSachTuan.length > 0 ? 'custom_list' : 'range'
-  );
-  const [selectedCustomWeeks, setSelectedCustomWeeks] = useState<number[]>(
-    item.danhSachTuan && item.danhSachTuan.length > 0
-      ? item.danhSachTuan
-      : Array.from({ length: Math.max(Number(item.tuanDen || 15) - Number(item.tuanTu || 1) + 1, 1) }, (_, i) => Number(item.tuanTu || 1) + i)
-  );
-  const [customWeekTextInput, setCustomWeekTextInput] = useState<string>(
-    item.danhSachTuan && item.danhSachTuan.length > 0 ? item.danhSachTuan.join(', ') : ''
-  );
+  const [weekMode, setWeekMode] = useState<'range' | 'custom_list'>('range');
+  const [selectedCustomWeeks, setSelectedCustomWeeks] = useState<number[]>([]);
+  const [customWeekTextInput, setCustomWeekTextInput] = useState<string>('');
   const [customWeekMaxDisplay, setCustomWeekMaxDisplay] = useState<number>(30);
+  const [showAllSubjects, setShowAllSubjects] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || !item) return;
+    const tuanTuVal = item.tuanTu || 1;
+    const tuanDenVal = item.tuanDen || 15;
+    const hasCustomList = Boolean(item.danhSachTuan && item.danhSachTuan.length > 0);
+    const weekList = hasCustomList
+      ? item.danhSachTuan!
+      : Array.from(
+          { length: Math.max(Number(tuanDenVal) - Number(tuanTuVal) + 1, 1) },
+          (_, i) => Number(tuanTuVal) + i
+        );
+
+    setForm({
+      tenMH: item.tenMH || '',
+      maMH: item.maMH || '',
+      soTinChi: item.soTinChi ?? 3,
+      giangVien: item.giangVien || '',
+      phongHoc: item.phongHoc || item.lichHoc?.[0]?.phong || '',
+      hocKy: item.hocKy || '',
+      namHoc: item.namHoc || '',
+      lop: item.lop || '',
+      tuanTu: tuanTuVal,
+      tuanDen: tuanDenVal,
+      thu: item.lichHoc && item.lichHoc[0] ? item.lichHoc[0].thu : item.thu || 2,
+      tietBatDau: item.lichHoc && item.lichHoc[0] ? item.lichHoc[0].tietBatDau : item.tietBatDau || 1,
+      soTiet: item.lichHoc && item.lichHoc[0] ? item.lichHoc[0].soTiet : item.soTiet || 3,
+    });
+    setWeekMode(hasCustomList ? 'custom_list' : 'range');
+    setSelectedCustomWeeks(weekList);
+    setCustomWeekTextInput(hasCustomList ? weekList.join(', ') : '');
+    setShowAllSubjects(false);
+    setIsSubmitting(false);
+  }, [isOpen, item]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isSubmitting) {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, isSubmitting, onClose]);
+
+  const filteredSubjects = useMemo(() => {
+    if (!item) return subjects;
+    if (showAllSubjects) return subjects;
+    return subjects.filter((s) => isSubjectMatchingClass(s, form.lop || item.lop));
+  }, [subjects, form.lop, item, showAllSubjects]);
+
+  if (!isOpen || !item) return null;
 
   const toggleCustomWeek = (w: number) => {
     setSelectedCustomWeeks((prev) => {
-      const next = prev.includes(w) ? prev.filter((itemW) => itemW !== w) : [...prev, w].sort((a, b) => a - b);
+      const next = prev.includes(w)
+        ? prev.filter((itemW) => itemW !== w)
+        : [...prev, w].sort((a, b) => a - b);
       setCustomWeekTextInput(next.join(', '));
       return next;
     });
@@ -67,15 +119,10 @@ export const ScheduleEditModal: React.FC<ScheduleEditModalProps> = ({
     setSelectedCustomWeeks(unique);
   };
 
-  const [showAllSubjects, setShowAllSubjects] = useState(false);
-  const filteredSubjects = useMemo(() => {
-    if (showAllSubjects) return subjects;
-    return subjects.filter((s) => isSubjectMatchingClass(s, form.lop || item.lop));
-  }, [subjects, form.lop, item.lop, showAllSubjects]);
-
   const matchedSub = subjects.find(
     (s) => s.maMH.trim().toLowerCase() === form.maMH.trim().toLowerCase()
   );
+
   const handleMaMHChange = (val: string) => {
     const found = subjects.find((s) => s.maMH.trim().toLowerCase() === val.trim().toLowerCase());
     if (found) {
@@ -91,6 +138,7 @@ export const ScheduleEditModal: React.FC<ScheduleEditModalProps> = ({
       setForm((prev) => ({ ...prev, maMH: val }));
     }
   };
+
   const handleSelectSubject = (maMH: string) => {
     const found = subjects.find((s) => s.maMH === maMH);
     if (found) {
@@ -104,7 +152,7 @@ export const ScheduleEditModal: React.FC<ScheduleEditModalProps> = ({
       }));
     }
   };
-  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -145,10 +193,11 @@ export const ScheduleEditModal: React.FC<ScheduleEditModalProps> = ({
             tietBatDau: Number(form.tietBatDau),
             soTiet: Number(form.soTiet),
             phong: form.phongHoc,
-            coSo: 'Cơ sở chính',
-          }
-        ]
+            coSo: item.lichHoc?.[0]?.coSo || '',
+          },
+        ],
       };
+
       let res;
       if (item.id && !item.id.startsWith('chao_co') && !item.id.startsWith('chao-co') && !item.id.startsWith('virtual')) {
         res = await apiService.updateSchedule(item.id, updatedPayload);
@@ -170,37 +219,54 @@ export const ScheduleEditModal: React.FC<ScheduleEditModalProps> = ({
       setIsSubmitting(false);
       onSuccess(updatedPayload);
       onClose();
-    } catch (err) {
+    } catch {
       showToast('Cập nhật thời khóa biểu thất bại');
       setIsSubmitting(false);
     }
   };
+
+  const isChaoCo = form.maMH === 'CHAO_CO' || form.tenMH?.toLowerCase().includes('chào cờ');
+
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-xs z-50 flex items-start justify-center p-4 pt-20 sm:pt-24 pb-6 overflow-y-auto">
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 w-full max-w-lg p-6 shadow-2xl relative max-h-[calc(100vh-7rem)] flex flex-col">
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 p-1.5 text-zinc-400 hover:text-zinc-600 rounded-lg cursor-pointer z-10"
-        >
-          <X className="w-5 h-5" />
-        </button>
-        <div className="flex items-center gap-2 mb-4 shrink-0">
-          <Edit3 className="w-5 h-5 text-blue-600" />
-          <h3 className="text-base font-bold text-zinc-900 dark:text-white">
-            Chỉnh Sửa Môn Học Trong Thời Khóa Biểu
-          </h3>
+    <div
+      className="fixed inset-0 bg-slate-950/60 z-50 flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      onClick={() => !isSubmitting && onClose()}
+    >
+      <div
+        className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shrink-0">
+          <div className="flex items-center gap-2">
+            <Edit3 className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+            <h3 id={titleId} className="text-sm font-bold text-slate-900 dark:text-slate-100">
+              Chỉnh sửa môn học trong thời khóa biểu
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Đóng hộp thoại"
+            className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800 rounded cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 text-xs overflow-y-auto pr-1 flex-1">
-          {subjects && subjects.length > 0 && (
+
+        <form onSubmit={handleSubmit} className="p-4 space-y-3.5 text-xs overflow-y-auto flex-1">
+          {subjects.length > 0 && (
             <div>
-              <div className="flex items-center justify-between mb-1 flex-wrap gap-1">
-                <label className="font-semibold block text-blue-600 dark:text-blue-400">
-                  Chọn môn học từ Danh mục môn học ({filteredSubjects.length} môn):
+              <div className="flex items-center justify-between mb-1 flex-wrap gap-1.5">
+                <label htmlFor="edit-tkb-subject-select" className="font-semibold text-slate-700 dark:text-slate-200">
+                  Môn học từ danh mục ({filteredSubjects.length})
                 </label>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={() =>
                       setForm((prev) => ({
                         ...prev,
                         maMH: 'CHAO_CO',
@@ -211,16 +277,15 @@ export const ScheduleEditModal: React.FC<ScheduleEditModalProps> = ({
                         thu: 2,
                         tietBatDau: 1,
                         soTiet: 1,
-                      }));
-                    }}
-                    className="px-2 py-0.5 text-[10px] font-bold bg-amber-100 dark:bg-amber-950/80 hover:bg-amber-200 text-amber-900 dark:text-amber-200 rounded border border-amber-300 dark:border-amber-700 flex items-center gap-1 cursor-pointer transition-colors"
-                    title="Điền nhanh tiết Chào cờ Tiểu đoàn (1 tiết)"
+                      }))
+                    }
+                    className="px-2 py-0.5 text-[11px] font-medium bg-amber-50 dark:bg-amber-950/50 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300 rounded border border-amber-300 dark:border-amber-800 cursor-pointer"
                   >
-                    <span>★ Chào cờ Tiểu đoàn (1T)</span>
+                    Chào cờ Tiểu đoàn (1T)
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={() =>
                       setForm((prev) => ({
                         ...prev,
                         maMH: 'CHAO_CO',
@@ -231,128 +296,142 @@ export const ScheduleEditModal: React.FC<ScheduleEditModalProps> = ({
                         thu: 2,
                         tietBatDau: 1,
                         soTiet: 2,
-                      }));
-                    }}
-                    className="px-2 py-0.5 text-[10px] font-bold bg-red-100 dark:bg-red-950/80 hover:bg-red-200 text-red-900 dark:text-red-200 rounded border border-red-300 dark:border-red-700 flex items-center gap-1 cursor-pointer transition-colors"
-                    title="Điền nhanh tiết Chào cờ Nhà trường (2 tiết)"
+                      }))
+                    }
+                    className="px-2 py-0.5 text-[11px] font-medium bg-rose-50 dark:bg-rose-950/50 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-800 dark:text-rose-300 rounded border border-rose-300 dark:border-rose-800 cursor-pointer"
                   >
-                    <span>🏫 Chào cờ Nhà trường (2T)</span>
+                    Chào cờ Nhà trường (2T)
                   </button>
                   {subjects.length > filteredSubjects.length && (
                     <button
                       type="button"
                       onClick={() => setShowAllSubjects(!showAllSubjects)}
-                      className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                      className="text-[11px] text-blue-700 dark:text-blue-400 hover:underline cursor-pointer"
                     >
-                      {showAllSubjects ? `Chỉ hiện môn lớp ${form.lop || item.lop}` : `Hiện tất cả (${subjects.length} môn)`}
+                      {showAllSubjects ? `Lọc theo lớp ${form.lop || item.lop}` : `Hiện tất cả (${subjects.length})`}
                     </button>
                   )}
                 </div>
               </div>
               <select
+                id="edit-tkb-subject-select"
                 onChange={(e) => handleSelectSubject(e.target.value)}
                 value={form.maMH}
-                className="w-full p-2 bg-blue-50/50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-lg font-bold text-xs cursor-pointer"
+                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 text-xs cursor-pointer focus:border-blue-600 focus:ring-1 focus:ring-blue-600 focus:outline-none"
               >
-                <option value="">-- Chọn môn học từ danh mục môn học --</option>
+                <option value="">-- Chọn môn học --</option>
                 {filteredSubjects.map((s) => (
                   <option key={s.maMH} value={s.maMH}>
-                    {s.maMH} - {s.tenMH} ({s.soTinChi} TC){(s.hocKy || s.namHoc) ? ` [${[s.hocKy, s.namHoc].filter(Boolean).join('  ')}]` : ''}{s.lop && s.lop !== 'ALL' ? ` (${s.lop})` : ''}
+                    {s.maMH} - {s.tenMH} ({s.soTinChi} TC)
+                    {s.hocKy || s.namHoc ? ` [${[s.hocKy, s.namHoc].filter(Boolean).join(' ')}]` : ''}
+                    {s.lop && s.lop !== 'ALL' ? ` (${s.lop})` : ''}
                   </option>
                 ))}
               </select>
             </div>
           )}
-          <div className="grid grid-cols-3 gap-2">
+
+          <div className="grid grid-cols-3 gap-2.5">
             <div>
-              <label className="font-semibold block mb-1">Mã MH *</label>
+              <label htmlFor="edit-tkb-mamh" className="font-semibold block mb-1 text-slate-700 dark:text-slate-200">
+                Mã MH *
+              </label>
               <input
+                id="edit-tkb-mamh"
                 type="text"
                 value={form.maMH}
                 onChange={(e) => handleMaMHChange(e.target.value)}
-                className="w-full p-2 bg-zinc-50 dark:bg-zinc-800 border rounded-lg font-mono font-bold"
+                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded font-mono font-semibold text-slate-900 dark:text-slate-100 focus:border-blue-600 focus:outline-none"
                 required
               />
             </div>
             <div className="col-span-2">
-              <label className="font-semibold block mb-1">Tên Môn Học *</label>
+              <label htmlFor="edit-tkb-tenmh" className="font-semibold block mb-1 text-slate-700 dark:text-slate-200">
+                Tên môn học *
+              </label>
               <input
+                id="edit-tkb-tenmh"
                 type="text"
                 value={form.tenMH}
                 onChange={(e) => setForm({ ...form, tenMH: e.target.value })}
-                className="w-full p-2 bg-zinc-50 dark:bg-zinc-800 border rounded-lg font-bold"
+                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded font-medium text-slate-900 dark:text-slate-100 focus:border-blue-600 focus:outline-none"
                 required
               />
             </div>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="font-semibold block">Số Tín Chỉ</label>
-                {matchedSub ? (
-                  <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                    ✓ Đã khớp ({matchedSub.soTinChi} TC)
-                  </span>
-                ) : null}
+                <label htmlFor="edit-tkb-stc" className="font-semibold text-slate-700 dark:text-slate-200">
+                  Số tín chỉ
+                </label>
+                {matchedSub && <StatusBadge label={`${matchedSub.soTinChi} TC`} variant="success" />}
               </div>
               <input
+                id="edit-tkb-stc"
                 type="number"
                 min={0}
                 max={10}
-                disabled={form.maMH === 'CHAO_CO' || form.tenMH?.toLowerCase().includes('chào cờ')}
-                value={form.maMH === 'CHAO_CO' || form.tenMH?.toLowerCase().includes('chào cờ') ? 0 : form.soTinChi}
+                disabled={isChaoCo}
+                value={isChaoCo ? 0 : form.soTinChi}
                 onChange={(e) => setForm({ ...form, soTinChi: Number(e.target.value) })}
-                className={`w-full p-2 bg-zinc-50 dark:bg-zinc-800 border rounded-lg font-bold ${
-                  form.maMH === 'CHAO_CO' || form.tenMH?.toLowerCase().includes('chào cờ')
-                    ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
+                className={`w-full px-2.5 py-1.5 border rounded font-mono tabular-nums text-slate-900 dark:text-slate-100 focus:border-blue-600 focus:outline-none ${
+                  isChaoCo
+                    ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700 cursor-not-allowed'
                     : matchedSub
-                    ? 'border-emerald-500 bg-emerald-50/20'
-                    : ''
+                    ? 'bg-emerald-50/30 dark:bg-emerald-950/20 border-emerald-400 dark:border-emerald-700'
+                    : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700'
                 }`}
               />
             </div>
             <div>
-              <label className="font-semibold block mb-1">Phòng Học</label>
+              <label htmlFor="edit-tkb-phong" className="font-semibold block mb-1 text-slate-700 dark:text-slate-200">
+                Phòng học
+              </label>
               <input
+                id="edit-tkb-phong"
                 type="text"
                 value={form.phongHoc}
                 onChange={(e) => setForm({ ...form, phongHoc: e.target.value })}
-                className="w-full p-2 bg-zinc-50 dark:bg-zinc-800 border rounded-lg font-bold"
+                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded font-mono text-slate-900 dark:text-slate-100 focus:border-blue-600 focus:outline-none"
               />
             </div>
             <div>
-              <label className="font-semibold block mb-1">Giảng Viên</label>
+              <label htmlFor="edit-tkb-gv" className="font-semibold block mb-1 text-slate-700 dark:text-slate-200">
+                Giảng viên
+              </label>
               <input
+                id="edit-tkb-gv"
                 type="text"
                 value={form.giangVien}
                 onChange={(e) => setForm({ ...form, giangVien: e.target.value })}
-                className="w-full p-2 bg-zinc-50 dark:bg-zinc-800 border rounded-lg font-bold"
+                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 focus:border-blue-600 focus:outline-none"
               />
             </div>
           </div>
-          <div className="bg-blue-50/50 dark:bg-blue-950/30 p-3 rounded-xl border border-blue-100 dark:border-blue-900 space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="font-bold text-blue-950 dark:text-blue-100">
-                Cấu hình tuần học *
-              </label>
+
+          <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-md border border-slate-200 dark:border-slate-800 space-y-2.5">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">Tuần học *</span>
               <div className="flex items-center gap-3">
-                <label className="flex items-center gap-1 cursor-pointer font-medium">
+                <label className="flex items-center gap-1.5 cursor-pointer text-slate-700 dark:text-slate-300">
                   <input
                     type="radio"
                     name="editWeekMode"
                     checked={weekMode === 'range'}
                     onChange={() => setWeekMode('range')}
-                    className="text-blue-600"
+                    className="text-blue-700"
                   />
                   <span>Theo khoảng tuần</span>
                 </label>
-                <label className="flex items-center gap-1 cursor-pointer font-medium">
+                <label className="flex items-center gap-1.5 cursor-pointer text-slate-700 dark:text-slate-300">
                   <input
                     type="radio"
                     name="editWeekMode"
                     checked={weekMode === 'custom_list'}
                     onChange={() => setWeekMode('custom_list')}
-                    className="text-blue-600"
+                    className="text-blue-700"
                   />
                   <span>Chọn từng tuần</span>
                 </label>
@@ -360,92 +439,75 @@ export const ScheduleEditModal: React.FC<ScheduleEditModalProps> = ({
             </div>
 
             {weekMode === 'range' ? (
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  <div>
-                    <label className="font-semibold block mb-1">Tuần bắt đầu *</label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={form.tuanTu}
-                      onChange={(e) => setForm({ ...form, tuanTu: Math.max(1, Number(e.target.value)) })}
-                      className="w-full p-2 bg-white dark:bg-zinc-900 border rounded-lg font-bold"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="font-semibold block mb-1">Tuần kết thúc *</label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={form.tuanDen}
-                      onChange={(e) => setForm({ ...form, tuanDen: Math.max(1, Number(e.target.value)) })}
-                      className="w-full p-2 bg-white dark:bg-zinc-900 border rounded-lg font-bold"
-                      required
-                    />
-                  </div>
-                  <div className="col-span-2 sm:col-span-1 text-[11px] font-semibold text-blue-800 dark:text-blue-300 bg-blue-100/70 dark:bg-blue-900/40 p-2 rounded-lg flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                    <span>
-                      Tổng: {Math.max(Number(form.tuanDen) - Number(form.tuanTu) + 1, 1)} tuần
-                    </span>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <div>
+                  <label htmlFor="edit-tkb-tuantu" className="font-medium block mb-1 text-slate-700 dark:text-slate-300">
+                    Tuần bắt đầu *
+                  </label>
+                  <input
+                    id="edit-tkb-tuantu"
+                    type="number"
+                    min={1}
+                    value={form.tuanTu}
+                    onChange={(e) => setForm({ ...form, tuanTu: Math.max(1, Number(e.target.value)) })}
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100"
+                    required
+                  />
+                </div>
+                <div>
+                  <label htmlFor="edit-tkb-tuanden" className="font-medium block mb-1 text-slate-700 dark:text-slate-300">
+                    Tuần kết thúc *
+                  </label>
+                  <input
+                    id="edit-tkb-tuanden"
+                    type="number"
+                    min={1}
+                    value={form.tuanDen}
+                    onChange={(e) => setForm({ ...form, tuanDen: Math.max(1, Number(e.target.value)) })}
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100"
+                    required
+                  />
+                </div>
+                <div className="col-span-2 sm:col-span-1 flex items-end">
+                  <div className="w-full px-2.5 py-1.5 text-[11px] font-mono tabular-nums font-medium text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 shrink-0" />
+                    <span>{Math.max(Number(form.tuanDen) - Number(form.tuanTu) + 1, 1)} tuần</span>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="space-y-2 bg-white dark:bg-zinc-900 p-2.5 rounded-xl border border-blue-200 dark:border-blue-800">
-                <div className="flex flex-wrap items-center justify-between gap-1 text-[10px]">
-                  <span className="font-semibold text-zinc-600 dark:text-zinc-300">
-                    Tích chọn các tuần:
-                  </span>
+              <div className="space-y-2 bg-white dark:bg-slate-900 p-2.5 rounded border border-slate-200 dark:border-slate-700">
+                <div className="flex flex-wrap items-center justify-between gap-1 text-[11px]">
+                  <span className="font-medium text-slate-600 dark:text-slate-300">Chọn nhanh:</span>
                   <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const list = Array.from({ length: 15 }, (_, i) => i + 1);
-                        setSelectedCustomWeeks(list);
-                        setCustomWeekTextInput(list.join(', '));
-                      }}
-                      className="px-1.5 py-0.5 font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded border hover:bg-zinc-200 cursor-pointer"
-                    >
-                      1-15
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const list = Array.from({ length: 20 }, (_, i) => i + 1);
-                        setSelectedCustomWeeks(list);
-                        setCustomWeekTextInput(list.join(', '));
-                      }}
-                      className="px-1.5 py-0.5 font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded border hover:bg-zinc-200 cursor-pointer"
-                    >
-                      1-20
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const list = Array.from({ length: 30 }, (_, i) => i + 1);
-                        setSelectedCustomWeeks(list);
-                        setCustomWeekTextInput(list.join(', '));
-                      }}
-                      className="px-1.5 py-0.5 font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded border hover:bg-zinc-200 cursor-pointer"
-                    >
-                      1-30
-                    </button>
+                    {[15, 20, 30].map((len) => (
+                      <button
+                        key={len}
+                        type="button"
+                        onClick={() => {
+                          const list = Array.from({ length: len }, (_, i) => i + 1);
+                          setSelectedCustomWeeks(list);
+                          setCustomWeekTextInput(list.join(', '));
+                        }}
+                        className="px-1.5 py-0.5 font-mono font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                      >
+                        1-{len}
+                      </button>
+                    ))}
                     <button
                       type="button"
                       onClick={() => {
                         setSelectedCustomWeeks([]);
                         setCustomWeekTextInput('');
                       }}
-                      className="px-1.5 py-0.5 font-bold bg-red-50 text-red-600 rounded border border-red-200 hover:bg-red-100 cursor-pointer"
+                      className="px-1.5 py-0.5 font-medium bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 rounded border border-rose-200 dark:border-rose-800 hover:bg-rose-100 cursor-pointer"
                     >
                       Xóa
                     </button>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-6 sm:grid-cols-10 gap-1 max-h-36 overflow-y-auto p-1 bg-zinc-50/70 dark:bg-zinc-800/40 rounded-lg border border-zinc-200 dark:border-zinc-700">
+                <div className="grid grid-cols-6 sm:grid-cols-10 gap-1 max-h-36 overflow-y-auto p-1 bg-slate-50 dark:bg-slate-800/40 rounded border border-slate-200 dark:border-slate-700">
                   {Array.from({ length: customWeekMaxDisplay }, (_, i) => i + 1).map((w) => {
                     const isSel = selectedCustomWeeks.includes(w);
                     return (
@@ -453,10 +515,10 @@ export const ScheduleEditModal: React.FC<ScheduleEditModalProps> = ({
                         type="button"
                         key={w}
                         onClick={() => toggleCustomWeek(w)}
-                        className={`p-1 text-[11px] font-bold rounded-md border transition-all cursor-pointer ${
+                        className={`p-1 text-[11px] font-mono font-semibold rounded border transition-colors cursor-pointer ${
                           isSel
-                            ? 'bg-blue-600 text-white border-blue-600'
-                            : 'bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100'
+                            ? 'bg-blue-700 text-white border-blue-700'
+                            : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
                         }`}
                       >
                         T{w}
@@ -466,39 +528,43 @@ export const ScheduleEditModal: React.FC<ScheduleEditModalProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-semibold text-zinc-500 shrink-0">Nhập tuần:</span>
+                  <label htmlFor="edit-tkb-weeklist" className="text-[11px] font-medium text-slate-600 dark:text-slate-300 shrink-0">
+                    Danh sách:
+                  </label>
                   <input
+                    id="edit-tkb-weeklist"
                     type="text"
-                    placeholder="VD: 1, 2, 3, 5, 8, 25, 30"
+                    placeholder="1, 2, 3, 5, 8..."
                     value={customWeekTextInput}
                     onChange={(e) => handleCustomWeekInput(e.target.value)}
-                    className="w-full p-1 bg-white dark:bg-zinc-900 border rounded text-[11px] font-mono font-bold text-blue-600 dark:text-blue-400"
+                    className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-[11px] font-mono text-slate-900 dark:text-slate-100"
                   />
                 </div>
 
-                <div className="flex items-center justify-between text-[10px] text-blue-600 dark:text-blue-400 font-semibold">
-                  <span>
-                    Đã chọn {selectedCustomWeeks.length} tuần
-                  </span>
+                <div className="flex items-center justify-between text-[11px] text-slate-600 dark:text-slate-300 font-medium">
+                  <span className="font-mono tabular-nums">Đã chọn {selectedCustomWeeks.length} tuần</span>
                   <button
                     type="button"
-                    onClick={() => setCustomWeekMaxDisplay((prev) => (prev === 20 ? 52 : prev === 30 ? 52 : 20))}
-                    className="text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                    onClick={() => setCustomWeekMaxDisplay((prev) => (prev <= 30 ? 52 : 30))}
+                    className="text-blue-700 dark:text-blue-400 hover:underline cursor-pointer"
                   >
-                    {customWeekMaxDisplay <= 20 ? '+ Hiện 52 tuần' : 'Thu gọn'}
+                    {customWeekMaxDisplay <= 30 ? 'Hiện 52 tuần' : 'Thu gọn'}
                   </button>
                 </div>
               </div>
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-2 bg-blue-50/50 dark:bg-blue-950/30 p-3 rounded-xl border border-blue-100 dark:border-blue-900">
+          <div className="grid grid-cols-3 gap-2.5 bg-slate-50 dark:bg-slate-800/50 p-3 rounded-md border border-slate-200 dark:border-slate-800">
             <div>
-              <label className="font-semibold block mb-1">Thứ Mấy</label>
+              <label htmlFor="edit-tkb-thu" className="font-semibold block mb-1 text-slate-700 dark:text-slate-200">
+                Thứ
+              </label>
               <select
+                id="edit-tkb-thu"
                 value={form.thu}
                 onChange={(e) => setForm({ ...form, thu: Number(e.target.value) })}
-                className="w-full p-2 bg-white dark:bg-zinc-900 border rounded-lg font-bold"
+                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 font-medium"
               >
                 <option value={2}>Thứ 2</option>
                 <option value={3}>Thứ 3</option>
@@ -510,11 +576,14 @@ export const ScheduleEditModal: React.FC<ScheduleEditModalProps> = ({
               </select>
             </div>
             <div>
-              <label className="font-semibold block mb-1">Tiết Bắt Đầu</label>
+              <label htmlFor="edit-tkb-tietbd" className="font-semibold block mb-1 text-slate-700 dark:text-slate-200">
+                Tiết bắt đầu
+              </label>
               <select
+                id="edit-tkb-tietbd"
                 value={form.tietBatDau}
                 onChange={(e) => setForm({ ...form, tietBatDau: Number(e.target.value) })}
-                className="w-full p-2 bg-white dark:bg-zinc-900 border rounded-lg font-bold"
+                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 font-medium"
               >
                 {[
                   { tiet: 1, label: 'Tiết 1 (07:00 - 07:45)' },
@@ -529,40 +598,44 @@ export const ScheduleEditModal: React.FC<ScheduleEditModalProps> = ({
                   { tiet: 10, label: 'Tiết 10 (16:05 - 16:50)' },
                   { tiet: 11, label: 'Tiết 11 (16:55 - 17:40)' },
                   { tiet: 12, label: 'Tiết 12 (17:45 - 18:30)' },
-                ].map((item) => (
-                  <option key={item.tiet} value={item.tiet}>
-                    {item.label}
+                ].map((opt) => (
+                  <option key={opt.tiet} value={opt.tiet}>
+                    {opt.label}
                   </option>
                 ))}
               </select>
             </div>
             <div>
-              <label className="font-semibold block mb-1">Số Tiết</label>
+              <label htmlFor="edit-tkb-sotiet" className="font-semibold block mb-1 text-slate-700 dark:text-slate-200">
+                Số tiết
+              </label>
               <input
+                id="edit-tkb-sotiet"
                 type="number"
                 min={1}
                 max={10}
                 value={form.soTiet}
                 onChange={(e) => setForm({ ...form, soTiet: Number(e.target.value) })}
-                className="w-full p-2 bg-white dark:bg-zinc-900 border rounded-lg font-bold"
+                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded font-mono tabular-nums text-slate-900 dark:text-slate-100 font-medium"
               />
             </div>
           </div>
-          <div className="flex justify-end gap-2 pt-2">
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-semibold rounded-xl cursor-pointer"
+              className="px-3.5 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 font-medium rounded cursor-pointer"
             >
               Hủy
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl cursor-pointer shadow-md flex items-center gap-1"
+              className="px-3.5 py-1.5 bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white font-semibold rounded cursor-pointer inline-flex items-center gap-1.5"
             >
-              <Check className="w-4 h-4" />
-              {isSubmitting ? 'Đang lưu...' : 'Lưu Thay Đổi'}
+              <Check className="w-3.5 h-3.5" />
+              <span>{isSubmitting ? 'Đang lưu...' : 'Lưu thay đổi'}</span>
             </button>
           </div>
         </form>
@@ -570,4 +643,3 @@ export const ScheduleEditModal: React.FC<ScheduleEditModalProps> = ({
     </div>
   );
 };
-

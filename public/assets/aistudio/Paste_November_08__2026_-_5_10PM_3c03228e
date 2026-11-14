@@ -1,0 +1,1315 @@
+# NHIỆM VỤ: KIỂM TOÁN VÀ TỐI ƯU TOÀN BỘ UI/UX HỆ THỐNG QUẢN LÝ SINH VIÊN
+
+Bạn đóng vai trò:
+
+- Senior System Designer
+- Senior Product Designer
+- UX Architect
+- Design System Architect
+- Accessibility Specialist
+- Senior Frontend Engineer
+- Business Analyst cho hệ thống quản trị giáo dục
+
+Tôi đã có một hệ thống quản lý sinh viên đang hoạt động.
+
+Nhiệm vụ là kiểm toán và tối ưu toàn bộ giao diện hiện tại thành một hệ thống quản trị giáo dục chuyên nghiệp, nhất quán, dễ sử dụng và không mang phong cách dashboard do AI thường tạo.
+
+Đây là nhiệm vụ cải tiến hệ thống hiện có.
+
+KHÔNG tạo dự án mới.
+KHÔNG tự tạo dữ liệu demo.
+KHÔNG tự thêm chức năng ngoài yêu cầu.
+KHÔNG thay đổi cơ sở dữ liệu chỉ để phục vụ giao diện.
+KHÔNG thay đổi nghiệp vụ khi chưa được phê duyệt.
+
+==================================================
+I. MỤC TIÊU THIẾT KẾ
+==================================================
+
+Giao diện sau tối ưu phải đạt các mục tiêu:
+
+1. Người dùng hiểu đang ở đâu trong hệ thống.
+2. Người dùng tìm được chức năng cần dùng nhanh.
+3. Các thao tác thường xuyên cần ít bước.
+4. Các thao tác nguy hiểm phải được kiểm soát.
+5. Dữ liệu nhiều vẫn dễ đọc và so sánh.
+6. Cùng một loại thao tác có cùng cách trình bày.
+7. Cùng một dữ liệu chỉ sử dụng từ một nguồn API/database.
+8. Giao diện admin và giao diện sinh viên phù hợp với nhu cầu khác nhau.
+9. Hoạt động tốt trên desktop, tablet và mobile.
+10. Hỗ trợ bàn phím và công nghệ hỗ trợ.
+11. Không giống generic SaaS dashboard.
+12. Không có cảm giác các trang được AI tạo riêng lẻ.
+
+Năm nguyên tắc nhận diện:
+
+- Academic.
+- Structured.
+- Efficient.
+- Calm.
+- Trustworthy.
+
+Mọi quyết định giao diện phải cải thiện ít nhất một yếu tố:
+
+- khả năng đọc;
+- khả năng tìm thấy;
+- tốc độ thao tác;
+- khả năng phòng tránh lỗi;
+- khả năng hiểu trạng thái;
+- khả năng tiếp cận.
+
+Nếu một yếu tố chỉ nhằm trang trí thì không thêm.
+
+==================================================
+II. QUY TẮC BẢO TOÀN HỆ THỐNG
+==================================================
+
+Giữ nguyên khi vẫn phù hợp:
+
+- dữ liệu hiện tại;
+- database;
+- API;
+- authentication;
+- authorization;
+- business rules;
+- route;
+- URL;
+- cấu trúc quyền;
+- quy trình nghiệp vụ;
+- chức năng đang hoạt động.
+
+Không:
+
+- tự tạo năm học;
+- tự tạo học kỳ;
+- tự tạo khoa;
+- tự tạo lớp;
+- tự tạo sinh viên;
+- tự tạo tài khoản;
+- tạo mock data trong production;
+- viết mảng hard-code thay API;
+- tạo bảng mới chỉ vì không hiểu bảng hiện tại;
+- gọi API tạo dữ liệu khi dropdown không có dữ liệu;
+- thay framework khi không cần thiết;
+- viết lại toàn bộ dự án.
+
+Mọi dropdown phải dùng dữ liệu thật từ API hiện tại.
+
+Dữ liệu năm học, học kỳ, lớp và sinh viên phải sử dụng canonical ID từ cơ sở dữ liệu đã chuẩn hóa.
+
+Nếu không biết nguồn dữ liệu:
+
+[NEED_PROJECT_INFO]
+
+UNKNOWN = STOP AND REPORT.
+
+Không đoán.
+Không tạo dữ liệu thay thế.
+Không âm thầm thêm fallback mock data.
+
+==================================================
+III. GIAI ĐOẠN ĐẦU: UI AUDIT ONLY
+==================================================
+
+Không viết code ngay.
+
+Trước tiên, hãy kiểm tra:
+
+1. Cấu trúc source code.
+2. Framework frontend.
+3. CSS framework.
+4. Component library.
+5. Routing.
+6. Layout.
+7. Authentication.
+8. Authorization.
+9. API client.
+10. State management.
+11. Form library.
+12. Table component.
+13. Validation.
+14. Responsive behavior.
+15. Loading/error handling.
+16. Accessibility hiện tại.
+17. Các component dùng chung.
+18. Các style bị lặp.
+19. Các màu, font, radius, shadow bị hard-code.
+20. Các trang đang dùng mock data.
+21. Các trang có chức năng trùng nhau.
+22. Các màn hình chưa thống nhất cách thao tác.
+
+Tạo Screen Inventory:
+
+| Module | Route | Screen | Main user | Main task | Data source | Current problems | Priority |
+|--------|-------|--------|-----------|-----------|-------------|------------------|----------|
+
+Tạo Component Inventory:
+
+| Component | Used by | Variants | Problems | Keep | Refactor | Replace |
+|-----------|---------|----------|----------|------|----------|---------|
+
+Tạo Interaction Inventory:
+
+- cách tìm kiếm;
+- cách lọc;
+- cách phân trang;
+- cách thêm mới;
+- cách chỉnh sửa;
+- cách xóa;
+- cách xác nhận;
+- cách tải tệp;
+- cách thông báo lỗi;
+- cách thông báo thành công;
+- cách hiển thị trạng thái;
+- cách hiển thị loading;
+- cách hiển thị empty state.
+
+Sau khi audit, xác định những điểm không nhất quán.
+
+Không tự sửa trước khi hoàn thành báo cáo audit.
+
+==================================================
+IV. PHÂN TÍCH THEO NHIỆM VỤ NGƯỜI DÙNG
+==================================================
+
+Không thiết kế chỉ dựa vào tên trang.
+
+Với từng màn hình, xác định:
+
+1. Ai sử dụng?
+2. Người dùng mở màn hình để làm gì?
+3. Thông tin nào cần thấy đầu tiên?
+4. Thao tác nào thường xuyên nhất?
+5. Thao tác nào nguy hiểm?
+6. Người dùng có so sánh nhiều bản ghi không?
+7. Người dùng có nhập dữ liệu hàng loạt không?
+8. Người dùng có cần chuyển nhanh giữa các bản ghi không?
+9. Người dùng có cần lịch sử không?
+10. Người dùng có cần xuất báo cáo không?
+11. Màn hình chủ yếu dùng desktop hay mobile?
+12. Điều gì dễ khiến người dùng nhập sai?
+
+Phân loại màn hình:
+
+A. LIST
+B. DETAIL
+C. FORM
+D. MASTER_DETAIL
+E. WORKFLOW
+F. DASHBOARD
+G. REPORT
+H. SETTINGS
+I. AUDIT_LOG
+J. STUDENT_SELF_SERVICE
+
+Không biến mọi trang thành dashboard.
+
+Không biến mọi nội dung thành card.
+
+==================================================
+V. KIẾN TRÚC THÔNG TIN
+==================================================
+
+Đề xuất menu theo nghiệp vụ, không theo cấu trúc database.
+
+Ví dụ:
+
+TỔNG QUAN
+
+SINH VIÊN
+- Danh sách sinh viên
+- Hồ sơ sinh viên
+- Phân lớp
+- Trạng thái học tập
+
+TỔ CHỨC ĐÀO TẠO
+- Khoa
+- Ngành
+- Khóa học
+- Lớp
+- Năm học
+- Học kỳ
+
+ĐIỂM RÈN LUYỆN
+- Bảng điểm lớp
+- Nhập điểm
+- Chờ duyệt
+- Khiếu nại
+- Tổng hợp học kỳ
+- Tổng hợp năm học
+
+BÁO CÁO
+- Báo cáo sinh viên
+- Báo cáo lớp
+- Báo cáo rèn luyện
+- Nhật ký thay đổi
+
+HỆ THỐNG
+- Người dùng
+- Vai trò và quyền
+- Danh mục dùng chung
+- Cấu hình
+- Nhật ký hệ thống
+
+Chỉ hiển thị menu theo quyền người dùng.
+
+Không làm menu quá sâu.
+
+Ưu tiên tối đa 2 cấp navigation.
+
+Nếu một chức năng hiếm dùng, đặt vào menu phụ hoặc trang cấu hình, không đặt ngang hàng với chức năng chính.
+
+==================================================
+VI. APP SHELL DÙNG CHUNG
+==================================================
+
+Tạo một AppShell thống nhất gồm:
+
+- Sidebar.
+- Topbar.
+- Breadcrumb.
+- PageHeader.
+- MainContent.
+- Notification area.
+- User menu.
+
+Sidebar:
+
+- chiều rộng vừa phải;
+- active state rõ;
+- icon đi kèm text;
+- không dùng emoji;
+- phân nhóm nghiệp vụ;
+- hỗ trợ thu gọn;
+- không dùng gradient;
+- không dùng logo quá lớn;
+- không hiển thị mục không có quyền.
+
+Topbar:
+
+- compact;
+- không lặp lại nội dung sidebar;
+- có tiêu đề ngữ cảnh nếu cần;
+- thông báo;
+- tài khoản;
+- thao tác toàn cục thực sự cần thiết.
+
+PageHeader:
+
+- breadcrumb;
+- tiêu đề;
+- mô tả ngắn nếu cần;
+- trạng thái;
+- primary action;
+- secondary actions.
+
+Không tạo hero banner.
+
+Không tạo lời chào generic như:
+
+- Welcome back.
+- Good morning.
+- Here is what is happening.
+
+==================================================
+VII. DESIGN SYSTEM
+==================================================
+
+Tạo design tokens tập trung:
+
+- colors;
+- typography;
+- spacing;
+- radius;
+- shadow;
+- border;
+- motion;
+- z-index;
+- breakpoints.
+
+Không hard-code style ở từng trang nếu có thể dùng token.
+
+Visual direction:
+
+- nền neutral nhẹ;
+- surface trắng;
+- border rõ nhưng tinh tế;
+- một primary color;
+- màu semantic cho trạng thái;
+- shadow rất hạn chế;
+- không glassmorphism;
+- không gradient trang trí;
+- không neon;
+- không radius quá lớn;
+- không pill button ở mọi nơi.
+
+Typography:
+
+- Page title: 20–24px.
+- Section heading: 16–18px.
+- Body: 14px.
+- Table: 13–14px.
+- Metadata: 12–13px.
+
+Sử dụng font hỗ trợ tiếng Việt tốt.
+
+Không dùng tiêu đề quá lớn trong phần mềm quản trị.
+
+==================================================
+VIII. COMPONENT LIBRARY DÙNG CHUNG
+==================================================
+
+Tạo hoặc chuẩn hóa:
+
+AppShell
+Sidebar
+Topbar
+Breadcrumb
+PageHeader
+SectionHeader
+
+Button
+IconButton
+LinkButton
+
+Input
+Textarea
+Select
+Combobox
+DatePicker
+DateRangePicker
+Checkbox
+Radio
+Switch
+FileUpload
+
+FormField
+FieldLabel
+FieldHint
+FieldError
+FormSection
+FormActions
+
+DataToolbar
+SearchInput
+FilterBar
+FilterChip
+SavedFilter
+
+DataTable
+TableHeader
+TableRow
+TableCell
+RowActions
+BulkActions
+ColumnVisibility
+Pagination
+DensitySelector
+
+Tabs
+Accordion
+Drawer
+Modal
+ConfirmDialog
+Popover
+Tooltip
+
+Badge
+StatusBadge
+ScoreValue
+ScoreDelta
+
+Toast
+InlineAlert
+ErrorSummary
+
+Skeleton
+LoadingState
+EmptyState
+ErrorState
+PermissionDeniedState
+
+Timeline
+AuditHistory
+AttachmentList
+
+Không tạo component mới nếu component dùng chung đã đáp ứng được.
+
+Quy tắc:
+
+REUSE trước.
+EXTEND nếu gần phù hợp.
+CREATE NEW chỉ khi thực sự cần.
+
+==================================================
+IX. DANH SÁCH VÀ BẢNG DỮ LIỆU
+==================================================
+
+Các trang danh sách phải sử dụng cùng một cấu trúc:
+
+1. PageHeader.
+2. DataToolbar.
+3. Active filters.
+4. DataTable.
+5. Pagination.
+6. Bulk action khi có chọn dòng.
+7. Empty/error/loading state.
+
+DataToolbar gồm:
+
+- tìm kiếm;
+- filter quan trọng;
+- filter nâng cao;
+- trạng thái filter đang áp dụng;
+- reset filter;
+- xuất dữ liệu nếu có quyền;
+- primary action.
+
+Bảng phải hỗ trợ khi phù hợp:
+
+- sticky header;
+- sort;
+- pagination;
+- row selection;
+- bulk action;
+- column visibility;
+- mật độ hiển thị;
+- fixed key columns;
+- horizontal scrolling hợp lý;
+- truncated text có tooltip;
+- keyboard navigation;
+- aria-label;
+- trạng thái loading;
+- empty state;
+- error state.
+
+Căn trái:
+
+- tên;
+- mã;
+- trạng thái dạng chữ;
+- mô tả.
+
+Căn phải:
+
+- số lượng;
+- điểm;
+- giá trị số.
+
+Không căn giữa toàn bộ bảng.
+
+Không biến mỗi row thành card trên desktop.
+
+Không đặt nút Sửa và Xóa kích thước lớn trong mọi dòng.
+
+Sử dụng row action menu khi phù hợp, nhưng giữ hành động quan trọng nhất nhìn thấy được.
+
+==================================================
+X. FILTER VÀ TÌM KIẾM
+==================================================
+
+Filter phải phản ánh cấu trúc dữ liệu thực.
+
+Cascading filter:
+
+Năm học
+→ Học kỳ
+→ Tháng
+→ Khoa
+→ Lớp
+→ Sinh viên.
+
+Khi filter cha thay đổi:
+
+- reset filter con;
+- hủy request cũ nếu cần;
+- tải option mới;
+- không giữ ID không còn hợp lệ;
+- không tự tạo option;
+- hiển thị trạng thái đang tải.
+
+Filter thường dùng hiển thị trực tiếp.
+
+Filter ít dùng đặt trong panel “Bộ lọc nâng cao”.
+
+Hiển thị filter đang áp dụng dưới dạng chip có thể xóa.
+
+Cho phép “Xóa tất cả bộ lọc”.
+
+Không tự gọi API quá nhiều khi người dùng đang gõ; sử dụng debounce phù hợp.
+
+URL có thể giữ search/filter state nếu giúp chia sẻ hoặc quay lại trang.
+
+==================================================
+XI. FORM NHẬP LIỆU
+==================================================
+
+Không tạo form dài chỉ gồm một cột nếu có thể nhóm hợp lý.
+
+Chia form theo ngữ nghĩa:
+
+- thông tin định danh;
+- thông tin học tập;
+- thông tin liên hệ;
+- thông tin lớp;
+- trạng thái;
+- ghi chú.
+
+Mỗi trường phải có:
+
+- visible label;
+- mô tả khi cần;
+- trạng thái required;
+- validation;
+- error message cụ thể.
+
+Không sử dụng placeholder làm label.
+
+Không xóa dữ liệu người dùng đã nhập khi API báo lỗi.
+
+Validation:
+
+- validation đơn giản ở client;
+- validation đầy đủ ở server;
+- thông báo lỗi gần trường;
+- có ErrorSummary ở đầu form khi nhiều lỗi;
+- đưa focus đến lỗi đầu tiên sau submit thất bại.
+
+Form actions:
+
+[Hủy] [Lưu]
+
+Hoặc:
+
+[Hủy] [Lưu nháp] [Gửi duyệt]
+
+Primary action nằm cuối form và nhất quán.
+
+Cảnh báo khi người dùng rời trang có thay đổi chưa lưu.
+
+==================================================
+XII. MODULE TỔNG QUAN
+==================================================
+
+Dashboard chỉ hiển thị thông tin giúp người dùng quyết định hoặc hành động.
+
+Không tạo biểu đồ trang trí.
+
+Với admin, có thể hiển thị:
+
+- việc đang chờ xử lý;
+- dữ liệu cần bổ sung;
+- kỳ/tháng đang mở;
+- giao dịch chờ duyệt;
+- khiếu nại chưa xử lý;
+- cảnh báo dữ liệu.
+
+Với cán bộ lớp:
+
+- lớp được phân công;
+- công việc chờ xử lý;
+- giao dịch mới;
+- tháng sắp khóa.
+
+Với sinh viên:
+
+- điểm hiện tại;
+- cập nhật gần nhất;
+- thông báo;
+- thời hạn phản hồi.
+
+Không dùng cùng dashboard cho mọi vai trò.
+
+==================================================
+XIII. MODULE SINH VIÊN
+==================================================
+
+Trang danh sách sinh viên:
+
+- tìm theo mã sinh viên, họ tên;
+- lọc theo khoa, lớp, khóa, trạng thái;
+- bảng dữ liệu mật độ vừa;
+- thao tác thêm mới;
+- nhập danh sách nếu có;
+- xuất dữ liệu;
+- bulk action có kiểm soát.
+
+Cột đề xuất:
+
+- MSSV;
+- họ tên;
+- lớp;
+- khoa/ngành;
+- khóa;
+- trạng thái;
+- cập nhật gần nhất;
+- thao tác.
+
+Trang chi tiết sinh viên:
+
+Sử dụng master-detail hoặc trang hồ sơ có tab:
+
+- Tổng quan.
+- Thông tin cá nhân.
+- Quá trình học tập.
+- Lịch sử lớp.
+- Điểm rèn luyện.
+- Tệp đính kèm.
+- Nhật ký thay đổi.
+
+Phần header hồ sơ:
+
+- họ tên;
+- mã sinh viên;
+- lớp hiện tại;
+- trạng thái;
+- các hành động được phép.
+
+Không đưa tất cả thông tin vào một trang dài.
+
+Các tab phải giữ đúng ngữ cảnh sinh viên.
+
+==================================================
+XIV. MODULE KHOA, NGÀNH, KHÓA VÀ LỚP
+==================================================
+
+Đây là master data.
+
+Trang danh sách phải ưu tiên:
+
+- mã;
+- tên;
+- quan hệ cha;
+- trạng thái;
+- số lượng liên quan;
+- ngày cập nhật.
+
+Không cho xóa master data đang được tham chiếu mà không cảnh báo.
+
+Khi mở lớp:
+
+- hiển thị thông tin lớp;
+- năm học;
+- khoa/ngành;
+- cố vấn;
+- sĩ số;
+- danh sách sinh viên;
+- lịch sử thay đổi.
+
+Quản lý thành viên lớp bằng workflow riêng:
+
+- thêm sinh viên hiện có;
+- chuyển lớp;
+- kết thúc tham gia;
+- xem lịch sử.
+
+Không tạo sinh viên mới ngầm trong thao tác thêm sinh viên vào lớp.
+
+==================================================
+XV. MODULE NĂM HỌC VÀ HỌC KỲ
+==================================================
+
+Trang năm học hiển thị:
+
+- mã;
+- tên;
+- ngày bắt đầu;
+- ngày kết thúc;
+- trạng thái;
+- số học kỳ;
+- thao tác.
+
+Chi tiết năm học hiển thị các học kỳ trực thuộc.
+
+Không tạo học kỳ từ chuỗi tự do ở module khác.
+
+Dropdown học kỳ phải lấy từ năm học đã chọn.
+
+Khi khóa năm học hoặc học kỳ:
+
+- hiển thị tác động;
+- số dữ liệu liên quan;
+- cảnh báo;
+- yêu cầu xác nhận;
+- ghi audit log.
+
+Các trạng thái phải rõ:
+
+- Bản nháp.
+- Đang hoạt động.
+- Đã đóng.
+
+==================================================
+XVI. MODULE ĐIỂM RÈN LUYỆN
+==================================================
+
+Trang bảng điểm lớp:
+
+PageHeader
+→ ScopeSelector
+→ SummaryStrip
+→ DataToolbar
+→ ScoreTable
+→ Pagination
+→ StudentDetailDrawer.
+
+ScopeSelector:
+
+- năm học;
+- học kỳ;
+- tháng;
+- lớp.
+
+SummaryStrip compact:
+
+- sĩ số;
+- điểm trung bình;
+- chờ duyệt;
+- cần xử lý.
+
+Không dùng bốn card khổng lồ.
+
+Bảng:
+
+- MSSV;
+- sinh viên;
+- chức vụ;
+- học tập;
+- kỷ luật;
+- hoạt động;
+- tổng điểm;
+- xếp loại;
+- chờ duyệt;
+- thay đổi gần nhất;
+- thao tác.
+
+Trang nhập điểm:
+
+- chọn lớp;
+- chọn một hoặc nhiều sinh viên;
+- chọn ngày phát sinh;
+- chọn nhóm;
+- chọn tiêu chí;
+- số lần;
+- điểm dự kiến;
+- ghi chú;
+- minh chứng;
+- preview;
+- lưu nháp/gửi duyệt.
+
+Trang chờ duyệt:
+
+- hiển thị giao dịch;
+- số điểm trước/sau;
+- người nhập;
+- thời gian;
+- lý do;
+- minh chứng;
+- duyệt;
+- từ chối;
+- xử lý hàng loạt nếu phù hợp.
+
+Trang khiếu nại:
+
+- trạng thái;
+- sinh viên;
+- giao dịch liên quan;
+- nội dung;
+- minh chứng;
+- lịch sử trao đổi;
+- kết quả xử lý.
+
+==================================================
+XVII. MODULE NGƯỜI DÙNG VÀ PHÂN QUYỀN
+==================================================
+
+Trang người dùng:
+
+- tài khoản;
+- họ tên;
+- loại tài khoản;
+- vai trò;
+- phạm vi;
+- trạng thái;
+- đăng nhập gần nhất.
+
+Phân quyền phải hiển thị cả:
+
+- vai trò;
+- phạm vi dữ liệu;
+- thời gian hiệu lực.
+
+Không chỉ hiển thị tên role mà bỏ qua scope.
+
+Màn hình cấp quyền nên dùng:
+
+- chọn người dùng;
+- chọn vai trò;
+- chọn scope;
+- chọn đối tượng phạm vi;
+- ngày hiệu lực;
+- preview quyền.
+
+Không dùng ma trận checkbox khổng lồ nếu khó hiểu.
+
+Với quyền chi tiết, nhóm theo module và hành động:
+
+- Xem.
+- Tạo.
+- Sửa.
+- Duyệt.
+- Xóa/hủy.
+- Xuất dữ liệu.
+- Quản trị.
+
+Các quyền nguy hiểm cần phân biệt rõ.
+
+==================================================
+XVIII. MODULE BÁO CÁO
+==================================================
+
+Trang báo cáo không nên chỉ là danh sách nút xuất file.
+
+Cấu trúc:
+
+1. Chọn loại báo cáo.
+2. Chọn phạm vi.
+3. Chọn filter.
+4. Xem preview.
+5. Xuất định dạng được phép.
+
+Hiển thị:
+
+- thời gian dữ liệu;
+- bộ lọc đang áp dụng;
+- người tạo;
+- thời điểm tạo;
+- trạng thái xử lý.
+
+Nếu báo cáo lớn:
+
+- chạy background job;
+- hiển thị trạng thái;
+- thông báo khi hoàn thành;
+- không khóa toàn bộ UI.
+
+Không tạo chart nếu bảng hoặc con số trả lời nhiệm vụ tốt hơn.
+
+==================================================
+XIX. MODULE CẤU HÌNH VÀ DANH MỤC
+==================================================
+
+Nhóm cấu hình theo nghiệp vụ.
+
+Không đặt mọi cài đặt vào một trang.
+
+Ví dụ:
+
+- Cấu hình chung.
+- Quy tắc năm học.
+- Điểm rèn luyện.
+- Phân loại.
+- Thông báo.
+- Tệp đính kèm.
+- Bảo mật.
+
+Mỗi cài đặt cần:
+
+- tên;
+- mô tả;
+- giá trị hiện tại;
+- giá trị mặc định;
+- phạm vi tác động;
+- lịch sử thay đổi nếu quan trọng.
+
+Với cấu hình ảnh hưởng điểm:
+
+- hiển thị cảnh báo;
+- ngày hiệu lực;
+- phiên bản;
+- không hồi tố dữ liệu cũ nếu chưa được phê duyệt.
+
+==================================================
+XX. MODULE NHẬT KÝ HOẠT ĐỘNG
+==================================================
+
+Audit log là màn hình điều tra, không phải bảng trang trí.
+
+Filter:
+
+- thời gian;
+- người thực hiện;
+- hành động;
+- module;
+- đối tượng;
+- mức độ;
+- request ID.
+
+Bảng:
+
+- thời gian;
+- người thực hiện;
+- hành động;
+- đối tượng;
+- kết quả;
+- nguồn;
+- thao tác xem chi tiết.
+
+Chi tiết log:
+
+- dữ liệu trước;
+- dữ liệu sau;
+- trường thay đổi;
+- lý do;
+- IP hoặc request metadata khi được phép.
+
+Không hiển thị JSON thô nếu có thể trình bày diff dễ đọc.
+
+Không cho phép sửa audit log qua UI.
+
+==================================================
+XXI. GIAO DIỆN SINH VIÊN
+==================================================
+
+Giao diện sinh viên không sử dụng layout quản trị nặng nề.
+
+Ưu tiên:
+
+- thông tin cá nhân;
+- lớp;
+- điểm;
+- lịch sử thay đổi;
+- thông báo;
+- phản hồi/khiếu nại.
+
+Trang điểm rèn luyện:
+
+- tổng điểm;
+- xếp loại;
+- ba nhóm điểm;
+- tổng cộng;
+- tổng trừ;
+- lịch sử giao dịch;
+- trạng thái giao dịch;
+- ghi chú;
+- minh chứng được phép;
+- thời hạn phản hồi.
+
+Timeline quan trọng hơn chart trang trí.
+
+Trên mobile:
+
+- thông tin chính hiển thị trước;
+- hành động phù hợp kích thước chạm;
+- không ép bảng desktop vào màn hình;
+- dùng danh sách có cấu trúc cho lịch sử.
+
+==================================================
+XXII. TRẠNG THÁI GIAO DIỆN
+==================================================
+
+Mỗi page/component lấy dữ liệu phải có:
+
+- initial loading;
+- refresh loading;
+- empty state;
+- filtered empty state;
+- permission denied;
+- validation error;
+- server error;
+- offline/reconnect state nếu có realtime;
+- stale data warning khi phù hợp.
+
+Không hiển thị màn hình trắng.
+
+Không dùng cùng một empty state cho:
+
+- chưa có dữ liệu;
+- không tìm thấy do filter;
+- không có quyền;
+- API lỗi.
+
+==================================================
+XXIII. THÔNG BÁO VÀ XÁC NHẬN
+==================================================
+
+Toast chỉ dùng cho phản hồi ngắn.
+
+InlineAlert dùng khi thông tin cần tồn tại lâu.
+
+Modal xác nhận chỉ dùng cho hành động có hậu quả đáng kể.
+
+Nội dung xác nhận phải nói rõ:
+
+- hành động;
+- đối tượng;
+- phạm vi;
+- hậu quả;
+- có thể hoàn tác hay không.
+
+Không dùng nội dung chung chung:
+
+“Bạn có chắc chắn không?”
+
+Ví dụ tốt:
+
+“Khóa điểm tháng 11 của lớp X?
+
+Sau khi khóa, cán bộ lớp không thể thêm hoặc chỉnh sửa giao dịch. Admin có thể mở lại tháng và phải ghi lý do.”
+
+Đối với thao tác phá hủy nghiêm trọng, yêu cầu nhập lại mã đối tượng hoặc lý do nếu phù hợp.
+
+==================================================
+XXIV. ACCESSIBILITY
+==================================================
+
+Mục tiêu tối thiểu: WCAG 2.2 mức AA khi khả thi.
+
+Yêu cầu:
+
+- semantic HTML;
+- visible label;
+- keyboard navigation;
+- visible focus;
+- skip link;
+- heading hierarchy;
+- aria-current cho navigation hiện tại;
+- aria-live cho cập nhật realtime;
+- aria-invalid và aria-describedby cho lỗi;
+- sufficient color contrast;
+- không dùng màu làm tín hiệu duy nhất;
+- kích thước vùng thao tác phù hợp;
+- modal giữ focus;
+- đóng modal trả focus về trigger;
+- table có header và caption/accessible name;
+- icon button có aria-label;
+- tooltip không chứa thông tin thiết yếu duy nhất.
+
+Không xóa outline mà không có focus style thay thế.
+
+==================================================
+XXV. RESPONSIVE
+==================================================
+
+Desktop:
+
+- ưu tiên bảng;
+- đa cột;
+- side panel;
+- bulk actions.
+
+Tablet:
+
+- sidebar thu gọn;
+- filter collapsible;
+- table horizontal scroll;
+- giảm cột phụ.
+
+Mobile:
+
+- navigation drawer;
+- page header gọn;
+- filter sheet;
+- chỉ giữ dữ liệu thiết yếu;
+- detail mở full screen;
+- hành động chính dễ chạm;
+- không hiển thị bảng quá rộng nếu có thể chuyển thành structured list.
+
+Không dùng breakpoint chỉ để thu nhỏ font.
+
+Phải thay đổi cấu trúc tương tác khi cần.
+
+==================================================
+XXVI. DESIGN REVIEW CHỐNG GIAO DIỆN AI
+==================================================
+
+Không sử dụng:
+
+- gradient xanh tím;
+- glassmorphism;
+- neon;
+- hero trong admin;
+- card bo lớn khắp nơi;
+- shadow khắp nơi;
+- icon trong ô pastel ở mọi chỗ;
+- emoji;
+- text marketing;
+- biểu đồ vô nghĩa;
+- animation trang trí;
+- layout 4 KPI cards lặp lại trên mọi trang;
+- khoảng trắng quá lớn;
+- mỗi page một phong cách khác nhau.
+
+Kiểm tra:
+
+- Có quá nhiều card không?
+- Có quá nhiều radius không?
+- Có quá nhiều màu không?
+- Có quá nhiều icon không?
+- Có nút primary dư thừa không?
+- Có thông tin trang trí không tạo giá trị không?
+- Có thành phần nào chỉ được thêm vì AI thường tạo như vậy không?
+
+Nếu có, loại bỏ hoặc đơn giản hóa.
+
+==================================================
+XXVII. QUY TRÌNH TRIỂN KHAI
+==================================================
+
+Không redesign toàn bộ trong một lần.
+
+Thực hiện theo phase:
+
+PHASE 1 — AUDIT
+- Screen inventory.
+- Component inventory.
+- UX problem map.
+- Accessibility audit.
+- Data source audit.
+
+PHASE 2 — FOUNDATION
+- Design tokens.
+- Typography.
+- Spacing.
+- Colors.
+- Radius.
+- Focus.
+- Motion.
+
+PHASE 3 — APP SHELL
+- Sidebar.
+- Topbar.
+- Breadcrumb.
+- PageHeader.
+- Navigation permissions.
+
+PHASE 4 — CORE COMPONENTS
+- Button.
+- Form.
+- Dialog.
+- Toast.
+- Status.
+- Loading/error/empty.
+
+PHASE 5 — DATA MANAGEMENT
+- DataToolbar.
+- FilterBar.
+- DataTable.
+- Pagination.
+- Bulk actions.
+
+PHASE 6 — REFERENCE SCREENS
+Chỉ redesign ba màn hình:
+
+1. Danh sách sinh viên.
+2. Chi tiết sinh viên.
+3. Điểm rèn luyện lớp.
+
+Dừng để tôi đánh giá.
+
+PHASE 7 — MODULE MIGRATION
+Áp dụng visual language đã duyệt cho các module khác.
+
+PHASE 8 — RESPONSIVE AND ACCESSIBILITY
+- Mobile.
+- Tablet.
+- Keyboard.
+- Screen reader.
+- Contrast.
+
+PHASE 9 — CLEANUP
+- Xóa CSS lặp.
+- Xóa component không sử dụng.
+- Xóa mock data.
+- Chuẩn hóa import.
+- Cập nhật tài liệu.
+
+Sau mỗi phase phải:
+
+- build;
+- lint;
+- type-check;
+- test;
+- kiểm tra route;
+- kiểm tra quyền;
+- kiểm tra API;
+- kiểm tra responsive;
+- liệt kê file thay đổi;
+- xác nhận không thay đổi business logic.
+
+==================================================
+XXVIII. VISUAL SOURCE OF TRUTH
+==================================================
+
+Sau khi tôi duyệt ba reference screens:
+
+- Danh sách sinh viên.
+- Chi tiết sinh viên.
+- Điểm rèn luyện lớp.
+
+Ba màn hình này trở thành Visual Source of Truth.
+
+Mọi trang còn lại phải tái sử dụng:
+
+- AppShell;
+- page header;
+- typography;
+- spacing;
+- table;
+- filters;
+- form;
+- button hierarchy;
+- status;
+- colors;
+- border;
+- radius;
+- modal;
+- drawer;
+- loading;
+- empty state;
+- error state.
+
+Không tự tạo visual language mới cho từng module.
+
+==================================================
+XXIX. ĐẦU RA GIAI ĐOẠN 1
+==================================================
+
+Bây giờ chỉ thực hiện PHASE 1 — AUDIT.
+
+Trả về:
+
+1. Danh sách file đã đọc.
+2. Kiến trúc frontend hiện tại.
+3. Screen Inventory.
+4. Component Inventory.
+5. Navigation map hiện tại.
+6. User-role/task matrix.
+7. UX problems theo mức độ:
+   - Critical.
+   - High.
+   - Medium.
+   - Low.
+8. Accessibility problems.
+9. Responsive problems.
+10. Mock/hard-coded data problems.
+11. Inconsistency map.
+12. Proposed information architecture.
+13. Proposed design principles.
+14. Proposed design tokens.
+15. Text wireframe cho ba reference screens.
+16. Kế hoạch triển khai theo phase.
+17. Danh sách [NEED_PROJECT_INFO].
+18. Rủi ro có thể ảnh hưởng chức năng cũ.
+
+Trong PHASE 1:
+
+- Không sửa source code.
+- Không tự tạo component.
+- Không tạo dữ liệu.
+- Không thay API.
+- Không thay database.
+- Không cài thư viện mới.
+- Không tự chuyển sang phase tiếp theo.
+
+Sau khi hoàn thành, hãy dừng lại để tôi phê duyệt.

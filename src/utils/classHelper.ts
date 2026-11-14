@@ -100,3 +100,48 @@ export function getUniqueClassesFromStudents(students: { lop?: string }[]): stri
 
   return Array.from(set).sort();
 }
+
+/**
+ * Returns the major associated with a class name.
+ */
+export function getMajorForClass(lopName: string | undefined | null): string {
+  if (!lopName) return 'Chưa phân ngành';
+  const lower = lopName.toLowerCase();
+  if (lower.includes('cơ khí') || lower.includes('co khi') || lower.includes('09041')) {
+    return 'Công nghệ Kỹ thuật Cơ khí';
+  }
+  if (lower.includes('ô tô') || lower.includes('o to') || lower.includes('09021')) {
+    return 'Công nghệ Kỹ thuật Ô tô';
+  }
+  if (lower.includes('thông tin') || lower.includes('cntt') || lower.includes('it')) {
+    return 'Công nghệ Thông tin';
+  }
+  if (lower.includes('điện tử') || lower.includes('viễn thông')) {
+    return 'Kỹ thuật Điện tử - Viễn thông';
+  }
+  if (lower.includes('kinh tế') || lower.includes('qtkd')) {
+    return 'Quản trị Kinh doanh';
+  }
+  return 'Kỹ thuật Công nghệ Ứng dụng';
+}
+
+/**
+ * Returns the cohort / intake year associated with a class name or student code.
+ */
+export function getCohortForClass(lopName: string | undefined | null): string {
+  if (!lopName) return 'Khóa 2025';
+  const match = lopName.match(/(2[0-9])DDS/i) || lopName.match(/K(2[0-9])/i) || lopName.match(/\b(202[0-9])\b/);
+  if (match) {
+    const rawNum = match[1];
+    if (rawNum.length === 2) {
+      return `Khóa 20${rawNum} (K${rawNum})`;
+    }
+    const shortK = rawNum.slice(-2);
+    return `Khóa ${rawNum} (K${shortK})`;
+  }
+  if (lopName.includes('25DDS') || lopName.includes('25')) return 'Khóa 2025 (K25)';
+  if (lopName.includes('24DDS') || lopName.includes('24')) return 'Khóa 2024 (K24)';
+  if (lopName.includes('23DDS') || lopName.includes('23')) return 'Khóa 2023 (K23)';
+  return 'Khóa 2025 (K25)';
+}
+

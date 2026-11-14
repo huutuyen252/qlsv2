@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { User, SinhVien, Diem, RenLuyen, ThoiKhoaBieu, ThiLaiHocLai, UserRole, UserPermission, GpaSummary, MonHoc, HocKy, NamHoc } from './types';
 import { INITIAL_USERS } from './data/initialData';
-import { apiService } from './services/apiService';
+import { apiService, clearAuthToken, getAuthToken } from './services/apiService';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { LoginModal } from './components/LoginModal';
 import { LoginScreen } from './components/auth/LoginScreen';
+import { ProtectedRoute } from './components/auth/ProtectedRoute';
+import { ConfirmDialog } from './components/common';
 import { UserManagementModule } from './components/admin/UserManagementModule';
 import { StudentProfileModule } from './components/profile/StudentProfileModule';
 import { GradeManagementModule } from './components/grades/GradeManagementModule';
@@ -30,6 +32,11 @@ export default function App() {
   // Restore current user and last active timestamp (10 min timeout)
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     try {
+      if (!getAuthToken()) {
+        localStorage.removeItem('app_current_user');
+        localStorage.removeItem('app_last_activity_time');
+        return null;
+      }
       const savedUserStr = localStorage.getItem('app_current_user');
       const savedActivityStr = localStorage.getItem('app_last_activity_time');
       if (savedUserStr && savedActivityStr) {
@@ -40,6 +47,7 @@ export default function App() {
         if (now - lastActivity > TEN_MINUTES_MS) {
           localStorage.removeItem('app_current_user');
           localStorage.removeItem('app_last_activity_time');
+          clearAuthToken();
           return null;
         }
         // Valid session, refresh activity timestamp
@@ -93,13 +101,25 @@ export default function App() {
   const [retakes, setRetakes] = useState<ThiLaiHocLai[]>([]);
   const [semesters, setSemesters] = useState<HocKy[]>([]);
   const [academicYears, setAcademicYears] = useState<NamHoc[]>([]);
+  const [isLoadingData, setIsLoadingData] = useState<boolean>(false);
+  const [dataLoadError, setDataLoadError] = useState<string | null>(null);
+  const [confirmState, setConfirmState] = useState<{
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    variant?: 'danger' | 'warning' | 'primary';
+    onConfirm: () => Promise<void> | void;
+  } | null>(null);
+  const [isConfirmSubmitting, setIsConfirmSubmitting] = useState<boolean>(false);
 
   // Toast Notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    loadAllData();
-  }, []);
+    if (currentUser) {
+      loadAllData();
+    }
+  }, [currentUser?.id]);
 
   // Persist Current User
   useEffect(() => {
@@ -205,49 +225,71 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
+  const handleLogout = () => {
+    clearAuthToken();
+    setCurrentUser(null);
+    localStorage.removeItem('app_current_user');
+    localStorage.removeItem('app_last_activity_time');
+    showToast('Đã đăng xuất tài khoản');
+  };
+
   const loadAllData = async () => {
+    setIsLoadingData(true);
+    setDataLoadError(null);
     try {
-      const resUsers = await apiService.getUsers();
-      if (resUsers.success && resUsers.data.length > 0) {
-        setUsers(resUsers.data);
-        setCurrentUser((prev) => {
-          if (!prev) return null;
-          const fresh = resUsers.data.find(
-            (u) => u.id === prev.id || u.username.toLowerCase() === prev.username.toLowerCase()
-          );
-          return fresh ? fresh : prev;
-        });
+      if (currentUser?.role === 'ADMIN') {
+        const resUsers = await apiService.getUsers();
+        if (resUsers.success && resUsers.data.length > 0) {
+          setUsers(resUsers.data);
+          setCurrentUser((prev) => {
+            if (!prev) return null;
+            const fresh = resUsers.data.find(
+              (u) => u.id === prev.id || u.username.toLowerCase() === prev.username.toLowerCase()
+            );
+            return fresh ? fresh : prev;
+          });
+        }
       }
 
-      const resSub = await apiService.getSubjects();
-      if (resSub.success) setSubjects(resSub.data);
-
-      const resSv = await apiService.getStudents();
-      if (resSv.success) setStudents(resSv.data);
-
-      const resDiem = await apiService.getGrades();
-      if (resDiem.success) setGrades(resDiem.data);
-
-      const resRL = await apiService.getTrainingPoints();
-      if (resRL.success) setTrainingPoints(resRL.data);
-
-      const resTkb = await apiService.getSchedule();
-      if (resTkb.success) setSchedule(resTkb.data);
-
-      const resTl = await apiService.getRetakes();
-      if (resTl.success) setRetakes(resTl.data);
-
-      const [resSemesters, resAcademicYears] = await Promise.all([
+      const [
+        resSub,
+        resSv,
+        resDiem,
+        resRL,
+        resTkb,
+        resTl,
+        resSemesters,
+        resAcademicYears,
+      ] = await Promise.all([
+        apiService.getSubjects(),
+        apiService.getStudents(),
+        apiService.getGrades(),
+        apiService.getTrainingPoints(),
+        apiService.getSchedule(),
+        apiService.getRetakes(),
         apiService.getSemesters(),
         apiService.getAcademicYears(),
       ]);
+
+      if (resSub.success) setSubjects(resSub.data);
+      if (resSv.success) setStudents(resSv.data);
+      if (resDiem.success) setGrades(resDiem.data);
+      if (resRL.success) setTrainingPoints(resRL.data);
+      if (resTkb.success) setSchedule(resTkb.data);
+      if (resTl.success) setRetakes(resTl.data);
       if (resSemesters.success) setSemesters(resSemesters.data);
       if (resAcademicYears.success) setAcademicYears(resAcademicYears.data);
       if (resSemesters.success || resAcademicYears.success) {
         setActiveSemester(getAcademicPeriod(new Date(), resSemesters.data || [], resAcademicYears.data || []).code);
       }
+
+      if (!resSub.success && !resSv.success && !resDiem.success && !resTkb.success) {
+        setDataLoadError('Không thể tải dữ liệu từ máy chủ. Vui lòng thử lại.');
+      }
     } catch {
-      console.log('Using in-memory fallback state');
+      setDataLoadError('Lỗi kết nối máy chủ khi tải dữ liệu.');
+    } finally {
+      setIsLoadingData(false);
     }
   };
 
@@ -368,14 +410,22 @@ export default function App() {
     }
   };
 
-  const handleDeleteUserAccount = async (id: string) => {
-    if (window.confirm('Bạn có chắc chắn muốn xóa tài khoản này khỏi hệ thống phân cấp?')) {
-      const res = await apiService.deleteUser(id);
-      if (res.success) {
-        showToast(res.message);
-        loadAllData();
-      }
-    }
+  const handleDeleteUserAccount = async (id: string): Promise<void> => {
+    setConfirmState({
+      title: 'Xác nhận xóa tài khoản',
+      message: 'Bạn có chắc chắn muốn xóa tài khoản này khỏi hệ thống?',
+      confirmLabel: 'Xóa tài khoản',
+      variant: 'danger',
+      onConfirm: async () => {
+        const res = await apiService.deleteUser(id);
+        if (res.success) {
+          showToast(res.message);
+          loadAllData();
+        } else {
+          showToast(res.message || 'Không thể xóa tài khoản');
+        }
+      },
+    });
   };
 
   const handleClearAllData = async () => {
@@ -477,14 +527,22 @@ export default function App() {
     }
   };
 
-  const handleDeleteStudent = async (maSV: string) => {
-    if (window.confirm(`Bạn có chắc chắn muốn xóa hồ sơ sinh viên ${maSV}?`)) {
-      const res = await apiService.deleteStudent(maSV);
-      if (res.success) {
-        showToast('Xóa hồ sơ sinh viên thành công');
-        loadAllData();
-      }
-    }
+  const handleDeleteStudent = (maSV: string) => {
+    setConfirmState({
+      title: 'Xác nhận xóa hồ sơ sinh viên',
+      message: `Bạn có chắc chắn muốn xóa hồ sơ sinh viên ${maSV}?`,
+      confirmLabel: 'Xóa hồ sơ',
+      variant: 'danger',
+      onConfirm: async () => {
+        const res = await apiService.deleteStudent(maSV);
+        if (res.success) {
+          showToast('Xóa hồ sơ sinh viên thành công');
+          loadAllData();
+        } else {
+          showToast(res.message || 'Không thể xóa hồ sơ sinh viên');
+        }
+      },
+    });
   };
 
   const handleDeleteClassStudents = async (lop: string) => {
@@ -765,102 +823,115 @@ export default function App() {
     : retakes;
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans antialiased">
+    <div className="h-screen flex flex-col overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans antialiased">
+      {/* Accessible Skip Link for Keyboard & Screen Reader Users */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-3.5 focus:py-1.5 focus:bg-blue-600 focus:text-white focus:font-bold focus:rounded focus:shadow-md focus:outline-none focus:ring-2 focus:ring-white text-xs"
+      >
+        Chuyển thẳng đến nội dung chính (Skip to content)
+      </a>
+
       {/* Toast Alert */}
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 bg-slate-900 text-white dark:bg-white dark:text-slate-900 px-4 py-3 rounded-2xl shadow-2xl text-xs font-semibold animate-in slide-in-from-bottom-5 duration-300 flex items-center gap-2 border border-slate-800">
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-4 right-4 z-50 bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 px-3.5 py-2 rounded border border-slate-800 dark:border-slate-300 shadow-md text-xs font-medium animate-in slide-in-from-bottom-2 duration-150 flex items-center gap-2"
+        >
           <span>{toastMessage}</span>
         </div>
       )}
 
       {/* Conditional Rendering: Admin Console (Full-Width Protected Layout) vs Standard User Portal */}
       {currentView === 'admin' || currentView.startsWith('admin') || currentView === 'users' ? (
-        <AdminLayout
+        <ProtectedRoute
           currentUser={currentUser}
-          currentAdminTab={currentView === 'users' ? 'admin-users' : adminSubTab}
-          onSelectAdminTab={(tab) => {
-            setAdminSubTab(tab);
-            if (tab === 'admin-users') {
-              handleNavigate('users', tab);
-            } else {
-              handleNavigate('admin', tab);
-            }
-          }}
-          onExitAdminConsole={() => handleNavigate('dashboard')}
-          onLogout={() => {
-            setCurrentUser(null);
-            showToast('Đã đăng xuất tài khoản');
-          }}
-          showToast={showToast}
+          allowedRoles={['ADMIN']}
+          onGoHome={() => handleNavigate('dashboard')}
+          onLogin={() => setIsLoginModalOpen(true)}
         >
-          {(currentView === 'users' || adminSubTab === 'admin-users') && (
-            <UserManagementModule
-              currentUser={currentUser}
-              users={users}
-              students={students}
-              onCreateUser={handleCreateUser}
-              onUpdateUser={handleUpdateUser}
-              onUpdateRole={handleUpdateUserRole}
-              onUpdatePermissions={handleUpdateUserPermissions}
-              onUpdateStatus={handleUpdateUserStatus}
-              onDeleteUser={handleDeleteUserAccount}
-              onClearAllData={handleClearAllData}
-            />
-          )}
+          <AdminLayout
+            currentUser={currentUser}
+            currentAdminTab={currentView === 'users' ? 'admin-users' : adminSubTab}
+            onSelectAdminTab={(tab) => {
+              setAdminSubTab(tab);
+              if (tab === 'admin-users') {
+                handleNavigate('users', tab);
+              } else {
+                handleNavigate('admin', tab);
+              }
+            }}
+            onExitAdminConsole={() => handleNavigate('dashboard')}
+            onLogout={handleLogout}
+            showToast={showToast}
+          >
+            {(currentView === 'users' || adminSubTab === 'admin-users') && (
+              <UserManagementModule
+                currentUser={currentUser}
+                users={users}
+                students={students}
+                onCreateUser={handleCreateUser}
+                onUpdateUser={handleUpdateUser}
+                onUpdateRole={handleUpdateUserRole}
+                onUpdatePermissions={handleUpdateUserPermissions}
+                onUpdateStatus={handleUpdateUserStatus}
+                onDeleteUser={handleDeleteUserAccount}
+                onClearAllData={handleClearAllData}
+              />
+            )}
 
-          {currentView !== 'users' && adminSubTab === 'admin-overview' && (
-            <AdminOverviewModule
-              users={users}
-              students={students}
-              grades={grades}
-              schedule={schedule}
-              retakes={retakes}
-              subjects={subjects}
-              activeSemester={activeSemester}
-              onNavigateTab={(tab) => {
-                setAdminSubTab(tab);
-                if (tab === 'admin-users') {
-                  handleNavigate('users', tab);
-                } else {
-                  handleNavigate('admin', tab);
-                }
-              }}
-            />
-          )}
+            {currentView !== 'users' && adminSubTab === 'admin-overview' && (
+              <AdminOverviewModule
+                users={users}
+                students={students}
+                grades={grades}
+                schedule={schedule}
+                retakes={retakes}
+                subjects={subjects}
+                activeSemester={activeSemester}
+                onNavigateTab={(tab) => {
+                  setAdminSubTab(tab);
+                  if (tab === 'admin-users') {
+                    handleNavigate('users', tab);
+                  } else {
+                    handleNavigate('admin', tab);
+                  }
+                }}
+              />
+            )}
 
-          {currentView !== 'users' && adminSubTab === 'admin-import' && (
-            <ImportWizard
-              onSuccess={async (dataType, count) => {
-                await loadAllData();
-                showToast(`Đã import ${count} bản ghi dữ liệu thành công!`);
-              }}
-              showToast={showToast}
-            />
-          )}
+            {currentView !== 'users' && adminSubTab === 'admin-import' && (
+              <ImportWizard
+                onSuccess={async (dataType, count) => {
+                  await loadAllData();
+                  showToast(`Đã import ${count} bản ghi dữ liệu thành công!`);
+                }}
+                showToast={showToast}
+              />
+            )}
 
-          {currentView !== 'users' && adminSubTab === 'admin-backup' && (
-            <AdminBackupModule
-              showToast={showToast}
-              onRefreshAllData={loadAllData}
-            />
-          )}
+            {currentView !== 'users' && adminSubTab === 'admin-backup' && (
+              <AdminBackupModule
+                showToast={showToast}
+                onRefreshAllData={loadAllData}
+              />
+            )}
 
-          {currentView !== 'users' && adminSubTab === 'admin-auditlogs' && (
-            <AdminAuditLogsModule
-              currentUser={currentUser}
-            />
-          )}
-        </AdminLayout>
+            {currentView !== 'users' && adminSubTab === 'admin-auditlogs' && (
+              <AdminAuditLogsModule
+                currentUser={currentUser}
+              />
+            )}
+          </AdminLayout>
+        </ProtectedRoute>
       ) : (
         <>
           {/* Header */}
           <Header
             currentUser={currentUser}
             onOpenLoginModal={() => setIsLoginModalOpen(true)}
-            onLogout={() => {
-              setCurrentUser(null);
-              showToast('Đã đăng xuất tài khoản');
-            }}
+            onLogout={handleLogout}
             activeSemester={activeSemester}
             onChangeSemester={setActiveSemester}
             onSwitchView={handleNavigate}
@@ -874,14 +945,18 @@ export default function App() {
           />
 
           {/* Main Body */}
-          <div className="flex-1 flex flex-col md:flex-row max-w-7xl w-full mx-auto">
+          <div className="flex-1 flex flex-col md:flex-row w-full overflow-hidden min-h-0">
             <Sidebar
               currentView={currentView}
               onSelectView={handleNavigate}
               userRole={currentUser?.role}
             />
 
-            <main className="flex-1 p-4 md:p-6 lg:p-8 min-w-0">
+            <main
+              id="main-content"
+              tabIndex={-1}
+              className="flex-1 p-3 sm:p-4 md:p-6 overflow-y-auto min-w-0 outline-none bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors"
+            >
               <AnimatePresence mode="wait">
                 <motion.div
                   key={currentView === 'retake' ? 'retakes' : currentView}
@@ -903,8 +978,41 @@ export default function App() {
                       schedule={filteredSchedule}
                       subjects={subjects}
                       trainingPoints={filteredTrainingPoints}
+                      retakes={filteredRetakes}
                       onSwitchView={handleNavigate}
+                      initialTab="DASHBOARD"
+                      isLoadingData={isLoadingData}
+                      loadError={dataLoadError}
+                      onRetryLoad={loadAllData}
                     />
+                  )}
+
+                  {currentView === 'reports' && (
+                    <ProtectedRoute
+                      currentUser={currentUser}
+                      allowedRoles={['ADMIN', 'LECTURER']}
+                      onGoHome={() => handleNavigate('dashboard')}
+                      onLogin={() => setIsLoginModalOpen(true)}
+                    >
+                      <ReportsModule
+                        userRole={currentUser?.role || 'STUDENT'}
+                        currentStudentCode={currentStudentCode}
+                        activeSemester={activeSemester}
+                        semesters={semesters}
+                        academicYears={academicYears}
+                        students={filteredStudents}
+                        grades={filteredGrades}
+                        schedule={filteredSchedule}
+                        subjects={subjects}
+                        trainingPoints={filteredTrainingPoints}
+                        retakes={filteredRetakes}
+                        onSwitchView={handleNavigate}
+                        initialTab="QUICK_REPORT"
+                        isLoadingData={isLoadingData}
+                        loadError={dataLoadError}
+                        onRetryLoad={loadAllData}
+                      />
+                    </ProtectedRoute>
                   )}
 
                   {currentView === 'subjects' && (
@@ -915,12 +1023,21 @@ export default function App() {
                       studentClass={studentClass}
                       onRefreshData={loadAllData}
                       showToast={showToast}
+                      semesters={semesters}
+                      academicYears={academicYears}
+                      isLoading={isLoadingData}
+                      loadError={dataLoadError}
+                      onRetryLoad={loadAllData}
                     />
                   )}
 
                   {currentView === 'students' && (
                     <StudentProfileModule
                       students={filteredStudents}
+                      grades={filteredGrades}
+                      trainingPoints={filteredTrainingPoints}
+                      retakes={filteredRetakes}
+                      activeSemester={activeSemester}
                       userRole={currentUser?.role || 'STUDENT'}
                       currentStudentCode={currentStudentCode}
                       currentUser={currentUser}
@@ -930,6 +1047,10 @@ export default function App() {
                       onDeleteClassStudents={handleDeleteClassStudents}
                       onUploadHoSo={handleUploadHoSo}
                       onImportStudents={handleImportStudentsExcel}
+                      onSwitchView={handleNavigate}
+                      isLoading={isLoadingData}
+                      loadError={dataLoadError}
+                      onRetryLoad={loadAllData}
                     />
                   )}
 
@@ -944,7 +1065,7 @@ export default function App() {
                       onSaveGrade={handleSaveGrade}
                       onImportExcel={handleImportExcelGrades}
                       onCalculateGpa={handleCalculateGpa}
-                      onOpenRetakeRegister={(maMH) => {
+                      onOpenRetakeRegister={() => {
                         handleNavigate('retakes');
                       }}
                       onDeleteGrade={async (id) => {
@@ -952,6 +1073,9 @@ export default function App() {
                         showToast(res.message);
                         await loadAllData();
                       }}
+                      isLoading={isLoadingData}
+                      loadError={dataLoadError}
+                      onRetryLoad={loadAllData}
                     />
                   )}
 
@@ -968,6 +1092,9 @@ export default function App() {
                       onDeleteTrainingPoint={handleDeleteTrainingPoint}
                       onDeleteClassTrainingPoints={handleDeleteClassTrainingPoints}
                       onRefreshData={loadAllData}
+                      isLoading={isLoadingData}
+                      loadError={dataLoadError}
+                      onRetryLoad={loadAllData}
                     />
                   )}
 
@@ -985,6 +1112,9 @@ export default function App() {
                       onImportSchedule={handleImportScheduleExcel}
                       onDeleteSchedule={handleDeleteSchedule}
                       onDeleteScheduleByYear={handleDeleteScheduleByYear}
+                      isLoading={isLoadingData}
+                      loadError={dataLoadError}
+                      onRetryLoad={loadAllData}
                     />
                   )}
 
@@ -1009,15 +1139,38 @@ export default function App() {
             </main>
           </div>
 
-          {/* Footer */}
-          <footer className="mt-auto border-t border-slate-200/80 dark:border-slate-800/80 py-4 px-4 text-center text-xs text-slate-500 dark:text-slate-400 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xs">
-            <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-              <span>Trường ĐH Trần Đại Nghĩa • Cổng thông tin Quản lý Đào tạo & Điểm Rèn Luyện</span>
-              <span className="font-semibold text-slate-600 dark:text-slate-300">TDNU EDU © 2026</span>
+          {/* Quiet Status Bar Footer */}
+          <footer className="border-t border-slate-200 dark:border-slate-800 py-1.5 px-4 text-[11px] text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 shrink-0">
+            <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-1">
+              <span>Trường ĐH Trần Đại Nghĩa • Hệ thống Quản trị Học vụ & Điểm Rèn Luyện</span>
+              <span className="font-mono text-slate-600 dark:text-slate-400">TDNU EduAdmin</span>
             </div>
           </footer>
         </>
       )}
+
+      {/* Global Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={Boolean(confirmState)}
+        title={confirmState?.title || ''}
+        message={confirmState?.message || ''}
+        confirmLabel={confirmState?.confirmLabel}
+        variant={confirmState?.variant}
+        isSubmitting={isConfirmSubmitting}
+        onCancel={() => {
+          if (!isConfirmSubmitting) setConfirmState(null);
+        }}
+        onConfirm={async () => {
+          if (!confirmState) return;
+          setIsConfirmSubmitting(true);
+          try {
+            await confirmState.onConfirm();
+          } finally {
+            setIsConfirmSubmitting(false);
+            setConfirmState(null);
+          }
+        }}
+      />
 
       {/* Login / Role Switch Modal */}
       <LoginModal

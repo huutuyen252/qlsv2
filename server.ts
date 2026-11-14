@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+import { trainingPointRouter } from './src/routes/trainingPointRoutes';
 import {
   seedInitialDataIfNeeded,
   getAllUsers,
@@ -60,6 +61,9 @@ import {
   getAllAuditLogs,
   createAuditLog,
   clearAuditLogs,
+  getAllIdMappings,
+  getAllMigrationConflicts,
+  executeDataBackfill,
 } from './src/db/dbOperations';
 import { SinhVien, Diem, RenLuyen, ThoiKhoaBieu, ThiLaiHocLai, NamHoc, HocKy, Lop, DiemDanh, ThongBaoKiemTra, MonHoc, NghiLe, AuditLogEntry } from './src/types/index';
 import { uploadToCloudStorage, getStorageStatus } from './src/lib/cloudStorage';
@@ -72,6 +76,12 @@ import {
   FACULTY_CO_KHI,
   FACULTY_O_TO,
 } from './src/utils/classHelper';
+import {
+  requirePortalAuth,
+  requirePortalRoles,
+  requirePortalPermission,
+  PortalAuthRequest,
+} from './src/middleware/portalAuth';
 const failedLoginAttempts: Record<string, number> = {};
 
 function getReqIp(req: Request): string {
@@ -87,7 +97,7 @@ function getReqIp(req: Request): string {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
   try {
     await seedInitialDataIfNeeded();
   } catch (err: any) {
@@ -109,6 +119,9 @@ async function startServer() {
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
+
+  // Phân hệ Quản lý Điểm Rèn luyện Sinh viên (REST & Realtime SSE)
+  app.use('/api/training-points', trainingPointRouter);
 
   app.post('/api/auth/login', async (req: Request, res: Response) => {
     try {
@@ -260,7 +273,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message || 'Lỗi đăng ký tài khoản' });
     }
   });
-  app.get('/api/users', async (req: Request, res: Response) => {
+  app.get('/api/users', requirePortalRoles('ADMIN'), async (req: Request, res: Response) => {
     try {
       const userList = await getAllUsers();
       const enriched = userList.map((u: any) => ({
@@ -272,7 +285,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post('/api/users', async (req: Request, res: Response) => {
+  app.post('/api/users', requirePortalRoles('ADMIN'), async (req: Request, res: Response) => {
     try {
       const { username, fullName, role, email, password, plainPassword, studentCode, faculty, permissions } = req.body;
       if (!username || !fullName || !role) {
@@ -320,10 +333,18 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.put('/api/users/:id', async (req: Request, res: Response) => {
+  app.put('/api/users/:id', requirePortalAuth, async (req: PortalAuthRequest, res: Response) => {
     try {
       const { id } = req.params;
+      const authUser = req.authUser;
+      const isSelf = authUser?.id === id;
+      if (!authUser || (authUser.role !== 'ADMIN' && !isSelf)) {
+        return res.status(403).json({ success: false, message: 'Bạn không có quyền chỉnh sửa tài khoản này.' });
+      }
       const { username, fullName, email, password, plainPassword, faculty, studentCode, role, status, permissions, avatar } = req.body;
+      if (authUser.role !== 'ADMIN' && (role !== undefined || status !== undefined || permissions !== undefined)) {
+        return res.status(403).json({ success: false, message: 'Chỉ Quản trị viên mới có quyền thay đổi vai trò hoặc trạng thái.' });
+      }
       const existingUser = await getUserById(id);
       if (!existingUser) {
         return res.status(404).json({ success: false, message: 'Không tìm thấy người dùng' });
@@ -384,7 +405,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.put('/api/users/:id/role', async (req: Request, res: Response) => {
+  app.put('/api/users/:id/role', requirePortalRoles('ADMIN'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const { role, permissions } = req.body;
@@ -412,7 +433,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.put('/api/users/:id/permissions', async (req: Request, res: Response) => {
+  app.put('/api/users/:id/permissions', requirePortalRoles('ADMIN'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const { permissions } = req.body;
@@ -428,7 +449,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.put('/api/users/:id/status', async (req: Request, res: Response) => {
+  app.put('/api/users/:id/status', requirePortalRoles('ADMIN'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const { status } = req.body;
@@ -446,7 +467,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.delete('/api/users/:id', async (req: Request, res: Response) => {
+  app.delete('/api/users/:id', requirePortalRoles('ADMIN'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const targetUser = await getUserById(id);
@@ -465,16 +486,26 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.get('/api/students', async (req: Request, res: Response) => {
+  app.get('/api/students', requirePortalAuth, async (req: PortalAuthRequest, res: Response) => {
     try {
       const { search, khoa, lop } = req.query;
-      const list = await getAllSinhVien(search as string, khoa as string, lop as string);
+      let list = await getAllSinhVien(search as string, khoa as string, lop as string);
+      if (req.authUser?.role === 'STUDENT') {
+        const ownCode = (req.authUser.studentCode || req.authUser.username || '').toLowerCase();
+        const selfRecord = ownCode ? await getSinhVienByMaSV(ownCode) : null;
+        const ownClass = selfRecord?.lop?.trim().toLowerCase();
+        list = list.filter((s) =>
+          ownClass
+            ? Boolean(s.lop && s.lop.trim().toLowerCase() === ownClass)
+            : s.maSV.toLowerCase() === ownCode
+        );
+      }
       return res.json({ success: true, data: list, total: list.length });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.get('/api/students/profile', async (req: Request, res: Response) => {
+  app.get('/api/students/profile', requirePortalAuth, async (req: Request, res: Response) => {
     try {
       const maSV = req.query.maSV as string;
       if (!maSV) {
@@ -489,7 +520,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post('/api/students', async (req: Request, res: Response) => {
+  app.post('/api/students', requirePortalPermission('canManageStudents'), async (req: Request, res: Response) => {
     try {
       const newStudent: SinhVien = req.body;
       if (!newStudent.maSV || !newStudent.hoTen) {
@@ -518,9 +549,16 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.put('/api/students/:maSV', async (req: Request, res: Response) => {
+  app.put('/api/students/:maSV', requirePortalAuth, async (req: PortalAuthRequest, res: Response) => {
     try {
       const { maSV } = req.params;
+      const authUser = req.authUser;
+      const ownCode = (authUser?.studentCode || authUser?.username || '').toLowerCase();
+      const canManage = authUser?.role === 'ADMIN' || (authUser?.role === 'LECTURER' && authUser?.permissions?.canManageStudents !== false);
+      const isSelfStudent = authUser?.role === 'STUDENT' && ownCode === maSV.toLowerCase();
+      if (!canManage && !isSelfStudent) {
+        return res.status(403).json({ success: false, message: 'Bạn không có quyền cập nhật hồ sơ sinh viên này.' });
+      }
       const existing = await getSinhVienByMaSV(maSV);
       if (!existing) {
         return res.status(404).json({ success: false, message: 'Không tìm thấy sinh viên' });
@@ -555,7 +593,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.delete('/api/students/:maSV', async (req: Request, res: Response) => {
+  app.delete('/api/students/:maSV', requirePortalRoles('ADMIN'), async (req: Request, res: Response) => {
     try {
       const { maSV } = req.params;
       await deleteSinhVien(maSV);
@@ -573,7 +611,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post('/api/students/import', async (req: Request, res: Response) => {
+  app.post('/api/students/import', requirePortalPermission('canManageStudents'), async (req: Request, res: Response) => {
     try {
       const { students } = req.body;
       if (!Array.isArray(students) || students.length === 0) {
@@ -647,13 +685,13 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.get('/api/storage/status', (req: Request, res: Response) => {
+  app.get('/api/storage/status', requirePortalAuth, (req: Request, res: Response) => {
     return res.json({
       success: true,
       data: getStorageStatus(),
     });
   });
-  app.post('/api/students/upload-avatar', async (req: Request, res: Response) => {
+  app.post('/api/students/upload-avatar', requirePortalAuth, async (req: Request, res: Response) => {
     try {
       const { maSV, fileData } = req.body;
       if (!fileData) {
@@ -696,7 +734,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post('/api/students/upload-hoso', async (req: Request, res: Response) => {
+  app.post('/api/students/upload-hoso', requirePortalAuth, async (req: Request, res: Response) => {
     try {
       const { maSV, fileName, fileData } = req.body;
       let finalFileUrl = fileData || `https://s3.ap-southeast-1.amazonaws.com/huce-student-files/hoso_${maSV}_${Date.now()}.pdf`;
@@ -733,16 +771,20 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.get('/api/grades', async (req: Request, res: Response) => {
+  app.get('/api/grades', requirePortalAuth, async (req: PortalAuthRequest, res: Response) => {
     try {
       const { maSV, hocKy, namHoc } = req.query;
-      const list = await getAllDiem(maSV as string, hocKy as string, namHoc as string);
+      const targetMaSV =
+        req.authUser?.role === 'STUDENT'
+          ? (req.authUser.studentCode || req.authUser.username)
+          : (maSV as string);
+      const list = await getAllDiem(targetMaSV, hocKy as string, namHoc as string);
       return res.json({ success: true, data: list });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post('/api/grades', async (req: Request, res: Response) => {
+  app.post('/api/grades', requirePortalPermission('canEditGrades'), async (req: Request, res: Response) => {
     try {
       const newGrade: Diem = req.body;
       const student = await getSinhVienByMaSV(newGrade.maSV);
@@ -774,7 +816,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.delete('/api/grades/:id', async (req: Request, res: Response) => {
+  app.delete('/api/grades/:id', requirePortalPermission('canEditGrades'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const deleted = await deleteDiem(id);
@@ -786,7 +828,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post('/api/grades/import', async (req: Request, res: Response) => {
+  app.post('/api/grades/import', requirePortalPermission('canEditGrades'), async (req: Request, res: Response) => {
     try {
       const { grades } = req.body;
       if (!Array.isArray(grades) || grades.length === 0) {
@@ -857,9 +899,15 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.get('/api/grades/gpa/:maSV', async (req: Request, res: Response) => {
+  app.get('/api/grades/gpa/:maSV', requirePortalAuth, async (req: PortalAuthRequest, res: Response) => {
     try {
       const { maSV } = req.params;
+      if (req.authUser?.role === 'STUDENT') {
+        const ownCode = (req.authUser.studentCode || req.authUser.username || '').toLowerCase();
+        if (ownCode && ownCode !== maSV.toLowerCase()) {
+          return res.status(403).json({ success: false, message: 'Bạn chỉ được phép xem GPA của chính mình.' });
+        }
+      }
       const student = await getSinhVienByMaSV(maSV);
       if (!student) {
         return res.status(404).json({ success: false, message: 'Không tìm thấy sinh viên' });
@@ -918,11 +966,15 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.get('/api/training', async (req: Request, res: Response) => {
+  app.get('/api/training', requirePortalAuth, async (req: PortalAuthRequest, res: Response) => {
     try {
       const { maSV, thang, nam } = req.query;
+      const targetMaSV =
+        req.authUser?.role === 'STUDENT'
+          ? (req.authUser.studentCode || req.authUser.username)
+          : (maSV as string);
       const list = await getAllRenLuyen(
-        maSV as string,
+        targetMaSV,
         thang ? Number(thang) : undefined,
         nam ? Number(nam) : undefined
       );
@@ -931,7 +983,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.put('/api/training/comment', async (req: Request, res: Response) => {
+  app.put('/api/training/comment', requirePortalPermission('canEvaluateTraining'), async (req: Request, res: Response) => {
     try {
       const { id, maSV, thang, nam, namHoc, diemRL, nhanXet, nguoiDanhGia, diemMuc1, diemMuc2, diemMuc3, hocKy } = req.body;
       if (!maSV) {
@@ -980,7 +1032,7 @@ async function startServer() {
   });
 
   // PUT /api/training/:id - Chỉnh sửa thông tin điểm rèn luyện cá nhân
-  app.put('/api/training/:id', async (req: Request, res: Response) => {
+  app.put('/api/training/:id', requirePortalPermission('canEvaluateTraining'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const data = req.body;
@@ -1025,7 +1077,7 @@ async function startServer() {
   });
 
   // DELETE /api/training/:id - Xóa điểm rèn luyện của một cá nhân
-  app.delete('/api/training/:id', async (req: Request, res: Response) => {
+  app.delete('/api/training/:id', requirePortalPermission('canEvaluateTraining'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       if (!id) {
@@ -1039,7 +1091,7 @@ async function startServer() {
   });
 
   // DELETE /api/training/class - Xóa điểm rèn luyện của cả lớp (có thể lọc theo tháng, năm, học kỳ)
-  app.delete('/api/training-class/delete', async (req: Request, res: Response) => {
+  app.delete('/api/training-class/delete', requirePortalPermission('canEvaluateTraining'), async (req: Request, res: Response) => {
     try {
       const { lop, thang, nam, hocKy } = req.query;
       if (!lop) {
@@ -1061,7 +1113,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/training/import', async (req: Request, res: Response) => {
+  app.post('/api/training/import', requirePortalPermission('canEvaluateTraining'), async (req: Request, res: Response) => {
     try {
       const { training } = req.body;
       if (!Array.isArray(training) || training.length === 0) {
@@ -1149,7 +1201,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.get(['/api/hocky', '/hocky'], async (req: Request, res: Response) => {
+  app.get(['/api/hocky', '/hocky'], requirePortalAuth, async (req: Request, res: Response) => {
     try {
       const list = await getAllHocKy();
       return res.json({ success: true, data: list });
@@ -1157,7 +1209,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post(['/api/hocky', '/hocky'], async (req: Request, res: Response) => {
+  app.post(['/api/hocky', '/hocky'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { tenHocKy, namHocID, hocKyID, ngayBatDau, ngayKetThuc } = req.body;
       if (!tenHocKy || !namHocID) {
@@ -1177,7 +1229,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.put(['/api/hocky/:id', '/hocky/:id'], async (req: Request, res: Response) => {
+  app.put(['/api/hocky/:id', '/hocky/:id'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const { tenHocKy, namHocID, ngayBatDau, ngayKetThuc } = req.body;
@@ -1187,7 +1239,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.delete(['/api/hocky/:id', '/hocky/:id'], async (req: Request, res: Response) => {
+  app.delete(['/api/hocky/:id', '/hocky/:id'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       await deleteHocKy(id);
@@ -1196,7 +1248,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.get(['/api/namhoc', '/namhoc'], async (req: Request, res: Response) => {
+  app.get(['/api/namhoc', '/namhoc'], requirePortalAuth, async (req: Request, res: Response) => {
     try {
       const list = await getAllNamHoc();
       return res.json({ success: true, data: list });
@@ -1204,7 +1256,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post(['/api/namhoc', '/namhoc'], async (req: Request, res: Response) => {
+  app.post(['/api/namhoc', '/namhoc'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { tenNamHoc, namHocID } = req.body;
       if (!tenNamHoc) {
@@ -1221,7 +1273,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.put(['/api/namhoc/:id', '/namhoc/:id'], async (req: Request, res: Response) => {
+  app.put(['/api/namhoc/:id', '/namhoc/:id'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const { tenNamHoc } = req.body;
@@ -1231,7 +1283,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.delete(['/api/namhoc/:id', '/namhoc/:id'], async (req: Request, res: Response) => {
+  app.delete(['/api/namhoc/:id', '/namhoc/:id'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const { deleteSchedule } = req.query;
@@ -1244,7 +1296,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.get(['/api/schedule', '/api/tkb', '/tkb'], async (req: Request, res: Response) => {
+  app.get(['/api/schedule', '/api/tkb', '/tkb'], requirePortalAuth, async (req: Request, res: Response) => {
     try {
       const { maSV, lop, hocKy, namHoc, week } = req.query;
       let list = await getAllThoiKhoaBieu(maSV as string, lop as string, hocKy as string, namHoc as string);
@@ -1257,7 +1309,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post(['/api/schedule', '/api/tkb', '/tkb'], async (req: Request, res: Response) => {
+  app.post(['/api/schedule', '/api/tkb', '/tkb'], requirePortalPermission('canManageSchedule'), async (req: Request, res: Response) => {
     try {
       const {
         maSV,
@@ -1349,7 +1401,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.put(['/api/schedule/:id', '/api/tkb/:id', '/tkb/:id'], async (req: Request, res: Response) => {
+  app.put(['/api/schedule/:id', '/api/tkb/:id', '/tkb/:id'], requirePortalPermission('canManageSchedule'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const updated = await updateThoiKhoaBieu(id, req.body);
@@ -1362,7 +1414,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.delete(['/api/schedule/by-year', '/api/tkb/by-year'], async (req: Request, res: Response) => {
+  app.delete(['/api/schedule/by-year', '/api/tkb/by-year'], requirePortalPermission('canManageSchedule'), async (req: Request, res: Response) => {
     try {
       const namHoc = (req.query.namHoc as string) || (req.body?.namHoc as string);
       const hocKy = (req.query.hocKy as string) || (req.body?.hocKy as string);
@@ -1380,7 +1432,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post(['/api/schedule/delete-by-year', '/api/tkb/delete-by-year'], async (req: Request, res: Response) => {
+  app.post(['/api/schedule/delete-by-year', '/api/tkb/delete-by-year'], requirePortalPermission('canManageSchedule'), async (req: Request, res: Response) => {
     try {
       const { namHoc, hocKy, lop } = req.body;
       const result = await deleteThoiKhoaBieuByYear(namHoc, hocKy, lop);
@@ -1395,7 +1447,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.delete(['/api/schedule/:id', '/api/tkb/:id', '/tkb/:id'], async (req: Request, res: Response) => {
+  app.delete(['/api/schedule/:id', '/api/tkb/:id', '/tkb/:id'], requirePortalPermission('canManageSchedule'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const { maMH } = req.query;
@@ -1405,16 +1457,20 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.get('/api/retakes', async (req: Request, res: Response) => {
+  app.get('/api/retakes', requirePortalAuth, async (req: PortalAuthRequest, res: Response) => {
     try {
       const { maSV } = req.query;
-      const list = await getAllThiLaiHocLai(maSV as string);
+      const targetMaSV =
+        req.authUser?.role === 'STUDENT'
+          ? (req.authUser.studentCode || req.authUser.username)
+          : (maSV as string);
+      const list = await getAllThiLaiHocLai(targetMaSV);
       return res.json({ success: true, data: list });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post('/api/retakes/register', async (req: Request, res: Response) => {
+  app.post('/api/retakes/register', requirePortalAuth, async (req: Request, res: Response) => {
     try {
       const { maSV, maMH, tenMH, soTinChi, loaiDangKy, lanThi, hocKy, namHoc, phiDiem } = req.body;
       if (!maSV || !maMH || !loaiDangKy) {
@@ -1443,7 +1499,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.put('/api/retakes/:id/approve', async (req: Request, res: Response) => {
+  app.put('/api/retakes/:id/approve', requirePortalPermission('canApproveRetakes'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const { trangThai, ketQua } = req.body;
@@ -1456,7 +1512,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.get(['/api/attendance', '/api/diemdanh'], async (req: Request, res: Response) => {
+  app.get(['/api/attendance', '/api/diemdanh'], requirePortalAuth, async (req: Request, res: Response) => {
     try {
       const { maSV, maMH } = req.query;
       const list = await getAllDiemDanh(maSV as string, maMH as string);
@@ -1465,7 +1521,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post(['/api/attendance', '/api/diemdanh'], async (req: Request, res: Response) => {
+  app.post(['/api/attendance', '/api/diemdanh'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { id, maSV, hoTenSV, maMH, tenMH, lop, ngay, soTietNghi, coPhep, ghiChu, nguoiDiemDanh } = req.body;
       if (!maSV || !maMH || !ngay) {
@@ -1495,7 +1551,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.delete(['/api/attendance/:id', '/api/diemdanh/:id'], async (req: Request, res: Response) => {
+  app.delete(['/api/attendance/:id', '/api/diemdanh/:id'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       await deleteDiemDanh(id);
@@ -1504,7 +1560,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post(['/api/attendance/sync-training-points', '/api/diemdanh/sync-training-points'], async (req: Request, res: Response) => {
+  app.post(['/api/attendance/sync-training-points', '/api/diemdanh/sync-training-points'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const results = await syncAllTrainingPointsFromAttendance();
       return res.json({
@@ -1517,7 +1573,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.get(['/api/exam-notices', '/api/thongbao-kiemtra'], async (req: Request, res: Response) => {
+  app.get(['/api/exam-notices', '/api/thongbao-kiemtra'], requirePortalAuth, async (req: Request, res: Response) => {
     try {
       const { maMH } = req.query;
       const list = await getAllThongBaoKiemTra(maMH as string);
@@ -1526,7 +1582,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post(['/api/exam-notices', '/api/thongbao-kiemtra'], async (req: Request, res: Response) => {
+  app.post(['/api/exam-notices', '/api/thongbao-kiemtra'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { maMH, tenMH, loai, tieuDe, noiDung, ngayKiemTra, tuanKiemTra, giangVienTao } = req.body;
       if (!maMH || !tieuDe || !noiDung) {
@@ -1550,7 +1606,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.delete(['/api/exam-notices/:id', '/api/thongbao-kiemtra/:id'], async (req: Request, res: Response) => {
+  app.delete(['/api/exam-notices/:id', '/api/thongbao-kiemtra/:id'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       await deleteThongBaoKiemTra(id);
@@ -1560,7 +1616,7 @@ async function startServer() {
     }
   });
   // Holidays (Nghỉ Lễ)
-  app.get(['/api/holidays', '/api/nghile'], async (req: Request, res: Response) => {
+  app.get(['/api/holidays', '/api/nghile'], requirePortalAuth, async (req: Request, res: Response) => {
     try {
       const list = await getAllNghiLe();
       return res.json({ success: true, data: list });
@@ -1568,7 +1624,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post(['/api/holidays', '/api/nghile'], async (req: Request, res: Response) => {
+  app.post(['/api/holidays', '/api/nghile'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { dipLe, tuNgay, denNgay, ghiChu, lop, hocKy, namHoc } = req.body;
       if (!dipLe || !tuNgay || !denNgay) {
@@ -1591,7 +1647,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.put(['/api/holidays/:id', '/api/nghile/:id'], async (req: Request, res: Response) => {
+  app.put(['/api/holidays/:id', '/api/nghile/:id'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const updated = await updateNghiLe(id, req.body);
@@ -1600,7 +1656,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.delete(['/api/holidays/:id', '/api/nghile/:id'], async (req: Request, res: Response) => {
+  app.delete(['/api/holidays/:id', '/api/nghile/:id'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       await deleteNghiLe(id);
@@ -1609,7 +1665,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.get(['/api/subjects', '/api/monhoc'], async (req: Request, res: Response) => {
+  app.get(['/api/subjects', '/api/monhoc'], requirePortalAuth, async (req: Request, res: Response) => {
     try {
       const { khoa, lop, hocKy, namHoc } = req.query;
       const list = await getAllMonHoc(khoa as string, lop as string, hocKy as string, namHoc as string);
@@ -1618,7 +1674,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post(['/api/subjects', '/api/monhoc'], async (req: Request, res: Response) => {
+  app.post(['/api/subjects', '/api/monhoc'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { maMH, tenMH, soTinChi, khoa, khoaPhuTrach, loaiMon, hocKy, namHoc, lop, lePhiThiLai, lePhiHocLai } = req.body;
       if (!maMH || !tenMH) {
@@ -1643,7 +1699,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.put(['/api/subjects/:maMH', '/api/monhoc/:maMH'], async (req: Request, res: Response) => {
+  app.put(['/api/subjects/:maMH', '/api/monhoc/:maMH'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { maMH } = req.params;
       const existing = await getMonHocByMaMH(maMH);
@@ -1669,7 +1725,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.delete(['/api/subjects/:maMH', '/api/monhoc/:maMH'], async (req: Request, res: Response) => {
+  app.delete(['/api/subjects/:maMH', '/api/monhoc/:maMH'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { maMH } = req.params;
       await deleteMonHoc(maMH);
@@ -1678,7 +1734,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post(['/api/subjects/import', '/api/monhoc/import'], async (req: Request, res: Response) => {
+  app.post(['/api/subjects/import', '/api/monhoc/import'], requirePortalRoles('ADMIN', 'LECTURER'), async (req: Request, res: Response) => {
     try {
       const { subjects } = req.body;
       if (!Array.isArray(subjects) || subjects.length === 0) {
@@ -1709,7 +1765,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.get('/api/reports/summary', async (req: Request, res: Response) => {
+  app.get('/api/reports/summary', requirePortalAuth, async (req: Request, res: Response) => {
     try {
       const { khoa, lop: lopFilter, hocKy, namHoc } = req.query;
       const students = await getAllSinhVien(undefined, khoa as string, lopFilter as string);
@@ -1732,7 +1788,7 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.post('/api/admin/clear-all-data', async (req: Request, res: Response) => {
+  app.post('/api/admin/clear-all-data', requirePortalRoles('ADMIN'), async (req: Request, res: Response) => {
     try {
       await clearAllOperationalData();
       await createAuditLog({
@@ -1754,7 +1810,7 @@ async function startServer() {
   });
 
   // Real Audit Logs Endpoints
-  app.get('/api/audit-logs', async (req: Request, res: Response) => {
+  app.get('/api/audit-logs', requirePortalRoles('ADMIN'), async (req: Request, res: Response) => {
     try {
       const limit = req.query.limit ? Number(req.query.limit) : 300;
       const logs = await getAllAuditLogs(limit);
@@ -1764,7 +1820,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/audit-logs', async (req: Request, res: Response) => {
+  app.post('/api/audit-logs', requirePortalAuth, async (req: Request, res: Response) => {
     try {
       const { user, role, action, target, details, status, ip } = req.body;
       const clientIp = ip || (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1';
@@ -1783,7 +1839,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/audit-logs', async (req: Request, res: Response) => {
+  app.delete('/api/audit-logs', requirePortalRoles('ADMIN'), async (req: Request, res: Response) => {
     try {
       await clearAuditLogs();
       await createAuditLog({
@@ -1796,6 +1852,44 @@ async function startServer() {
         ip: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1',
       });
       return res.json({ success: true, message: 'Đã xóa toàn bộ nhật ký hệ thống thành công' });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  // Endpoints Chuẩn hóa Dữ liệu & Migration Expand-and-Contract
+  app.get('/api/migration/id-mappings', requirePortalRoles('ADMIN'), async (_req: Request, res: Response) => {
+    try {
+      const mappings = await getAllIdMappings();
+      return res.json({ success: true, data: mappings, count: mappings.length });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.get('/api/migration/conflicts', requirePortalRoles('ADMIN'), async (_req: Request, res: Response) => {
+    try {
+      const conflicts = await getAllMigrationConflicts();
+      return res.json({ success: true, data: conflicts, count: conflicts.length });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.post('/api/migration/backfill', requirePortalRoles('ADMIN'), async (req: Request, res: Response) => {
+    try {
+      const batchTag = req.body?.batchTag || `BATCH_${Date.now()}`;
+      const result = await executeDataBackfill(batchTag);
+      await createAuditLog({
+        user: req.body?.user || 'admin',
+        role: 'ADMIN',
+        action: 'MIGRATION_BACKFILL',
+        target: 'Hệ thống CSDL Chuẩn hóa',
+        details: `Thực hiện backfill dữ liệu chuẩn hóa đợt ${batchTag}. Kết quả: Sinh viên (${result.students.mapped}/${result.students.total}), Xung đột (${result.conflictsLogged})`,
+        status: 'SUCCESS',
+        ip: getReqIp(req),
+      });
+      return res.json({ success: true, data: result });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
     }

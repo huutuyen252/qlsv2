@@ -1,14 +1,15 @@
 import React from 'react';
-import { ShieldX, Home, ArrowLeft, Lock, RefreshCw, Mail } from 'lucide-react';
+import { ShieldX, Home, ArrowLeft, Lock, RefreshCw, AlertTriangle } from 'lucide-react';
 
 interface ErrorStateProps {
-  type?: '403' | '401' | '404';
+  type?: '403' | '401' | '404' | 'error';
   title?: string;
   message?: string;
   attemptedPath?: string;
   onGoHome?: () => void;
   onGoBack?: () => void;
   onLogin?: () => void;
+  onRetry?: () => void;
 }
 
 export const ErrorState: React.FC<ErrorStateProps> = ({
@@ -19,50 +20,82 @@ export const ErrorState: React.FC<ErrorStateProps> = ({
   onGoHome,
   onGoBack,
   onLogin,
+  onRetry,
 }) => {
   const is403 = type === '403';
   const is401 = type === '401';
+  const isApiError = type === 'error';
+
+  const defaultTitle = is403
+    ? '403 - Không có quyền truy cập'
+    : is401
+    ? '401 - Yêu cầu xác thực'
+    : isApiError
+    ? 'Không thể tải dữ liệu'
+    : '404 - Không tìm thấy trang';
+
+  const defaultMessage = is403
+    ? 'Tài khoản của bạn không có quyền truy cập vào phân hệ hoặc thao tác này.'
+    : is401
+    ? 'Phiên đăng nhập đã hết hạn hoặc bạn chưa đăng nhập.'
+    : isApiError
+    ? 'Đã xảy ra lỗi khi kết nối máy chủ. Vui lòng thử lại.'
+    : 'Đường dẫn yêu cầu không tồn tại hoặc đã thay đổi.';
 
   return (
-    <div className="min-h-[70vh] flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 text-center shadow-xl">
+    <div className="min-h-[55vh] flex items-center justify-center p-4" role="alert">
+      <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md p-6 text-center">
         <div
-          className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-inner ${
-            is403
-              ? 'bg-rose-100 text-rose-600 dark:bg-rose-950/70 dark:text-rose-400'
+          className={`w-11 h-11 rounded flex items-center justify-center mx-auto mb-4 border ${
+            is403 || isApiError
+              ? 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/50 dark:text-rose-400 dark:border-rose-800'
               : is401
-              ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/70 dark:text-amber-400'
-              : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+              ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-400 dark:border-amber-800'
+              : 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
           }`}
         >
-          {is403 ? <ShieldX className="w-8 h-8" /> : <Lock className="w-8 h-8" />}
+          {is403 ? (
+            <ShieldX className="w-5 h-5" />
+          ) : isApiError ? (
+            <AlertTriangle className="w-5 h-5" />
+          ) : (
+            <Lock className="w-5 h-5" />
+          )}
         </div>
 
-        <h2 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
-          {title || (is403 ? '403 - Quyền truy cập bị từ chối' : '401 - Yêu cầu xác thực')}
+        <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 tracking-tight">
+          {title || defaultTitle}
         </h2>
 
-        <p className="text-xs text-slate-500 dark:text-slate-400 mt-2.5 leading-relaxed">
-          {message ||
-            (is403
-              ? 'Tài khoản của bạn không có đủ thẩm quyền để truy cập phân hệ quản trị hoặc chức năng này. Chỉ Quản trị viên (ADMIN) mới có quyền truy cập.'
-              : 'Phiên đăng nhập của bạn đã hết hạn hoặc bạn chưa đăng nhập vào hệ thống.')}
+        <p className="text-xs text-slate-600 dark:text-slate-300 mt-2 leading-relaxed">
+          {message || defaultMessage}
         </p>
 
         {attemptedPath && (
-          <div className="mt-3 inline-block px-3 py-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg text-[11px] font-mono border border-slate-200 dark:border-slate-700">
-            Route yêu cầu: <span className="font-bold text-rose-600 dark:text-rose-400">{attemptedPath}</span>
+          <div className="mt-3 inline-block px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded text-[11px] font-mono border border-slate-200 dark:border-slate-700">
+            {attemptedPath}
           </div>
         )}
 
-        <div className="mt-6 pt-5 border-t border-slate-100 dark:border-slate-800/80 flex flex-col sm:flex-row items-center justify-center gap-2.5">
+        <div className="mt-5 pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-center gap-2">
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="px-3.5 py-2 bg-blue-700 hover:bg-blue-800 text-white font-semibold rounded text-xs inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Thử lại</span>
+            </button>
+          )}
+
           {onGoBack && (
             <button
               type="button"
               onClick={onGoBack}
-              className="w-full sm:w-auto px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              className="px-3.5 py-2 bg-white hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-medium rounded text-xs inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-3.5 h-3.5" />
               <span>Quay lại</span>
             </button>
           )}
@@ -71,10 +104,10 @@ export const ErrorState: React.FC<ErrorStateProps> = ({
             <button
               type="button"
               onClick={onGoHome}
-              className="w-full sm:w-auto px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-blue-600/20 transition-all cursor-pointer"
+              className="px-3.5 py-2 bg-blue-700 hover:bg-blue-800 text-white font-semibold rounded text-xs inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
             >
-              <Home className="w-4 h-4" />
-              <span>Về Dashboard</span>
+              <Home className="w-3.5 h-3.5" />
+              <span>Về Tổng quan</span>
             </button>
           )}
 
@@ -82,17 +115,12 @@ export const ErrorState: React.FC<ErrorStateProps> = ({
             <button
               type="button"
               onClick={onLogin}
-              className="w-full sm:w-auto px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md transition-all cursor-pointer"
+              className="px-3.5 py-2 bg-blue-700 hover:bg-blue-800 text-white font-semibold rounded text-xs inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
             >
-              <Lock className="w-4 h-4" />
-              <span>Đăng nhập lại</span>
+              <Lock className="w-3.5 h-3.5" />
+              <span>Đăng nhập</span>
             </button>
           )}
-        </div>
-
-        <div className="mt-4 text-[11px] text-slate-400 dark:text-slate-500 flex items-center justify-center gap-1">
-          <Mail className="w-3.5 h-3.5" />
-          <span>Nếu cần quyền, vui lòng liên hệ Ban Quản Trị Hệ Thống</span>
         </div>
       </div>
     </div>

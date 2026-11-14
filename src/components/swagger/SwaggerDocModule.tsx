@@ -120,15 +120,12 @@ export const SwaggerDocModule: React.FC = () => {
   };
   return (
     <div className="space-y-6">
-      <div className="bg-white dark:bg-zinc-900 p-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm flex items-center justify-between">
+      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center justify-between">
         <div>
           <div className="flex items-center gap-2">
             <Code2 className="w-6 h-6 text-purple-600 dark:text-purple-400" />
-            <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Swagger / OpenAPI 3.0 API Spec Explorer</h2>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Swagger / OpenAPI 3.0 API Spec Explorer</h2>
           </div>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-            Tài liu mô tả RESTful API Backend theo tiêu chuẩn OpenAPI 3.0 & NestJS Swagger Module
-          </p>
         </div>
         <a
           href="/api/docs/json"
@@ -142,7 +139,7 @@ export const SwaggerDocModule: React.FC = () => {
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-4 space-y-2">
-          <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block mb-1">
+          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1">
             Danh sách Endpoints API:
           </label>
           {endpoints.map((ep) => {
@@ -157,7 +154,7 @@ export const SwaggerDocModule: React.FC = () => {
                 className={`w-full p-3.5 rounded-2xl border text-left transition-all ${
                   isActive
                     ? 'bg-purple-50 border-purple-300 dark:bg-purple-950/50 dark:border-purple-800 shadow-sm'
-                    : 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/50'
+                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2 mb-1">
@@ -172,15 +169,15 @@ export const SwaggerDocModule: React.FC = () => {
                   >
                     {ep.method}
                   </span>
-                  <span className="text-xs font-mono text-zinc-500 truncate">{ep.path}</span>
+                  <span className="text-xs font-mono text-slate-500 truncate">{ep.path}</span>
                 </div>
-                <div className="text-xs font-bold text-zinc-900 dark:text-white truncate">{ep.summary}</div>
+                <div className="text-xs font-bold text-slate-900 dark:text-white truncate">{ep.summary}</div>
               </button>
             );
           })}
         </div>
-        <div className="lg:col-span-8 bg-white dark:bg-zinc-900 p-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-zinc-200 dark:border-zinc-800">
+        <div className="lg:col-span-8 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
             <div className="flex items-center gap-2">
               <span
                 className={`text-xs font-bold px-2.5 py-1 rounded font-mono uppercase ${
@@ -193,7 +190,7 @@ export const SwaggerDocModule: React.FC = () => {
               >
                 {currentEp.method}
               </span>
-              <span className="font-mono text-sm font-bold text-zinc-900 dark:text-white">{currentEp.path}</span>
+              <span className="font-mono text-sm font-bold text-slate-900 dark:text-white">{currentEp.path}</span>
             </div>
             <button
               id="btn-run-api-test"
@@ -205,11 +202,11 @@ export const SwaggerDocModule: React.FC = () => {
               <span>{loading ? 'Đang gọi API...' : 'Chạy thử API Live'}</span>
             </button>
           </div>
-          <p className="text-xs text-zinc-600 dark:text-zinc-300 leading-relaxed">{currentEp.description}</p>
+          <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">{currentEp.description}</p>
           {currentEp.payload && (
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-xs font-semibold text-zinc-500">Request Body JSON:</span>
+                <span className="text-xs font-semibold text-slate-500">Request Body JSON:</span>
                 <button
                   onClick={copyPayload}
                   className="text-[11px] text-purple-600 hover:underline flex items-center gap-1 font-medium"
@@ -218,23 +215,23 @@ export const SwaggerDocModule: React.FC = () => {
                   {copied ? 'Đã chép' : 'Chép JSON'}
                 </button>
               </div>
-              <pre className="bg-zinc-950 text-zinc-100 p-4 rounded-xl text-xs font-mono overflow-x-auto border border-zinc-800">
+              <pre className="bg-slate-950 text-slate-100 p-4 rounded-xl text-xs font-mono overflow-x-auto border border-slate-800">
                 {JSON.stringify(currentEp.payload, null, 2)}
               </pre>
             </div>
           )}
           <div>
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 mb-1.5">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 mb-1.5">
               <Terminal className="w-3.5 h-3.5 text-emerald-500" />
               Response Output (JSON Live Server):
             </div>
-            <div className="bg-zinc-950 text-emerald-400 p-4 rounded-xl text-xs font-mono min-h-[160px] overflow-x-auto border border-zinc-800">
+            <div className="bg-slate-950 text-emerald-400 p-4 rounded-xl text-xs font-mono min-h-[160px] overflow-x-auto border border-slate-800">
               {loading ? (
-                <div className="text-zinc-500 animate-pulse">Đang gửi request ến Express/NestJS Server...</div>
+                <div className="text-slate-500 animate-pulse">Đang gửi request ến Express/NestJS Server...</div>
               ) : apiResponse ? (
                 <pre>{JSON.stringify(apiResponse, null, 2)}</pre>
               ) : (
-                <span className="text-zinc-600">Nhấn nút "Chạy thử API Live" Y trên f kiểm tra response thực tế</span>
+                <span className="text-slate-600">Nhấn nút "Chạy thử API Live" Y trên f kiểm tra response thực tế</span>
               )}
             </div>
           </div>

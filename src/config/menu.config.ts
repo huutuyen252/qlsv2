@@ -48,6 +48,14 @@ export const MAIN_MENU_ITEMS: MenuItem[] = [
     href: '/students',
   },
   {
+    id: 'subjects',
+    title: 'Môn học & Học phần',
+    description: 'Danh mục môn học & tín chỉ',
+    icon: BookOpen,
+    roles: ['ADMIN', 'LECTURER', 'TEACHER', 'STUDENT'],
+    href: '/subjects',
+  },
+  {
     id: 'schedule',
     title: 'Thời khóa biểu',
     description: 'Lịch học tuần & phòng học',
@@ -64,28 +72,20 @@ export const MAIN_MENU_ITEMS: MenuItem[] = [
     href: '/grades',
   },
   {
-    id: 'training',
-    title: 'Điểm Rèn luyện',
-    description: 'Đánh giá & Nhận xét tháng',
-    icon: Sparkles,
-    roles: ['ADMIN', 'LECTURER', 'TEACHER', 'STUDENT'],
-    href: '/training',
-  },
-  {
-    id: 'subjects',
-    title: 'Môn học & Học phần',
-    description: 'Danh mục môn học & tín chỉ',
-    icon: BookOpen,
-    roles: ['ADMIN', 'LECTURER', 'TEACHER', 'STUDENT'],
-    href: '/subjects',
-  },
-  {
     id: 'retakes',
     title: 'Thi lại / Học lại',
     description: 'Đăng ký & xét duyệt thi lại',
     icon: RotateCcw,
     roles: ['ADMIN', 'LECTURER', 'TEACHER', 'STUDENT'],
     href: '/retakes',
+  },
+  {
+    id: 'training',
+    title: 'Điểm Rèn luyện',
+    description: 'Đánh giá & Nhận xét tháng',
+    icon: Sparkles,
+    roles: ['ADMIN', 'LECTURER', 'TEACHER', 'STUDENT'],
+    href: '/training',
   },
   // ADMIN CONSOLE: Được phân quyền cho ADMIN nhưng ẩn khỏi menu chính thông thường
   {
@@ -127,8 +127,8 @@ export const ADMIN_MENU_ITEMS: MenuItem[] = [
   },
   {
     id: 'admin-backup',
-    title: 'Sao lưu & Phục hồi CSDL',
-    description: 'Xuất & khôi phục dữ liệu PostgreSQL',
+    title: 'Cấu hình & Sao lưu Hệ thống',
+    description: 'Cấu hình tham số, quy chế đào tạo & sao lưu CSDL',
     icon: Database,
     roles: ['ADMIN'],
     href: '/admin/backup',

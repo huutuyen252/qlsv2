@@ -1,0 +1,6 @@
+{
+  "summary":  "Kế hoạch chi tiết tái thiết kế (Redesign) giao diện Reference Screen gồm AppShell, Topbar, Sidebar và Trang Quản lý Sinh viên theo phong cách Quản trị Giáo dục Chuyên nghiệp (Academic Administration System), loại bỏ hoàn toàn phong cách AI Dashboard generic (không gradient, không card-itis, không glassmorphism, không mock data).",
+  "updatedAt":  "2026-11-08T08:26:48.016964695Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

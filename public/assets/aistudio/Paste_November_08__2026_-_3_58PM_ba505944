@@ -1,0 +1,1214 @@
+# NHIỆM VỤ: KIỂM TOÁN VÀ CHUẨN HÓA CƠ SỞ DỮ LIỆU HIỆN TẠI
+
+Bạn đóng vai trò:
+
+- Senior Database Architect
+- Data Migration Engineer
+- System Analyst
+- Backend Engineer
+- Data Quality Specialist
+
+Tôi có một hệ thống quản lý sinh viên đang hoạt động. Trong quá trình phát triển, AI đã có thể tự tạo thêm dữ liệu, bảng, cột, quan hệ hoặc dữ liệu mẫu không theo đúng nghiệp vụ.
+
+Tôi muốn chuẩn hóa cơ sở dữ liệu để:
+
+1. Mỗi thông tin chỉ được quản lý tại một nguồn dữ liệu chuẩn.
+2. Khi nhập dữ liệu một lần, tất cả chức năng liên quan cùng sử dụng.
+3. Không còn tình trạng mỗi module có bảng năm học, học kỳ, lớp hoặc sinh viên riêng.
+4. Loại bỏ dữ liệu giả do AI tự tạo.
+5. Không làm mất dữ liệu thật.
+6. Không làm hỏng chức năng đang hoạt động.
+7. Duy trì toàn vẹn khóa ngoại.
+8. Có thể rollback nếu migration thất bại.
+
+Đây là nhiệm vụ chuẩn hóa hệ thống hiện có, KHÔNG PHẢI tạo một cơ sở dữ liệu mới từ đầu.
+
+==================================================
+I. NGUYÊN TẮC AN TOÀN TUYỆT ĐỐI
+==================================================
+
+Không được thực hiện DELETE, DROP, TRUNCATE hoặc migration phá hủy dữ liệu ngay khi chưa hoàn thành kiểm toán.
+
+Không được kết luận một bản ghi là dữ liệu giả chỉ dựa vào:
+
+- tên ngắn;
+- tên phổ biến;
+- ngày tạo;
+- ID nhỏ hoặc lớn;
+- email lạ;
+- class_code đơn giản;
+- dữ liệu thiếu một vài trường;
+- tên như “Nguyễn Văn A”;
+- tên như “Lớp CNTT01”;
+- năm học như “2025-2026”.
+
+Các dấu hiệu trên chỉ là nghi vấn, không phải bằng chứng đủ để xóa.
+
+Quy trình bắt buộc:
+
+AUDIT
+→ CLASSIFY
+→ MAP
+→ BACKUP
+→ DRY RUN
+→ MIGRATE
+→ VERIFY
+→ ARCHIVE
+→ DELETE AFTER APPROVAL
+
+Tuyệt đối không bỏ qua bước nào.
+
+Mọi script thay đổi dữ liệu phải có:
+
+- script kiểm tra trước khi chạy;
+- chế độ dry-run;
+- thống kê số bản ghi bị ảnh hưởng;
+- script backup;
+- script migration;
+- script kiểm tra sau migration;
+- script rollback;
+- nhật ký thay đổi.
+
+Nếu chưa đủ thông tin:
+
+Đánh dấu [NEED_PROJECT_INFO].
+
+Không đoán.
+Không tự tạo schema thay thế.
+Không tự xóa dữ liệu.
+Không tự sửa dữ liệu production.
+
+==================================================
+II. SINGLE SOURCE OF TRUTH
+==================================================
+
+Các thực thể nghiệp vụ chính phải có một nguồn dữ liệu chuẩn duy nhất:
+
+- Người dùng.
+- Sinh viên.
+- Nhân sự.
+- Khoa.
+- Ngành.
+- Khóa học.
+- Lớp.
+- Năm học.
+- Học kỳ.
+- Tháng đào tạo.
+- Quan hệ sinh viên thuộc lớp.
+- Chức vụ cán bộ lớp.
+- Tài khoản đăng nhập.
+- Vai trò và quyền.
+- Quy chế điểm.
+- Nhóm điểm.
+- Tiêu chí điểm.
+
+Ví dụ:
+
+Nếu đã có bảng chính thức quản lý sinh viên thì:
+
+- điểm rèn luyện phải tham chiếu student_id;
+- điểm học tập phải tham chiếu student_id;
+- lớp phải tham chiếu student_id thông qua enrollment;
+- tài khoản phải liên kết với student_id hoặc user_id;
+- không module nào được tạo bản sao sinh viên riêng.
+
+Không chấp nhận các bảng trùng chức năng như:
+
+students
+student_list
+student_profiles
+training_students
+class_students
+students_demo
+
+nếu các bảng này đang lưu lặp lại cùng một thực thể.
+
+Tương tự, không chấp nhận nhiều nguồn độc lập cho:
+
+academic_year
+school_year
+academic_years
+training_years
+
+hoặc:
+
+semester
+semesters
+terms
+training_semesters
+
+hoặc:
+
+classes
+classrooms
+student_classes
+training_classes
+
+Phải xác định bảng canonical cho từng thực thể.
+
+==================================================
+III. KHẢO SÁT HỆ THỐNG TRƯỚC KHI THAY ĐỔI
+==================================================
+
+Trước khi viết migration, hãy đọc:
+
+1. Toàn bộ database schema.
+2. Tất cả migration hiện có.
+3. ORM schema/model.
+4. Seed scripts.
+5. Backend entity/model.
+6. Repository.
+7. Service.
+8. Controller và API.
+9. Frontend API client.
+10. Form nhập liệu.
+11. Dropdown năm học, học kỳ, lớp, sinh viên.
+12. Script deploy.
+13. Biến môi trường liên quan database.
+14. Test fixture và data factory.
+15. Scheduled job hoặc background job.
+16. Các view, function, procedure và trigger.
+17. Foreign key, index, unique constraint và check constraint.
+
+Không chỉ đọc tên bảng.
+
+Phải kiểm tra bảng đang được sử dụng ở đâu trong mã nguồn.
+
+Với mỗi bảng, lập danh sách:
+
+- Backend module nào đang đọc.
+- Backend module nào đang ghi.
+- API nào sử dụng.
+- Frontend page nào sử dụng.
+- Job nào sử dụng.
+- Bảng nào tham chiếu.
+- Bảng nào được bảng này tham chiếu.
+- Dữ liệu có đang được sử dụng thực tế không.
+
+==================================================
+IV. LẬP DATA INVENTORY
+==================================================
+
+Lập danh mục tất cả bảng với các trường:
+
+- Table name.
+- Purpose.
+- Row count.
+- Primary key.
+- Foreign keys.
+- Unique constraints.
+- Indexes.
+- Referenced by.
+- References to.
+- Created by migration nào.
+- Được sử dụng trong file/module nào.
+- Có dữ liệu thật hay không xác định.
+- Có dấu hiệu trùng lặp không.
+- Có phải bảng canonical không.
+- Hành động đề xuất.
+
+Phân loại bảng:
+
+A. MASTER_DATA
+B. TRANSACTION_DATA
+C. CONFIGURATION_DATA
+D. AUDIT_DATA
+E. SNAPSHOT_DATA
+F. TEMPORARY_DATA
+G. TEST_DATA
+H. DUPLICATE_CANDIDATE
+I. UNKNOWN
+
+Không xóa bảng thuộc nhóm UNKNOWN.
+
+==================================================
+V. XÁC ĐỊNH CANONICAL TABLE
+==================================================
+
+Với mỗi thực thể, xác định một bảng chuẩn duy nhất.
+
+Lập Data Ownership Matrix:
+
+| Business entity | Canonical table | Primary key | Owner module | Duplicate tables | Migration action |
+|-----------------|-----------------|-------------|--------------|------------------|------------------|
+| User | ... | ... | ... | ... | ... |
+| Student | ... | ... | ... | ... | ... |
+| Faculty | ... | ... | ... | ... | ... |
+| Class | ... | ... | ... | ... | ... |
+| Academic year | ... | ... | ... | ... | ... |
+| Semester | ... | ... | ... | ... | ... |
+| Enrollment | ... | ... | ... | ... | ... |
+
+Tiêu chí chọn canonical table:
+
+1. Đang được nghiệp vụ chính sử dụng.
+2. Có dữ liệu thật đầy đủ nhất.
+3. Có khóa chính ổn định.
+4. Có constraint tốt nhất.
+5. Có quan hệ đúng nhất.
+6. Được nhiều module tham chiếu nhất.
+7. Có lịch sử migration rõ ràng.
+8. Ít dữ liệu giả hơn.
+9. Phù hợp với mô hình nghiệp vụ.
+10. Giảm migration phức tạp và rủi ro.
+
+Không tự động chọn bảng có nhiều bản ghi nhất.
+
+Nếu chưa đủ cơ sở chọn:
+
+Đánh dấu [CANONICAL_DECISION_REQUIRED].
+
+Trình bày lựa chọn và rủi ro để tôi quyết định.
+
+==================================================
+VI. MÔ HÌNH DỮ LIỆU DÙNG CHUNG
+==================================================
+
+Sau chuẩn hóa, các module phải dùng chung quan hệ sau:
+
+AcademicYear
+    └── Semester
+          └── TrainingMonth
+
+Faculty
+    └── Class
+
+Student
+    └── ClassEnrollment
+          ├── Class
+          └── AcademicYear
+
+Student
+    └── ClassOfficerAssignment
+          ├── Class
+          ├── AcademicYear
+          └── ClassOfficerRole
+
+Student
+    └── MonthlyScoreAccount
+          ├── Class
+          ├── TrainingMonth
+          └── ScorePolicy
+
+MonthlyScoreAccount
+    └── ScoreTransaction
+          └── ScoreCriterion
+
+Nguyên tắc:
+
+- Không lưu tên sinh viên thay cho student_id.
+- Không lưu tên lớp thay cho class_id.
+- Không lưu tên năm học thay cho academic_year_id.
+- Không lưu tên học kỳ thay cho semester_id.
+- Không sao chép toàn bộ thông tin sinh viên vào bảng điểm.
+- Không tạo danh sách lớp riêng cho từng module.
+- Không tạo bảng năm học riêng cho điểm rèn luyện.
+- Không tạo bảng học kỳ riêng cho từng chức năng.
+
+Tên và thông tin hiển thị phải được lấy bằng JOIN hoặc relation từ bảng canonical.
+
+Chỉ được lưu snapshot khi cần bảo toàn dữ liệu lịch sử, nhưng phải:
+
+- đặt tên cột rõ là snapshot;
+- vẫn giữ foreign key gốc;
+- ghi thời điểm tạo snapshot;
+- không sử dụng snapshot làm master data.
+
+==================================================
+VII. CHUẨN HÓA ĐẾN 3NF
+==================================================
+
+Đánh giá từng bảng theo:
+
+- First Normal Form.
+- Second Normal Form.
+- Third Normal Form.
+
+Phát hiện:
+
+1. Cột chứa nhiều giá trị.
+2. Dữ liệu lặp lại trong cùng bảng.
+3. Thuộc tính không phụ thuộc trực tiếp vào khóa chính.
+4. Thông tin năm học, lớp, khoa bị sao chép nhiều nơi.
+5. Quan hệ nhiều-nhiều chưa có junction table.
+6. Các cột tương tự nhưng khác tên.
+7. Các cột khác kiểu dữ liệu cho cùng một khái niệm.
+8. Cột string đang thay vai trò foreign key.
+9. Cột trạng thái thiếu constraint.
+10. Cột ngày giờ không thống nhất timezone.
+11. Cột điểm dùng FLOAT.
+12. Dữ liệu thiếu unique constraint.
+13. Bảng thiếu audit fields.
+14. Quan hệ bị lưu bằng JSON không cần thiết.
+
+Ưu tiên đạt 3NF cho master data và transaction data.
+
+Không chuẩn hóa quá mức nếu làm hệ thống khó truy vấn hoặc phá vỡ yêu cầu snapshot/audit.
+
+Phân biệt rõ:
+
+- dữ liệu chuẩn;
+- dữ liệu tổng hợp;
+- cache;
+- materialized view;
+- snapshot lịch sử.
+
+==================================================
+VIII. NHẬN DIỆN DỮ LIỆU AI TỰ TẠO
+==================================================
+
+Không được tự quyết định xóa dữ liệu nghi ngờ.
+
+Hãy xây dựng quy trình phân loại theo bằng chứng.
+
+Mỗi bản ghi nghi ngờ cần được chấm theo các dấu hiệu:
+
+- Được tạo bởi seed/demo script.
+- Được tạo bởi migration có INSERT dữ liệu mẫu.
+- Có created_by trỏ đến tài khoản hệ thống hoặc tài khoản test.
+- Có source_type = AI, DEMO, MOCK, SEED hoặc TEST.
+- Email sử dụng domain test/example.
+- Mã dữ liệu có tiền tố DEMO, TEST, MOCK, SAMPLE.
+- Không có quan hệ với giao dịch thật.
+- Chỉ xuất hiện trong test fixture.
+- Có nội dung trùng với dữ liệu hard-code trong source code.
+- Được tạo cùng thời điểm với một tập dữ liệu demo.
+- Không có hoạt động nghiệp vụ sau khi tạo.
+- Có bằng chứng trong Git history hoặc migration history.
+
+Phân loại bản ghi thành:
+
+VERIFIED_REAL
+VERIFIED_SYNTHETIC
+SUSPECTED_SYNTHETIC
+DUPLICATE_REAL
+ORPHANED
+UNKNOWN
+
+Quy tắc xử lý:
+
+VERIFIED_REAL:
+- Giữ nguyên.
+
+VERIFIED_SYNTHETIC:
+- Được đưa vào danh sách đề xuất xóa.
+- Không xóa trước khi dry-run và backup.
+
+SUSPECTED_SYNTHETIC:
+- Chuyển vào báo cáo chờ xác nhận.
+- Không xóa.
+
+DUPLICATE_REAL:
+- Lập kế hoạch merge.
+- Không xóa trước khi chuyển foreign key.
+
+ORPHANED:
+- Kiểm tra nguyên nhân.
+- Không mặc định xem là dữ liệu giả.
+
+UNKNOWN:
+- Giữ nguyên.
+- Yêu cầu xác nhận.
+
+==================================================
+IX. KHÔNG XÓA DỮ LIỆU DỰA TRÊN TÊN
+==================================================
+
+Không được viết script nguy hiểm như:
+
+DELETE FROM students
+WHERE full_name IN ('Nguyễn Văn A', 'Trần Thị B');
+
+Không được viết:
+
+DELETE FROM classes
+WHERE class_name LIKE '%Demo%';
+
+Không được viết:
+
+DELETE FROM academic_years
+WHERE created_at > ...;
+
+trừ khi có bằng chứng, điều kiện an toàn và phê duyệt cụ thể.
+
+Script xóa phải sử dụng:
+
+- danh sách ID đã xác nhận;
+- batch_id đã xác nhận;
+- source marker đáng tin cậy;
+- hoặc bảng staging chứa các ID đã được duyệt.
+
+Ví dụ luồng đúng:
+
+suspected_synthetic_records
+→ review
+→ approved_cleanup_records
+→ backup
+→ dependency check
+→ delete by confirmed IDs
+
+==================================================
+X. TẠO BẢNG STAGING CHO QUÁ TRÌNH DỌN DỮ LIỆU
+==================================================
+
+Nếu cần, hãy đề xuất các bảng staging:
+
+data_cleanup_candidates
+- id
+- entity_type
+- table_name
+- record_id
+- classification
+- confidence_reason
+- evidence_json
+- dependency_count
+- proposed_action
+- review_status
+- reviewed_by
+- reviewed_at
+- created_at
+
+data_cleanup_approved
+- candidate_id
+- approved_action
+- approved_by
+- approved_at
+
+id_mapping
+- entity_type
+- source_table
+- source_id
+- canonical_table
+- canonical_id
+- mapping_reason
+- migration_status
+- migrated_at
+
+Không để bảng staging trở thành một phần vĩnh viễn của nghiệp vụ nếu không cần thiết.
+
+==================================================
+XI. PHÁT HIỆN VÀ MERGE DỮ LIỆU TRÙNG
+==================================================
+
+Phát hiện trùng theo nhiều tiêu chí.
+
+Sinh viên:
+
+- student_code chính xác.
+- user_id.
+- email.
+- số điện thoại.
+- họ tên kết hợp ngày sinh.
+- quan hệ lớp.
+- trạng thái học tập.
+
+Lớp:
+
+- class_code.
+- class_name.
+- faculty_id.
+- course_year.
+
+Năm học:
+
+- code.
+- start_date.
+- end_date.
+
+Học kỳ:
+
+- academic_year_id.
+- semester_number.
+- start_date.
+- end_date.
+
+Không tự động merge dữ liệu chỉ dựa vào tên gần giống.
+
+Phân loại kết quả match:
+
+EXACT_MATCH
+HIGH_CONFIDENCE
+POSSIBLE_MATCH
+NO_MATCH
+CONFLICT
+
+Chỉ có thể tự động lập mapping cho EXACT_MATCH khi không có xung đột.
+
+HIGH_CONFIDENCE và POSSIBLE_MATCH phải đưa vào báo cáo chờ duyệt.
+
+Nếu hai bản ghi có dữ liệu mâu thuẫn:
+
+- Không ghi đè âm thầm.
+- Liệt kê từng cột mâu thuẫn.
+- Đề xuất quy tắc ưu tiên.
+- Chờ phê duyệt.
+
+==================================================
+XII. QUY TẮC MERGE AN TOÀN
+==================================================
+
+Khi merge bản ghi duplicate vào canonical record:
+
+1. Backup bản ghi nguồn.
+2. Lock hoặc cô lập tập dữ liệu cần xử lý.
+3. Xác định canonical_id.
+4. Xác định duplicate_id.
+5. Kiểm tra tất cả foreign key tham chiếu duplicate_id.
+6. Chuyển foreign key sang canonical_id.
+7. Phát hiện unique conflict trước khi cập nhật.
+8. Hợp nhất dữ liệu không xung đột.
+9. Ghi id_mapping.
+10. Ghi audit log.
+11. Kiểm tra row count.
+12. Kiểm tra orphan.
+13. Chỉ archive/xóa duplicate sau khi xác minh.
+14. Commit trong transaction.
+15. Rollback toàn bộ nếu có bước thất bại.
+
+Không cập nhật foreign key từng bảng một mà không dùng transaction.
+
+==================================================
+XIII. CHUẨN HÓA TÊN BẢNG VÀ CỘT
+==================================================
+
+Phân tích quy ước hiện tại trước khi đề xuất đổi tên.
+
+Chọn một convention duy nhất, ví dụ:
+
+- snake_case cho PostgreSQL.
+- tên bảng số nhiều hoặc số ít nhất quán.
+- primary key dùng id.
+- foreign key dùng <entity>_id.
+- created_at.
+- updated_at.
+- deleted_at.
+- created_by.
+- updated_by.
+
+Không đổi tên hàng loạt nếu ORM hoặc API đang phụ thuộc mà chưa có kế hoạch tương thích.
+
+Khi đổi tên phải cập nhật đồng bộ:
+
+- migration;
+- ORM mapping;
+- repository;
+- service;
+- controller;
+- API serializer;
+- frontend types;
+- tests;
+- report queries;
+- scheduled jobs.
+
+Nếu chỉ cần chuẩn hóa tên trong ORM mà không cần đổi physical table, hãy ưu tiên mapping để giảm rủi ro.
+
+==================================================
+XIV. CHUẨN HÓA KHÓA VÀ KIỂU DỮ LIỆU
+==================================================
+
+Kiểm tra và đề xuất chuẩn hóa:
+
+- Primary key.
+- Foreign key.
+- Kiểu dữ liệu ID.
+- ON DELETE.
+- ON UPDATE.
+- Unique constraint.
+- Composite unique constraint.
+- Check constraint.
+- Nullability.
+- Default value.
+- Timezone.
+- Numeric precision.
+- Text length.
+- Boolean.
+- Status.
+
+Yêu cầu:
+
+- Điểm phải dùng NUMERIC, không dùng FLOAT.
+- Thời gian nên dùng TIMESTAMPTZ nếu sử dụng PostgreSQL.
+- Các bảng quan hệ phải có foreign key thật.
+- Các foreign key phải có index khi cần.
+- Không dùng tên hoặc mã tự do thay thế quan hệ ID.
+- Không sử dụng ON DELETE CASCADE cho dữ liệu nghiệp vụ quan trọng nếu có nguy cơ mất lịch sử.
+- Ưu tiên RESTRICT, NO ACTION hoặc soft delete phù hợp.
+- Trạng thái phải có CHECK constraint hoặc bảng danh mục.
+- Mã nghiệp vụ quan trọng phải có UNIQUE constraint.
+
+==================================================
+XV. XỬ LÝ QUAN HỆ SINH VIÊN - LỚP
+==================================================
+
+Không lưu class_id hiện tại trực tiếp trong students nếu cần quản lý lịch sử chuyển lớp.
+
+Sử dụng bảng quan hệ như:
+
+class_enrollments
+- id
+- student_id
+- class_id
+- academic_year_id
+- joined_at
+- left_at
+- status
+- created_at
+- updated_at
+
+Nếu students hiện có class_id:
+
+- Không xóa ngay.
+- Tạo class_enrollments từ dữ liệu hiện có.
+- So sánh kết quả.
+- Chuyển API sang đọc class_enrollments.
+- Chạy song song trong giai đoạn chuyển đổi nếu cần.
+- Chỉ loại bỏ students.class_id sau khi toàn bộ chức năng đã chuyển đổi và được kiểm thử.
+
+Đây phải là migration nhiều giai đoạn, không phải một lệnh DROP COLUMN duy nhất.
+
+==================================================
+XVI. NĂM HỌC VÀ HỌC KỲ DÙNG CHUNG
+==================================================
+
+Phải có một nguồn năm học và học kỳ dùng chung toàn hệ thống.
+
+Quan hệ:
+
+academic_years
+    1 → N semesters
+
+semesters
+    N → 1 academic_year
+
+Các module:
+
+- quản lý sinh viên;
+- lớp;
+- điểm học tập;
+- điểm rèn luyện;
+- lịch học;
+- báo cáo;
+
+phải tham chiếu cùng academic_year_id và semester_id.
+
+Không tạo semester chỉ từ chuỗi “Học kỳ 1”.
+
+Không lưu academic_year_name lặp lại trong các bảng giao dịch.
+
+Nếu bảng cũ lưu chuỗi:
+
+academic_year_name
+semester_name
+
+thì phải:
+
+1. Chuẩn hóa chuỗi.
+2. Tìm bản ghi canonical.
+3. Tạo mapping.
+4. Điền foreign key mới.
+5. Kiểm tra bản ghi không map được.
+6. Chuyển code sang dùng foreign key.
+7. Chỉ bỏ cột chuỗi khi đã kiểm chứng hoàn toàn.
+
+==================================================
+XVII. MIGRATION THEO MÔ HÌNH EXPAND AND CONTRACT
+==================================================
+
+Không migration phá hủy trong một bước.
+
+Thực hiện:
+
+PHASE 1 — AUDIT
+- Chỉ đọc.
+- Không thay đổi dữ liệu.
+- Tạo báo cáo.
+
+PHASE 2 — EXPAND
+- Thêm bảng/cột/constraint mới.
+- Chưa xóa cấu trúc cũ.
+
+PHASE 3 — BACKFILL
+- Điền khóa ngoại mới từ dữ liệu cũ.
+- Tạo id_mapping.
+- Ghi lỗi không map được.
+
+PHASE 4 — DUAL READ / COMPATIBILITY
+- Cho ứng dụng đọc cấu trúc mới.
+- Có fallback tạm thời nếu cần.
+
+PHASE 5 — SWITCH
+- Chuyển toàn bộ module sang canonical data.
+- Ngừng ghi vào cấu trúc duplicate.
+
+PHASE 6 — VERIFY
+- So sánh dữ liệu.
+- Kiểm thử nghiệp vụ.
+- Kiểm tra báo cáo.
+
+PHASE 7 — ARCHIVE
+- Đổi duplicate table sang trạng thái archived hoặc read-only.
+- Chưa xóa ngay.
+
+PHASE 8 — CONTRACT
+- Chỉ xóa bảng/cột cũ sau khi được phê duyệt và hết thời gian theo dõi.
+
+Mỗi phase phải có rollback plan.
+
+==================================================
+XVIII. SQL AUDIT BẮT BUỘC
+==================================================
+
+Tạo các truy vấn chỉ đọc để kiểm tra:
+
+1. Row count từng bảng.
+2. Bản ghi trùng theo business key.
+3. Foreign key mồ côi.
+4. ID không tồn tại.
+5. Bản ghi thiếu dữ liệu bắt buộc.
+6. Năm học trùng.
+7. Học kỳ trùng.
+8. Lớp trùng.
+9. Sinh viên trùng.
+10. User trùng email hoặc username.
+11. Sinh viên không có lớp.
+12. Sinh viên thuộc nhiều lớp active không hợp lệ.
+13. Học kỳ không thuộc năm học hợp lệ.
+14. Giao dịch tham chiếu dữ liệu không tồn tại.
+15. Dữ liệu test/demo có bằng chứng.
+16. Bảng không được code sử dụng.
+17. Cột không được code sử dụng.
+18. Index trùng hoặc thiếu.
+19. Constraint thiếu.
+20. Cột cùng ý nghĩa nhưng khác kiểu dữ liệu.
+
+Mỗi truy vấn phải có:
+
+- mục đích;
+- mức độ an toàn;
+- kết quả cần kiểm tra;
+- không thay đổi dữ liệu.
+
+==================================================
+XIX. BACKUP VÀ ROLLBACK
+==================================================
+
+Trước migration phải cung cấp:
+
+1. Lệnh backup toàn database.
+2. Backup riêng các bảng bị ảnh hưởng.
+3. Backup cấu trúc schema.
+4. Lưu row count trước migration.
+5. Lưu checksum hoặc dữ liệu đối chiếu khi phù hợp.
+6. Kiểm tra backup có thể restore.
+7. Rollback SQL.
+8. Điều kiện kích hoạt rollback.
+
+Không được coi backup thành công chỉ vì lệnh backup không báo lỗi.
+
+Phải có bước thử restore trên database tách biệt.
+
+Không chạy thử restore đè lên production.
+
+==================================================
+XX. DRY-RUN
+==================================================
+
+Mọi thao tác destructive phải có dry-run.
+
+Dry-run phải trả về:
+
+- bảng bị ảnh hưởng;
+- ID bị ảnh hưởng;
+- số bản ghi;
+- bảng phụ thuộc;
+- số foreign key cần chuyển;
+- conflict;
+- orphan có thể phát sinh;
+- dữ liệu trước;
+- dữ liệu sau dự kiến.
+
+Không dùng transaction rollback như phương pháp dry-run duy nhất nếu script có DDL không transactional hoặc side effect ngoài database.
+
+==================================================
+XXI. XÓA DỮ LIỆU AI SAU XÁC NHẬN
+==================================================
+
+Chỉ tạo script xóa cuối cùng cho bản ghi có classification:
+
+VERIFIED_SYNTHETIC
+
+và:
+
+review_status = APPROVED
+
+Trước khi xóa phải kiểm tra:
+
+- không phải canonical record;
+- không được dữ liệu thật tham chiếu;
+- hoặc foreign key đã được chuyển an toàn;
+- đã backup;
+- đã ghi audit;
+- đã có danh sách ID phê duyệt.
+
+Ưu tiên archive hoặc soft delete trước khi hard delete.
+
+Nếu hard delete:
+
+- chạy trong transaction;
+- xóa theo thứ tự phụ thuộc;
+- không tắt foreign key constraint để ép xóa;
+- không sử dụng CASCADE mù quáng;
+- kiểm tra sau commit.
+
+Không bao giờ dùng các lệnh rộng như:
+
+DELETE FROM table;
+TRUNCATE table;
+DROP TABLE duplicate_table;
+
+trước khi hoàn thành migration và xác nhận.
+
+==================================================
+XXII. NGĂN AI TỰ TẠO DỮ LIỆU TRỞ LẠI
+==================================================
+
+Sau khi chuẩn hóa, tìm và loại bỏ nguồn tự sinh dữ liệu:
+
+- production seed tạo dữ liệu demo;
+- migration có INSERT dữ liệu mẫu;
+- frontend có mock data;
+- backend fallback tự tạo master data;
+- API tự upsert năm học/lớp/sinh viên khi không tìm thấy;
+- startup hook tự tạo dữ liệu;
+- test fixture chạy nhầm production;
+- scheduled job tự tạo bản ghi mặc định;
+- component dùng mảng hard-code;
+- script deploy tự chạy seed demo.
+
+Quy tắc bắt buộc:
+
+Nếu foreign key không tồn tại:
+- trả validation error;
+- không tự tạo dữ liệu cha.
+
+Nếu dropdown không có dữ liệu:
+- hiển thị empty state;
+- không tự sinh option.
+
+Nếu năm học/học kỳ/lớp không tồn tại:
+- thông báo quản trị viên cấu hình;
+- không tạo dữ liệu giả để tiếp tục.
+
+Tách seed thành:
+
+seed:system-config
+seed:development
+seed:test
+
+Production chỉ được phép chạy seed:system-config đã kiểm soát.
+
+Không chạy seed:development hoặc seed:test ở production.
+
+Thêm environment guard:
+
+Nếu NODE_ENV = production:
+- từ chối chạy demo seed;
+- từ chối chạy test fixture;
+- ghi log cảnh báo;
+- kết thúc với exit code khác 0.
+
+==================================================
+XXIII. CÁC CONSTRAINT CẦN BỔ SUNG
+==================================================
+
+Sau khi làm sạch dữ liệu, đề xuất constraint để dữ liệu xấu không quay lại.
+
+Ví dụ:
+
+- users.username UNIQUE.
+- users.email UNIQUE nếu nghiệp vụ yêu cầu.
+- students.student_code UNIQUE.
+- faculties.code UNIQUE.
+- classes.class_code UNIQUE.
+- academic_years.code UNIQUE.
+- semesters UNIQUE trên academic_year_id và semester_number.
+- class_enrollments không có khoảng thời gian active chồng chéo không hợp lệ.
+- monthly_score_accounts UNIQUE trên student_id, class_id và training_month_id.
+- Không cho transaction tham chiếu criterion không thuộc policy áp dụng.
+- Không cho sinh viên nhận điểm ở lớp không tham gia.
+- Không cho ghi dữ liệu vào tháng đã khóa.
+
+Không thêm constraint trước khi dọn dữ liệu vi phạm hiện tại.
+
+Trước tiên:
+- phát hiện;
+- báo cáo;
+- xử lý;
+- sau đó mới thêm constraint.
+
+==================================================
+XXIV. CẬP NHẬT BACKEND VÀ FRONTEND
+==================================================
+
+Sau khi dữ liệu canonical được xác định, cập nhật code để mọi module sử dụng cùng nguồn.
+
+Backend:
+
+- repository dùng canonical table;
+- service không tự tạo master data;
+- API validate foreign key;
+- DTO chỉ nhận ID;
+- response JOIN dữ liệu hiển thị;
+- authorization kiểm tra đúng lớp;
+- report dùng cùng nguồn;
+- cache được invalidation đúng.
+
+Frontend:
+
+- dropdown lấy từ API;
+- cascading filter;
+- không hard-code dữ liệu;
+- không mock production;
+- dùng ID làm value;
+- dùng name làm label;
+- reset bộ lọc con khi bộ lọc cha thay đổi;
+- không gửi tên thay cho ID;
+- hiển thị lỗi khi dữ liệu tham chiếu không hợp lệ.
+
+==================================================
+XXV. KIỂM THỬ SAU CHUẨN HÓA
+==================================================
+
+Tạo test cho:
+
+1. Nhập sinh viên một lần và xuất hiện đúng ở các chức năng liên quan.
+2. Năm học dùng chung cho tất cả module.
+3. Học kỳ chỉ thuộc một năm học hợp lệ.
+4. Lớp dùng chung cho danh sách sinh viên và điểm rèn luyện.
+5. Không tạo duplicate student.
+6. Không tạo duplicate class.
+7. Không tạo duplicate academic year.
+8. Không tự tạo master data khi ID sai.
+9. Không còn orphan foreign key.
+10. Merge không làm mất giao dịch.
+11. Điểm của sinh viên vẫn chính xác sau khi chuyển foreign key.
+12. Báo cáo trước và sau migration khớp.
+13. Người dùng không truy cập dữ liệu ngoài phạm vi.
+14. Production không chạy demo seed.
+15. Rollback phục hồi được trạng thái trước migration.
+
+==================================================
+XXVI. ĐẦU RA BẮT BUỘC
+==================================================
+
+Trả kết quả theo từng giai đoạn.
+
+GIAI ĐOẠN 1 — AUDIT ONLY
+
+Chỉ phân tích và tạo truy vấn SELECT.
+
+Không tạo DELETE.
+Không tạo DROP.
+Không chạy UPDATE.
+
+Bao gồm:
+
+1. Tổng quan schema hiện tại.
+2. Data inventory.
+3. Dependency map.
+4. ERD hiện tại.
+5. Danh sách bảng có khả năng trùng.
+6. Danh sách dữ liệu nghi ngờ do AI tạo.
+7. Bằng chứng cho từng nghi ngờ.
+8. Danh sách orphan.
+9. Danh sách constraint thiếu.
+10. Danh sách thông tin chưa đủ.
+11. Data Ownership Matrix.
+12. Đề xuất canonical tables.
+13. Báo cáo rủi ro.
+14. Truy vấn audit chỉ đọc.
+
+Sau GIAI ĐOẠN 1, hãy DỪNG LẠI.
+
+Không tự chuyển sang migration.
+
+Chờ tôi xác nhận canonical table và danh sách dữ liệu được phép xử lý.
+
+GIAI ĐOẠN 2 — MIGRATION PLAN
+
+Chỉ thực hiện khi tôi xác nhận.
+
+Bao gồm:
+
+1. ERD mục tiêu.
+2. Mapping bảng cũ → bảng chuẩn.
+3. Mapping ID cũ → ID chuẩn.
+4. Thứ tự migration.
+5. Chiến lược expand-and-contract.
+6. Backup plan.
+7. Dry-run plan.
+8. Rollback plan.
+9. Deployment plan.
+10. Downtime hoặc zero-downtime assessment.
+11. Kế hoạch cập nhật backend.
+12. Kế hoạch cập nhật frontend.
+
+Sau GIAI ĐOẠN 2, hãy DỪNG LẠI.
+
+GIAI ĐOẠN 3 — SAFE MIGRATION CODE
+
+Chỉ thực hiện khi tôi xác nhận kế hoạch.
+
+Tạo:
+
+1. Pre-check SQL.
+2. Backup commands.
+3. Expand migration.
+4. Backfill migration.
+5. ID mapping.
+6. Conflict report.
+7. Validation SQL.
+8. Backend compatibility changes.
+9. Frontend changes.
+10. Automated tests.
+11. Rollback SQL.
+
+Không tạo DELETE/DROP cuối cùng ở giai đoạn này.
+
+GIAI ĐOẠN 4 — ARCHIVE AND CLEANUP
+
+Chỉ thực hiện khi:
+
+- migration đã chạy thành công;
+- kiểm thử đã đạt;
+- dữ liệu mới đã được đối chiếu;
+- tôi xác nhận danh sách ID cần xóa.
+
+Tạo:
+
+1. Danh sách chính xác bản ghi được xử lý.
+2. Dependency check.
+3. Backup riêng.
+4. Archive/soft-delete script.
+5. Post-cleanup validation.
+6. Rollback.
+
+GIAI ĐOẠN 5 — FINAL CONTRACT
+
+Chỉ thực hiện sau thời gian theo dõi và khi tôi xác nhận.
+
+Tạo:
+
+1. Script bỏ cột cũ.
+2. Script bỏ bảng cũ.
+3. Constraint cuối cùng.
+4. Index cuối cùng.
+5. Cleanup code compatibility.
+6. Kiểm tra toàn hệ thống.
+
+==================================================
+XXVII. CÁCH TRÌNH BÀY CODE
+==================================================
+
+Mỗi code block phải ghi rõ:
+
+- tên file;
+- mục đích;
+- database áp dụng;
+- có thay đổi dữ liệu hay không;
+- có thể rollback hay không;
+- môi trường được phép chạy.
+
+Ví dụ:
+
+File: scripts/audit/01_duplicate_students.sql
+Purpose: Phát hiện sinh viên trùng
+Database: PostgreSQL
+Data modification: No
+Allowed environments: Development, Staging, Production read-only
+
+Không đặt nhiều file không liên quan trong cùng một code block.
+
+Không sử dụng pseudo-code khi đã đến giai đoạn tạo migration.
+
+==================================================
+XXVIII. QUY TẮC UNKNOWN = STOP
+==================================================
+
+Nếu không biết:
+
+- bảng canonical;
+- khóa chính;
+- foreign key;
+- ORM;
+- database engine;
+- quan hệ nghiệp vụ;
+- dữ liệu nào là thật;
+- dữ liệu nào do AI tạo;
+
+thì:
+
+UNKNOWN = STOP AND REPORT
+
+Không được:
+
+UNKNOWN = GUESS
+UNKNOWN = CREATE
+UNKNOWN = DELETE
+UNKNOWN = MERGE
+
+==================================================
+XXIX. SELF-CHECK TRƯỚC KHI TRẢ KẾT QUẢ
+==================================================
+
+Tự kiểm tra:
+
+[ ] Đã đọc schema thật chưa?
+[ ] Đã đọc migration chưa?
+[ ] Đã tìm nơi code sử dụng từng bảng chưa?
+[ ] Đã xác định nguồn dữ liệu chuẩn chưa?
+[ ] Có tự đoán bảng canonical không?
+[ ] Có tự nhận định dữ liệu giả chỉ theo tên không?
+[ ] Có tạo DELETE/DROP quá sớm không?
+[ ] Có liệt kê foreign key phụ thuộc không?
+[ ] Có backup plan không?
+[ ] Có dry-run không?
+[ ] Có rollback không?
+[ ] Có validation sau migration không?
+[ ] Có ngăn demo seed chạy ở production không?
+[ ] Có bảo toàn dữ liệu giao dịch không?
+[ ] Có bảo toàn ID hoặc tạo id_mapping không?
+[ ] Có kiểm tra dữ liệu orphan không?
+[ ] Có kiểm tra báo cáo trước và sau không?
+
+Nếu chưa hoàn tất GIAI ĐOẠN 1:
+
+Không được tạo migration phá hủy.
+
+==================================================
+XXX. BẮT ĐẦU CÔNG VIỆC
+==================================================
+
+Bây giờ chỉ thực hiện GIAI ĐOẠN 1 — AUDIT ONLY.
+
+Đầu tiên:
+
+1. Xác định công nghệ database và ORM.
+2. Liệt kê các file đã kiểm tra.
+3. Tạo schema inventory.
+4. Tìm các bảng có cùng ý nghĩa nghiệp vụ.
+5. Tìm nguồn sinh dữ liệu demo/mock/AI.
+6. Lập Data Ownership Matrix.
+7. Đề xuất bảng canonical nhưng không tự quyết định nếu thiếu bằng chứng.
+8. Tạo truy vấn audit chỉ đọc.
+9. Liệt kê [NEED_PROJECT_INFO].
+10. Dừng lại để chờ tôi xác nhận.
+
+Trong giai đoạn này:
+
+- Không UPDATE.
+- Không DELETE.
+- Không DROP.
+- Không TRUNCATE.
+- Không ALTER dữ liệu production.
+- Không tự tạo dữ liệu mới.

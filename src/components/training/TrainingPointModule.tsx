@@ -1,1588 +1,2026 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useId } from 'react';
 import * as XLSX from 'xlsx';
-import { RenLuyen, SinhVien, UserRole, User } from '../../types';
-import { apiService } from '../../services/apiService';
 import {
-  Sparkles,
-  Search,
-  MessageSquare,
   Award,
-  Calendar,
   X,
   Plus,
-  Send,
   Users,
-  Folder,
-  ChevronRight,
-  ArrowLeft,
-  GraduationCap,
-  Layers,
-  FileSpreadsheet,
-  Upload,
-  Download,
   CheckCircle2,
-  AlertCircle,
-  FileCheck,
   User as UserIcon,
-  Filter,
   Trash2,
-  Edit3,
   AlertTriangle,
   Check,
-  RefreshCw,
+  Clock,
+  Shield,
+  Eye,
+  Sliders,
+  Lock,
+  Unlock,
+  MessageSquare,
+  ExternalLink,
+  BarChart3,
+  BookOpen,
+  Download,
 } from 'lucide-react';
 
+import { SinhVien, UserRole, User } from '../../types';
+import {
+  ScoreCategory,
+  ClassOfficerRole,
+  ClassOfficerAssignment,
+  ScoreCriterion,
+  TrainingMonth,
+  ScoreTransaction,
+  MonthlyScoreAccount,
+  ScoreAppeal,
+  MonthStatus,
+  TransactionStatus,
+  AppealStatus,
+} from '../../types/trainingPoint';
+import { trainingApiService } from '../../services/trainingApiService';
+import {
+  DataToolbar,
+  EmptyState,
+  ErrorBanner,
+  ErrorState,
+  FilteredEmptyState,
+  LoadingState,
+  MetricStrip,
+  PageHeader,
+  PaginationBar,
+  StatusBadge,
+  StatusVariant,
+} from '../common';
+
 interface TrainingPointModuleProps {
-  trainingPoints: RenLuyen[];
   students: SinhVien[];
   userRole: UserRole;
   currentStudentCode?: string;
   currentUser?: User | null;
-  onSaveComment: (data: {
-    maSV: string;
-    thang: number;
-    nam: number;
-    namHoc?: string;
-    diemRL: number;
-    nhanXet: string;
-    nguoiDanhGia: string;
-    diemMuc1?: number;
-    diemMuc2?: number;
-    diemMuc3?: number;
-    hocKy?: string;
-  }) => void;
-  onImportExcel?: (data: Partial<RenLuyen>[]) => void;
-  onUpdateTrainingPoint?: (id: string, data: Partial<RenLuyen>) => Promise<void> | void;
-  onDeleteTrainingPoint?: (id: string) => Promise<void> | void;
-  onDeleteClassTrainingPoints?: (lop: string, params?: { thang?: number; nam?: number; hocKy?: string }) => Promise<void> | void;
   onRefreshData?: () => void;
+  isLoading?: boolean;
+  loadError?: string | null;
+  onRetryLoad?: () => void;
+  // Backward compatibility props
+  trainingPoints?: unknown[];
+  onSaveComment?: unknown;
+  onImportExcel?: unknown;
+  onUpdateTrainingPoint?: unknown;
+  onDeleteTrainingPoint?: unknown;
+  onDeleteClassTrainingPoints?: unknown;
 }
 
-/**
- * Xếp loại điểm rèn luyện theo Điều 16 Quy chế 1519/QC-TĐN:
- * - 90 - 100: Loại Xuất sắc
- * - 80 - dưới 90: Loại Tốt
- * - 65 - dưới 80: Loại Khá
- * - 50 - dưới 65: Loại Trung bình
- * - 35 - dưới 50: Loại Yếu
- * - Dưới 35: Loại Kém
- */
-export const calculateTrainingRank = (score: number): string => {
-  const s = Math.round(Number(score) || 0);
-  if (s >= 90) return 'Xuất sắc';
-  if (s >= 80) return 'Tốt';
-  if (s >= 65) return 'Khá';
-  if (s >= 50) return 'Trung bình';
-  if (s >= 35) return 'Yếu';
-  return 'Kém';
+interface ActionPromptModalState {
+  isOpen: boolean;
+  type: 'REJECT_TX' | 'CANCEL_TX' | 'ACCEPT_APPEAL' | 'REJECT_APPEAL';
+  targetId: string;
+  title: string;
+  inputLabel: string;
+  inputValue: string;
+  showCheckbox?: boolean;
+  checkboxLabel?: string;
+  checkboxChecked?: boolean;
+}
+
+const getClassificationVariant = (cls: string): StatusVariant => {
+  switch (cls) {
+    case 'Xuất sắc':
+    case 'Tốt':
+      return 'success';
+    case 'Khá':
+      return 'info';
+    case 'Trung bình':
+      return 'warning';
+    default:
+      return 'danger';
+  }
 };
 
-export const getRankBadgeClass = (rank: string) => {
-  const norm = rank === 'Tt' ? 'Tốt' : rank;
-  switch (norm) {
-    case 'Xuất sắc':
-      return 'bg-purple-100 text-purple-800 dark:bg-purple-950/80 dark:text-purple-300 border-purple-300';
-    case 'Tốt':
-      return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border-emerald-300';
-    case 'Khá':
-      return 'bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 border-blue-300';
-    case 'TBK':
-    case 'Trung bình':
-    case 'TB':
-      return 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border-amber-300';
-    case 'Yếu':
-      return 'bg-orange-100 text-orange-800 dark:bg-orange-950/80 dark:text-orange-300 border-orange-300';
-    default: // Kém
-      return 'bg-red-100 text-red-800 dark:bg-red-950/80 dark:text-red-300 border-red-300';
+const getMonthStatusMeta = (st: MonthStatus): { label: string; variant: StatusVariant } => {
+  switch (st) {
+    case 'DRAFT':
+      return { label: 'Bản nháp', variant: 'neutral' };
+    case 'OPEN':
+      return { label: 'Đang mở', variant: 'success' };
+    case 'REVIEWING':
+      return { label: 'Đang rà soát', variant: 'warning' };
+    case 'PUBLISHED':
+      return { label: 'Đã công bố', variant: 'info' };
+    case 'LOCKED':
+      return { label: 'Đã khóa sổ', variant: 'danger' };
+  }
+};
+
+const getTransactionStatusMeta = (st: TransactionStatus): { label: string; variant: StatusVariant } => {
+  switch (st) {
+    case 'APPROVED':
+      return { label: 'Đã duyệt', variant: 'success' };
+    case 'SUBMITTED':
+      return { label: 'Chờ duyệt', variant: 'warning' };
+    case 'DRAFT':
+      return { label: 'Bản nháp', variant: 'neutral' };
+    case 'REJECTED':
+      return { label: 'Từ chối', variant: 'danger' };
+    case 'CANCELLED':
+      return { label: 'Đã hủy', variant: 'neutral' };
+  }
+};
+
+const getAppealStatusMeta = (st: AppealStatus): { label: string; variant: StatusVariant } => {
+  switch (st) {
+    case 'ACCEPTED':
+      return { label: 'Chấp nhận', variant: 'success' };
+    case 'REJECTED':
+      return { label: 'Từ chối', variant: 'danger' };
+    case 'IN_REVIEW':
+      return { label: 'Đang xem xét', variant: 'info' };
+    case 'PENDING':
+    default:
+      return { label: 'Chờ xử lý', variant: 'warning' };
   }
 };
 
 export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
-  trainingPoints,
   students,
   userRole,
   currentStudentCode,
   currentUser,
-  onSaveComment,
-  onImportExcel,
-  onUpdateTrainingPoint,
-  onDeleteTrainingPoint,
-  onDeleteClassTrainingPoints,
-  onRefreshData,
+  isLoading: externalLoading = false,
+  loadError = null,
+  onRetryLoad,
 }) => {
-  const [selectedClass, setSelectedClass] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedMonth, setSelectedMonth] = useState<number | ''>('');
-  const [selectedSemester, setSelectedSemester] = useState<string>('');
-  const [selectedYear, setSelectedYear] = useState<number | ''>('');
-  const [viewMode, setViewMode] = useState<'HIERARCHICAL' | 'FLAT'>('HIERARCHICAL');
-
-  // Local state to keep UI immediately responsive
-  const [localPoints, setLocalPoints] = useState<RenLuyen[]>(trainingPoints);
-  useEffect(() => {
-    setLocalPoints(trainingPoints);
-  }, [trainingPoints]);
-
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // Individual Edit & Delete Modals
-  const [editingRecord, setEditingRecord] = useState<RenLuyen | null>(null);
-  const [deleteIndividualRecord, setDeleteIndividualRecord] = useState<RenLuyen | null>(null);
-
-  // Class-wide Delete Modal
-  const [isDeleteClassModalOpen, setIsDeleteClassModalOpen] = useState(false);
-
+  type TabKey = 'CLASS_BOARD' | 'STUDENT_PORTAL' | 'APPROVAL' | 'OFFICERS' | 'POLICY' | 'APPEALS';
   const isStudentRole = userRole === 'STUDENT';
-  const studentCodeLower = (currentStudentCode || currentUser?.studentCode || currentUser?.username || '').toLowerCase();
+  const isAdminOrLecturer = userRole === 'ADMIN' || userRole === 'LECTURER';
 
-  // Active student match
-  const selfStudent = students.find(
-    (s) =>
-      s.maSV.toLowerCase() === studentCodeLower ||
-      (s.email && currentUser?.email && s.email.toLowerCase() === currentUser.email.toLowerCase())
-  );
-  const activeStudentCode = selfStudent ? selfStudent.maSV.toLowerCase() : studentCodeLower;
+  const [activeTab, setActiveTab] = useState<TabKey>(isStudentRole ? 'STUDENT_PORTAL' : 'CLASS_BOARD');
 
-  // Available classes
-  const availableClasses = Array.from(
-    new Set(students.map((s) => s.lop).filter(Boolean))
-  );
+  useEffect(() => {
+    if (isStudentRole && (activeTab === 'CLASS_BOARD' || activeTab === 'APPROVAL' || activeTab === 'OFFICERS')) {
+      setActiveTab('STUDENT_PORTAL');
+    }
+  }, [isStudentRole, activeTab]);
 
-  // Filter students for selected class
-  const classStudents = selectedClass
-    ? students.filter((s) => s.lop === selectedClass)
-    : students;
-  const classStudentIds = new Set(classStudents.map((s) => s.maSV));
+  const now = useMemo(() => new Date(), []);
+  const [selectedMonth, setSelectedMonth] = useState<number>(() => now.getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState<number>(() => now.getFullYear());
+  const [selectedClass, setSelectedClass] = useState<string>('');
+  const [searchTerm, setSearchTerm] = useState<string>('');
 
-  // Dynamic available filters derived strictly from real entered trainingPoints data
-  const availableMonths = React.useMemo(() => {
-    const months = new Set<number>();
-    (localPoints || []).forEach((r) => {
-      if (r && r.thang) months.add(Number(r.thang));
-    });
-    return Array.from(months).sort((a, b) => a - b);
-  }, [localPoints]);
+  const [boardPage, setBoardPage] = useState(1);
+  const [boardPageSize, setBoardPageSize] = useState(20);
+  const [approvalPage, setApprovalPage] = useState(1);
+  const [approvalPageSize, setApprovalPageSize] = useState(20);
 
-  const availableSemesters = React.useMemo(() => {
-    const semesters = new Set<string>();
-    (localPoints || []).forEach((r) => {
-      if (r && r.hocKy) semesters.add(r.hocKy.trim());
-    });
-    return Array.from(semesters).sort();
-  }, [localPoints]);
+  // Core Data States from Backend
+  const [accounts, setAccounts] = useState<MonthlyScoreAccount[]>([]);
+  const [transactions, setTransactions] = useState<ScoreTransaction[]>([]);
+  const [criteria, setCriteria] = useState<ScoreCriterion[]>([]);
+  const [categories, setCategories] = useState<ScoreCategory[]>([]);
+  const [officerRoles, setOfficerRoles] = useState<ClassOfficerRole[]>([]);
+  const [officerAssignments, setOfficerAssignments] = useState<ClassOfficerAssignment[]>([]);
+  const [trainingMonths, setTrainingMonths] = useState<TrainingMonth[]>([]);
+  const [appeals, setAppeals] = useState<ScoreAppeal[]>([]);
 
-  const availableYears = React.useMemo(() => {
-    const years = new Set<number>();
-    (localPoints || []).forEach((r) => {
-      if (r && r.nam) years.add(Number(r.nam));
-    });
-    return Array.from(years).sort((a, b) => a - b);
-  }, [localPoints]);
+  // UI / Interaction States
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Modal State for 3 Evaluation Categories Entry
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [form, setForm] = useState({
-    id: '',
-    maSV: students[0]?.maSV || '25DDS0904101',
-    thang: 8,
-    nam: 2026,
-    namHoc: '2026-2027',
-    hocKy: 'HK1',
-    diemMuc1: 35, // Tối đa 40 điểm: Ý thức học tập & kỷ luật
-    diemMuc2: 30, // Tối đa 35 điểm: Chấp hành nội quy & phong trào
-    diemMuc3: 20, // Tối đa 25 điểm: Phẩm chất đạo đức & lối sống
-    nhanXet: 'Sinh viên chấp hành tốt nội quy lớp học, tích cực tham gia hoạt động phong trào Đoàn/Hội.',
-    nguoiDanhGia: 'TS. Nguyễn Văn Hùng',
+  // Modals
+  const [isQuickEntryOpen, setIsQuickEntryOpen] = useState<boolean>(false);
+  const [isBatchEntryOpen, setIsBatchEntryOpen] = useState<boolean>(false);
+  const [isOfficerModalOpen, setIsOfficerModalOpen] = useState<boolean>(false);
+  const [isLockModalOpen, setIsLockModalOpen] = useState<boolean>(false);
+  const [isAppealModalOpen, setIsAppealModalOpen] = useState<boolean>(false);
+  const [selectedStudentForDetail, setSelectedStudentForDetail] = useState<SinhVien | null>(null);
+
+  const [actionPrompt, setActionPrompt] = useState<ActionPromptModalState>({
+    isOpen: false,
+    type: 'REJECT_TX',
+    targetId: '',
+    title: '',
+    inputLabel: '',
+    inputValue: '',
+    showCheckbox: false,
+    checkboxLabel: '',
+    checkboxChecked: false,
   });
 
-  // Modal State for Master Class Excel Import
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [parsedImportData, setParsedImportData] = useState<Array<Partial<RenLuyen> & { totalScore: number; autoRank: string }>>([]);
-  const [importFileName, setImportFileName] = useState<string>('');
-  const [importStatus, setImportStatus] = useState<string | null>(null);
+  // Quick Entry Form
+  const [entryStudentCode, setEntryStudentCode] = useState<string>('');
+  const [entryCriterionId, setEntryCriterionId] = useState<string>('');
+  const [entryOccurrences, setEntryOccurrences] = useState<number>(1);
+  const [entryPointsPerOccurrence, setEntryPointsPerOccurrence] = useState<number>(0);
+  const [entrySelectedLevelId, setEntrySelectedLevelId] = useState<string>('');
+  const [entryNote, setEntryNote] = useState<string>('');
+  const [entryEvidenceUrl, setEntryEvidenceUrl] = useState<string>('');
+  const [entryOccurredAt, setEntryOccurredAt] = useState<string>(() => new Date().toISOString().substring(0, 10));
 
-  // Target academic period for Excel Import (Defaults to 2026-2027 HK1)
-  const [importTargetNamHoc, setImportTargetNamHoc] = useState('2026-2027');
-  const [importTargetHocKy, setImportTargetHocKy] = useState('HK1');
-  const [importTargetThang, setImportTargetThang] = useState('AUTO');
+  // Batch Entry Form
+  const [batchClassId, setBatchClassId] = useState<string>('');
+  const [batchSelectedStudents, setBatchSelectedStudents] = useState<string[]>([]);
+  const [batchCriterionId, setBatchCriterionId] = useState<string>('');
+  const [batchNote, setBatchNote] = useState<string>('');
 
-  const totalFormScore = Math.min(100, Math.max(0, (Number(form.diemMuc1) || 0) + (Number(form.diemMuc2) || 0) + (Number(form.diemMuc3) || 0)));
-  const calculatedRank = calculateTrainingRank(totalFormScore);
+  // Lock Month Form
+  const [lockTargetStatus, setLockTargetStatus] = useState<MonthStatus>('LOCKED');
+  const [reopenReason, setReopenReason] = useState<string>('');
 
-  const filteredPoints = localPoints.filter((r) => {
-    // If student role, ONLY show training points for this student
-    if (isStudentRole) {
-      const isMatchStudent =
-        r.maSV.toLowerCase() === activeStudentCode ||
-        (activeStudentCode && r.maSV.toLowerCase().includes(activeStudentCode));
-      if (!isMatchStudent) return false;
-    } else {
-      const matchesClass = !selectedClass || classStudentIds.has(r.maSV) || r.lop === selectedClass;
-      if (!matchesClass) return false;
-    }
+  // Appeal Form
+  const [appealTitle, setAppealTitle] = useState<string>('');
+  const [appealReason, setAppealReason] = useState<string>('');
+  const [appealEvidenceUrl, setAppealEvidenceUrl] = useState<string>('');
 
-    const matchesSearch =
-      !searchTerm ||
-      r.maSV.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (r.hoTenSV && r.hoTenSV.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (r.nhanXet && r.nhanXet.toLowerCase().includes(searchTerm.toLowerCase()));
+  // Officer Assignment Form
+  const [newOfficerStudentCode, setNewOfficerStudentCode] = useState<string>('');
+  const [newOfficerRoleId, setNewOfficerRoleId] = useState<string>('');
+  const [newOfficerClassId, setNewOfficerClassId] = useState<string>('');
 
-    const matchesMonth = !selectedMonth || r.thang === selectedMonth;
-    const matchesSemester = !selectedSemester || (r.hocKy ? r.hocKy === selectedSemester : true);
-    const matchesYear = !selectedYear || r.nam === selectedYear;
+  // Accessibility IDs
+  const filterMonthId = useId();
+  const filterYearId = useId();
+  const filterClassId = useId();
+  const portalStudentSelectId = useId();
+  const quickEntryTitleId = useId();
+  const quickStudentId = useId();
+  const quickCriterionId = useId();
+  const quickLevelId = useId();
+  const quickOccId = useId();
+  const quickRangeId = useId();
+  const quickDateId = useId();
+  const quickUrlId = useId();
+  const quickNoteId = useId();
+  const batchTitleId = useId();
+  const batchClassSelectId = useId();
+  const batchCriterionSelectId = useId();
+  const batchNoteInputId = useId();
+  const lockTitleId = useId();
+  const lockStatusSelectId = useId();
+  const lockReasonId = useId();
+  const officerTitleId = useId();
+  const officerStudentSelectId = useId();
+  const officerRoleSelectId = useId();
+  const appealModalTitleId = useId();
+  const appealTitleInputId = useId();
+  const appealReasonInputId = useId();
+  const appealUrlInputId = useId();
+  const actionPromptTitleId = useId();
+  const actionPromptInputId = useId();
 
-    return matchesSearch && matchesMonth && matchesSemester && matchesYear;
-  });
+  // Escape handler for all modals
+  useEffect(() => {
+    const anyModalOpen =
+      isQuickEntryOpen ||
+      isBatchEntryOpen ||
+      isLockModalOpen ||
+      isOfficerModalOpen ||
+      isAppealModalOpen ||
+      actionPrompt.isOpen;
 
-  const handleOpenNew = () => {
-    setEditingRecord(null);
-    setForm({
-      id: '',
-      maSV: students[0]?.maSV || '25DDS0904101',
-      thang: 8,
-      nam: 2026,
-      namHoc: '2026-2027',
-      hocKy: 'HK1',
-      diemMuc1: 35,
-      diemMuc2: 30,
-      diemMuc3: 20,
-      nhanXet: 'Chấp hành tốt kỷ luật lớp học, năng nổ trong sinh hoạt Đoàn.',
-      nguoiDanhGia: currentUser?.fullName || 'Cố vấn học tập',
-    });
-    setIsModalOpen(true);
-  };
+    if (!anyModalOpen) return;
 
-  const handleOpenEdit = (r: RenLuyen) => {
-    setEditingRecord(r);
-    const m1 = r.diemMuc1 !== undefined ? r.diemMuc1 : Math.min(40, Math.round(r.diemRL * 0.4));
-    const m2 = r.diemMuc2 !== undefined ? r.diemMuc2 : Math.min(35, Math.round(r.diemRL * 0.35));
-    const m3 = r.diemMuc3 !== undefined ? r.diemMuc3 : Math.min(25, r.diemRL - m1 - m2);
-    setForm({
-      id: r.id,
-      maSV: r.maSV,
-      thang: r.thang || 8,
-      nam: r.nam || 2026,
-      namHoc: r.namHoc || (r.nam >= 2026 ? '2026-2027' : `${r.nam}-${r.nam + 1}`),
-      hocKy: r.hocKy || 'HK1',
-      diemMuc1: m1,
-      diemMuc2: m2,
-      diemMuc3: m3,
-      nhanXet: r.nhanXet || '',
-      nguoiDanhGia: r.nguoiDanhGia || currentUser?.fullName || 'Giảng viên Chủ nhiệm',
-    });
-    setIsModalOpen(true);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-    try {
-      const totalScore = Math.min(100, Math.max(0, (Number(form.diemMuc1) || 0) + (Number(form.diemMuc2) || 0) + (Number(form.diemMuc3) || 0)));
-      const rank = calculateTrainingRank(totalScore);
-
-      if (editingRecord && editingRecord.id) {
-        // Edit existing record
-        const updatedPayload: Partial<RenLuyen> = {
-          diemMuc1: Number(form.diemMuc1) || 0,
-          diemMuc2: Number(form.diemMuc2) || 0,
-          diemMuc3: Number(form.diemMuc3) || 0,
-          diemRL: totalScore,
-          xepLoai: rank,
-          thang: Number(form.thang),
-          nam: Number(form.nam),
-          namHoc: form.namHoc,
-          hocKy: form.hocKy,
-          nhanXet: form.nhanXet,
-          nguoiDanhGia: form.nguoiDanhGia,
-        };
-
-        if (onUpdateTrainingPoint) {
-          await onUpdateTrainingPoint(editingRecord.id, updatedPayload);
-        } else {
-          await apiService.updateTrainingPoint(editingRecord.id, updatedPayload);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (actionPrompt.isOpen) {
+          setActionPrompt((prev) => ({ ...prev, isOpen: false }));
+        } else if (isAppealModalOpen) {
+          setIsAppealModalOpen(false);
+        } else if (isOfficerModalOpen) {
+          setIsOfficerModalOpen(false);
+        } else if (isLockModalOpen) {
+          setIsLockModalOpen(false);
+        } else if (isBatchEntryOpen) {
+          setIsBatchEntryOpen(false);
+        } else if (isQuickEntryOpen) {
+          setIsQuickEntryOpen(false);
         }
-
-        setLocalPoints((prev) =>
-          prev.map((p) => (p.id === editingRecord.id ? { ...p, ...updatedPayload } : p))
-        );
-        setToastMessage('Đã cập nhật thành công điểm rèn luyện!');
-      } else {
-        // Create new or save comment
-        await onSaveComment({
-          maSV: form.maSV,
-          thang: form.thang,
-          nam: form.nam,
-          namHoc: form.namHoc,
-          diemRL: totalScore,
-          diemMuc1: Number(form.diemMuc1) || 0,
-          diemMuc2: Number(form.diemMuc2) || 0,
-          diemMuc3: Number(form.diemMuc3) || 0,
-          hocKy: form.hocKy,
-          nhanXet: form.nhanXet,
-          nguoiDanhGia: form.nguoiDanhGia,
-        });
-        setToastMessage('Đã lưu đánh giá điểm rèn luyện!');
-      }
-
-      if (onRefreshData) onRefreshData();
-      setIsModalOpen(false);
-      setEditingRecord(null);
-    } catch (err: any) {
-      setToastMessage(err?.message || 'Có lỗi xảy ra khi lưu');
-    } finally {
-      setIsSubmitting(false);
-      setTimeout(() => setToastMessage(null), 3000);
-    }
-  };
-
-  const handleConfirmDeleteIndividual = async () => {
-    if (!deleteIndividualRecord) return;
-    setIsSubmitting(true);
-    try {
-      if (onDeleteTrainingPoint) {
-        await onDeleteTrainingPoint(deleteIndividualRecord.id);
-      } else {
-        await apiService.deleteTrainingPoint(deleteIndividualRecord.id);
-      }
-      setLocalPoints((prev) => prev.filter((p) => p.id !== deleteIndividualRecord.id));
-      setToastMessage(`Đã xóa điểm rèn luyện của sinh viên ${deleteIndividualRecord.maSV}`);
-      if (onRefreshData) onRefreshData();
-      setDeleteIndividualRecord(null);
-    } catch (err: any) {
-      setToastMessage('Lỗi khi xóa điểm rèn luyện');
-    } finally {
-      setIsSubmitting(false);
-      setTimeout(() => setToastMessage(null), 3000);
-    }
-  };
-
-  const handleConfirmDeleteClass = async () => {
-    if (!selectedClass) return;
-    setIsSubmitting(true);
-    try {
-      const params: { thang?: number; nam?: number; hocKy?: string } = {};
-      if (selectedMonth) params.thang = Number(selectedMonth);
-      if (selectedYear) params.nam = Number(selectedYear);
-      if (selectedSemester && selectedSemester !== 'ALL') params.hocKy = selectedSemester;
-
-      if (onDeleteClassTrainingPoints) {
-        await onDeleteClassTrainingPoints(selectedClass, params);
-      } else {
-        await apiService.deleteClassTrainingPoints(selectedClass, params);
-      }
-
-      setLocalPoints((prev) =>
-        prev.filter((p) => {
-          const matchLop = p.lop === selectedClass || classStudentIds.has(p.maSV);
-          if (!matchLop) return true;
-          if (params.thang && p.thang !== params.thang) return true;
-          if (params.nam && p.nam !== params.nam) return true;
-          if (params.hocKy && p.hocKy !== params.hocKy) return true;
-          return false; // delete this
-        })
-      );
-
-      setToastMessage(`Đã xóa thành công điểm rèn luyện của lớp ${selectedClass}`);
-      if (onRefreshData) onRefreshData();
-      setIsDeleteClassModalOpen(false);
-    } catch (err: any) {
-      setToastMessage('Lỗi khi xóa điểm rèn luyện của lớp');
-    } finally {
-      setIsSubmitting(false);
-      setTimeout(() => setToastMessage(null), 3000);
-    }
-  };
-
-  // Download Sample Template for Class Master Excel Import
-  const handleDownloadTemplate = () => {
-    const targetStudents = selectedClass ? students.filter((s) => s.lop === selectedClass) : students;
-
-    const sampleRows = targetStudents.map((sv, idx) => ({
-      STT: idx + 1,
-      'Mã Sinh Viên': sv.maSV,
-      'Họ và Tên': sv.hoTen,
-      'Lớp Học': sv.lop || 'Chưa phân lớp',
-      'Tháng Đánh Giá': 8,
-      'Mục I (Học tập & Kỷ luật - Max 40)': 35,
-      'Mục II (Phong trào & Nội quy - Max 35)': 30,
-      'Mục III (Đạo đức & Lối sống - Max 25)': 20,
-      'Tổng Điểm Rèn Luyện (Excel =SUM)': 85,
-      'Xếp Loại Rèn Luyện (Excel =IF)': 'Tốt',
-      'Học Kỳ': 'HK1',
-      'Năm Học': '2026-2027',
-      'Nhận Xét Đánh Giá': 'Chấp hành đầy đủ nội quy, tích cực sinh hoạt lớp.',
-    }));
-
-    const worksheet = XLSX.utils.json_to_sheet(sampleRows);
-
-    // Embed Excel formulas for Total and Rank according to Quy chế 1519/QC-TĐN
-    targetStudents.forEach((_, idx) => {
-      const r = idx + 2; // header is row 1
-      worksheet[`I${r}`] = {
-        t: 'n',
-        v: 85,
-        f: `SUM(F${r}:H${r})`,
-      };
-      const rankFormula = `IF(I${r}>=90,"Xuất sắc",IF(I${r}>=80,"Tốt",IF(I${r}>=65,"Khá",IF(I${r}>=50,"Trung bình",IF(I${r}>=35,"Yếu","Kém")))))`;
-      worksheet[`J${r}`] = {
-        t: 's',
-        v: 'Tốt',
-        f: rankFormula,
-      };
-    });
-
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Mau_Import_DiemRenLuyen');
-    const fileName = `Mau_Import_DiemRenLuyen_3TieuChi_${selectedClass || 'TatCaLop'}.xlsx`;
-    XLSX.writeFile(workbook, fileName);
-  };
-
-  // Parse Excel File on Upload with Dynamic Target Academic Period Handling
-  const handleExcelFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setImportFileName(file.name);
-    setImportStatus(null);
-
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
-        const data: any[] = XLSX.utils.sheet_to_json(ws);
-
-        if (!data || data.length === 0) {
-          setImportStatus('File Excel rỗng hoặc không có dữ liệu hợp lệ.');
-          return;
-        }
-
-        const parsed: Array<Partial<RenLuyen> & { totalScore: number; autoRank: string }> = [];
-
-        data.forEach((row) => {
-          const maSV = row['Mã Sinh Viên'] || row['Mã SV'] || row['maSV'] || row['MaSV'] || row['MÃ SV'];
-          if (!maSV) return;
-
-          const hoTenSV = row['Họ và Tên'] || row['Họ Tên'] || row['hoTenSV'] || row['HỌ TÊN'];
-          const lop = row['Lớp Học'] || row['Lớp'] || row['lop'] || row['LỚP'] || selectedClass || 'CNKT Cơ khí 25DDS 09041';
-
-          const m1 = Number(row['Mục I (Học tập & Kỷ luật - Max 40)'] ?? row['Mục I'] ?? row['diemMuc1'] ?? row['Mục 1'] ?? 35);
-          const m2 = Number(row['Mục II (Phong trào & Nội quy - Max 35)'] ?? row['Mục II'] ?? row['diemMuc2'] ?? row['Mục 2'] ?? 30);
-          const m3 = Number(row['Mục III (Đạo đức & Lối sống - Max 25)'] ?? row['Mục III'] ?? row['diemMuc3'] ?? row['Mục 3'] ?? 20);
-
-          const totalScore = Math.min(100, Math.max(0, m1 + m2 + m3));
-          const autoRank = calculateTrainingRank(totalScore);
-
-          // Handle Month resolution
-          let thang = 8;
-          if (importTargetThang !== 'AUTO') {
-            thang = Number(importTargetThang);
-          } else {
-            const rawThang =
-              row['Tháng Đánh Giá'] ??
-              row['Tháng'] ??
-              row['thang'] ??
-              row['Tháng/Năm'] ??
-              row['Tháng 8/2025 (HK1)'] ??
-              row['Tháng 8'];
-            if (rawThang !== undefined && rawThang !== null) {
-              const mMatch = String(rawThang).match(/(\d+)/);
-              if (mMatch) thang = parseInt(mMatch[1], 10);
-            }
-          }
-
-          // Target academic year resolution
-          let namHoc = importTargetNamHoc || '2026-2027';
-          const rawNamHoc = row['Năm Học'] ?? row['namHoc'] ?? row['Năm học'];
-          if (rawNamHoc) {
-            const strNam = String(rawNamHoc).trim();
-            if (strNam.includes('-')) namHoc = strNam;
-            else if (/^\d{4}$/.test(strNam)) namHoc = `${strNam}-${parseInt(strNam, 10) + 1}`;
-          }
-
-          // Academic semester
-          let hocKy = importTargetHocKy || 'HK1';
-          const rawHocKy = row['Học Kỳ'] ?? row['hocKy'] ?? row['Học kỳ'];
-          if (rawHocKy) {
-            const strHK = String(rawHocKy).trim();
-            if (strHK.toLowerCase().includes('2') || strHK.toLowerCase().includes('ii')) hocKy = 'HK2';
-            else hocKy = 'HK1';
-          }
-
-          // Compute calendar year based on namHoc (e.g. 2026-2027) and month
-          let startYear = 2026;
-          if (namHoc && namHoc.includes('-')) {
-            startYear = parseInt(namHoc.split('-')[0], 10) || 2026;
-          }
-          // In academic calendar, months >= 8 belong to startYear (e.g. Month 8/2026 for 2026-2027 HK1)
-          const nam = thang >= 8 ? startYear : startYear + 1;
-
-          const nhanXet = String(row['Nhận Xét Đánh Giá'] ?? row['Nhận Xét'] ?? row['nhanXet'] ?? 'Chấp hành tốt kỷ luật trường lớp.');
-
-          parsed.push({
-            maSV: String(maSV).trim(),
-            hoTenSV: hoTenSV ? String(hoTenSV).trim() : undefined,
-            lop: String(lop).trim(),
-            diemMuc1: m1,
-            diemMuc2: m2,
-            diemMuc3: m3,
-            diemRL: totalScore,
-            totalScore,
-            autoRank,
-            xepLoai: autoRank,
-            thang,
-            nam,
-            namHoc,
-            hocKy,
-            nhanXet,
-            nguoiDanhGia: `Cố vấn HT (Import Excel - ${namHoc})`,
-          });
-        });
-
-        if (parsed.length === 0) {
-          setImportStatus('Không tìm thấy cột Mã Sinh Viên hợp lệ trong file Excel.');
-        } else {
-          setParsedImportData(parsed);
-          setImportStatus(`Đã đọc thành công ${parsed.length} sinh viên cho Tháng ${parsed[0]?.thang}/${parsed[0]?.nam} (Năm học ${parsed[0]?.namHoc}), tự động tính tổng & xếp loại theo Quy chế 1519.`);
-        }
-      } catch (err) {
-        setImportStatus('Lỗi khi đọc file Excel. Vui lòng kiểm tra định dạng file .xlsx.');
       }
     };
-    reader.readAsBinaryString(file);
-  };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    isQuickEntryOpen,
+    isBatchEntryOpen,
+    isLockModalOpen,
+    isOfficerModalOpen,
+    isAppealModalOpen,
+    actionPrompt.isOpen,
+  ]);
 
-  const handleConfirmImport = () => {
-    if (parsedImportData.length === 0) return;
-    if (onImportExcel) {
-      onImportExcel(parsedImportData);
-      setIsImportModalOpen(false);
-      setParsedImportData([]);
-      setImportFileName('');
-      setImportStatus(null);
+  const activeStudentCode = useMemo(() => {
+    return (currentStudentCode || currentUser?.studentCode || currentUser?.username || '')
+      .trim()
+      .toLowerCase();
+  }, [currentStudentCode, currentUser]);
+
+  const availableClasses = useMemo(() => {
+    return Array.from(new Set(students.map((s) => s.lop).filter(Boolean))).sort();
+  }, [students]);
+
+  const availableYears = useMemo(() => {
+    const yearSet = new Set<number>([now.getFullYear(), selectedYear]);
+    trainingMonths.forEach((m) => {
+      if (m.year) yearSet.add(m.year);
+    });
+    return Array.from(yearSet).sort((a, b) => a - b);
+  }, [trainingMonths, selectedYear, now]);
+
+  const currentMonthObj = useMemo(() => {
+    return (
+      trainingMonths.find((m) => m.month === selectedMonth && m.year === selectedYear) || {
+        id: `M-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`,
+        month: selectedMonth,
+        year: selectedYear,
+        semester: selectedMonth >= 8 ? 'HK1' : 'HK2',
+        academicYear:
+          selectedMonth >= 8 ? `${selectedYear}-${selectedYear + 1}` : `${selectedYear - 1}-${selectedYear}`,
+        status: 'OPEN' as MonthStatus,
+        isApplied: true,
+      }
+    );
+  }, [trainingMonths, selectedMonth, selectedYear]);
+
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((prev) => (prev === msg ? null : prev));
+    }, 4000);
+  }, []);
+
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    setApiError(null);
+    try {
+      const [
+        categoriesRes,
+        rolesRes,
+        assignmentsRes,
+        criteriaRes,
+        monthsRes,
+        accountsRes,
+        txsRes,
+        appealsRes,
+      ] = await Promise.all([
+        trainingApiService.getCategories(),
+        trainingApiService.getOfficerRoles(),
+        trainingApiService.getOfficerAssignments(),
+        trainingApiService.getCriteria(),
+        trainingApiService.getMonths(),
+        trainingApiService.getMonthlyAccounts({
+          month: selectedMonth,
+          year: selectedYear,
+          classId: selectedClass || undefined,
+          studentCode: isStudentRole && activeStudentCode ? activeStudentCode : undefined,
+        }),
+        trainingApiService.getTransactions({
+          month: selectedMonth,
+          year: selectedYear,
+          classId: selectedClass || undefined,
+          studentCode: isStudentRole && activeStudentCode ? activeStudentCode : undefined,
+        }),
+        trainingApiService.getAppeals(
+          isStudentRole && activeStudentCode ? { studentCode: activeStudentCode } : undefined
+        ),
+      ]);
+
+      if (categoriesRes.success) setCategories(categoriesRes.data);
+      if (rolesRes.success) setOfficerRoles(rolesRes.data);
+      if (assignmentsRes.success) setOfficerAssignments(assignmentsRes.data);
+      if (criteriaRes.success) setCriteria(criteriaRes.data);
+      if (monthsRes.success) setTrainingMonths(monthsRes.data);
+      if (accountsRes.success) setAccounts(accountsRes.data);
+      if (txsRes.success) setTransactions(txsRes.data);
+      if (appealsRes.success) setAppeals(appealsRes.data);
+
+      if (!accountsRes.success && !txsRes.success) {
+        setApiError('Không thể tải dữ liệu điểm rèn luyện từ máy chủ.');
+      }
+    } catch {
+      setApiError('Lỗi kết nối khi tải dữ liệu điểm rèn luyện.');
+    } finally {
+      setIsLoading(false);
     }
+  }, [selectedMonth, selectedYear, selectedClass, isStudentRole, activeStudentCode]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    const unsubscribe = trainingApiService.subscribeToEvents((event) => {
+      if (
+        event.type === 'TRANSACTION_CREATED' ||
+        event.type === 'TRANSACTION_APPROVED' ||
+        event.type === 'TRANSACTION_REJECTED' ||
+        event.type === 'TRANSACTION_CANCELLED' ||
+        event.type === 'MONTHLY_UPDATED' ||
+        event.type === 'MONTH_LOCKED' ||
+        event.type === 'APPEAL_UPDATED'
+      ) {
+        loadData();
+      }
+    });
+    return () => unsubscribe();
+  }, [loadData]);
+
+  const selectedCriterionObj = useMemo(() => {
+    return criteria.find((c) => c.id === entryCriterionId) || null;
+  }, [criteria, entryCriterionId]);
+
+  useEffect(() => {
+    if (selectedCriterionObj) {
+      if (selectedCriterionObj.calculationType === 'SELECT_LEVEL' && selectedCriterionObj.levels?.length) {
+        setEntrySelectedLevelId(selectedCriterionObj.levels[0].id);
+        setEntryPointsPerOccurrence(selectedCriterionObj.levels[0].points);
+      } else {
+        setEntryPointsPerOccurrence(selectedCriterionObj.defaultPoints);
+      }
+    }
+  }, [selectedCriterionObj]);
+
+  useEffect(() => {
+    setBoardPage(1);
+    setApprovalPage(1);
+  }, [selectedMonth, selectedYear, selectedClass, searchTerm]);
+
+  const filteredAccounts = useMemo(() => {
+    let list = accounts;
+    if (isStudentRole) {
+      list = activeStudentCode
+        ? list.filter((a) => a.studentCode.toLowerCase() === activeStudentCode)
+        : [];
+    }
+    if (selectedClass) {
+      list = list.filter((a) => a.classId.toLowerCase() === selectedClass.toLowerCase());
+    }
+    if (searchTerm.trim()) {
+      const q = searchTerm.trim().toLowerCase();
+      list = list.filter(
+        (a) =>
+          a.studentCode.toLowerCase().includes(q) ||
+          (a.studentName && a.studentName.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [accounts, isStudentRole, activeStudentCode, selectedClass, searchTerm]);
+
+  const filteredTransactions = useMemo(() => {
+    let list = transactions;
+    if (isStudentRole) {
+      list = activeStudentCode
+        ? list.filter((t) => t.studentCode.toLowerCase() === activeStudentCode)
+        : [];
+    }
+    if (selectedClass) {
+      list = list.filter((t) => t.classId.toLowerCase() === selectedClass.toLowerCase());
+    }
+    if (searchTerm.trim()) {
+      const q = searchTerm.trim().toLowerCase();
+      list = list.filter(
+        (t) =>
+          t.studentCode.toLowerCase().includes(q) ||
+          (t.studentName && t.studentName.toLowerCase().includes(q)) ||
+          (t.criterionName && t.criterionName.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [transactions, isStudentRole, activeStudentCode, selectedClass, searchTerm]);
+
+  const visibleAppeals = useMemo(() => {
+    if (isStudentRole) {
+      return activeStudentCode
+        ? appeals.filter((a) => a.studentCode.toLowerCase() === activeStudentCode)
+        : [];
+    }
+    return appeals;
+  }, [appeals, isStudentRole, activeStudentCode]);
+
+  const viewedStudentCode = useMemo(() => {
+    if (isStudentRole) return activeStudentCode;
+    if (selectedStudentForDetail?.maSV) return selectedStudentForDetail.maSV.toLowerCase();
+    return '';
+  }, [isStudentRole, activeStudentCode, selectedStudentForDetail]);
+
+  const studentSelfAccount = useMemo(() => {
+    if (!viewedStudentCode) return null;
+    return accounts.find((a) => a.studentCode.toLowerCase() === viewedStudentCode) || null;
+  }, [accounts, viewedStudentCode]);
+
+  const studentPortalTransactions = useMemo(() => {
+    if (!viewedStudentCode) return filteredTransactions;
+    return filteredTransactions.filter(
+      (t) => t.studentCode.toLowerCase() === viewedStudentCode
+    );
+  }, [filteredTransactions, viewedStudentCode]);
+
+  const kpis = useMemo(() => {
+    const totalCount = filteredAccounts.length;
+    const pendingCount = filteredTransactions.filter((t) => t.status === 'SUBMITTED').length;
+    if (totalCount === 0) {
+      return { totalCount: 0, avgScore: 0, goodOrExcellentRate: 0, pendingCount };
+    }
+    const sumScore = filteredAccounts.reduce((acc, a) => acc + a.totalOfficialScore, 0);
+    const highCount = filteredAccounts.filter(
+      (a) => a.classification === 'Xuất sắc' || a.classification === 'Tốt'
+    ).length;
+    return {
+      totalCount,
+      avgScore: Math.round((sumScore / totalCount) * 10) / 10,
+      goodOrExcellentRate: Math.round((highCount / totalCount) * 100),
+      pendingCount,
+    };
+  }, [filteredAccounts, filteredTransactions]);
+
+  const paginatedAccounts = useMemo(() => {
+    const start = (boardPage - 1) * boardPageSize;
+    return filteredAccounts.slice(start, start + boardPageSize);
+  }, [filteredAccounts, boardPage, boardPageSize]);
+
+  const paginatedTransactions = useMemo(() => {
+    const start = (approvalPage - 1) * approvalPageSize;
+    return filteredTransactions.slice(start, start + approvalPageSize);
+  }, [filteredTransactions, approvalPage, approvalPageSize]);
+
+  const hasActiveFilters = Boolean(searchTerm.trim() || selectedClass);
+
+  const handleClearFilters = () => {
+    setSearchTerm('');
+    setSelectedClass('');
   };
 
-  // Export Monthly Excel for All Class Students with Formulas
-  const handleExportMonthlyExcel = () => {
-    const exportStudents = selectedClass ? students.filter((s) => s.lop === selectedClass) : students;
-    if (exportStudents.length === 0) {
-      alert('Không có dữ liệu sinh viên để xuất file Excel!');
+  // Action Handlers
+  const handleCreateQuickTransaction = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!entryStudentCode || !entryCriterionId) {
+      showToast('Vui lòng chọn sinh viên và tiêu chí rèn luyện.');
       return;
     }
 
-    const exportData = exportStudents.map((sv, index) => {
-      const records = localPoints.filter(
-        (r) => r.maSV.toLowerCase() === sv.maSV.toLowerCase() && (!selectedMonth || r.thang === selectedMonth)
-      );
-
-      const latestRecord = records[records.length - 1];
-      const m1 = latestRecord?.diemMuc1 ?? Math.min(40, Math.round((latestRecord?.diemRL || 80) * 0.4));
-      const m2 = latestRecord?.diemMuc2 ?? Math.min(35, Math.round((latestRecord?.diemRL || 80) * 0.35));
-      const m3 = latestRecord?.diemMuc3 ?? Math.min(25, (latestRecord?.diemRL || 80) - m1 - m2);
-      const totalScore = latestRecord?.diemRL || (m1 + m2 + m3);
-      const rank = latestRecord?.xepLoai || calculateTrainingRank(totalScore);
-
-      return {
-        STT: index + 1,
-        'Mã Sinh Viên': sv.maSV,
-        'Họ và Tên': sv.hoTen,
-        Lớp: sv.lop || 'Chưa phân lớp',
-        'Tháng Đánh Giá': latestRecord ? `Tháng ${latestRecord.thang}/${latestRecord.nam}` : (selectedMonth ? `Tháng ${selectedMonth}` : 'Tháng 8/2026'),
-        'Mục I: Học tập & Kỷ luật (Max 40)': m1,
-        'Mục II: Phong trào & Nội quy (Max 35)': m2,
-        'Mục III: Đạo đức & Lối sống (Max 25)': m3,
-        'Tổng Điểm Rèn Luyện (Công thức SUM)': totalScore,
-        'Xếp Loại Rèn Luyện (Công thức IF)': rank,
-        'Nhận Xét Đánh Giá': latestRecord?.nhanXet || 'Chấp hành đầy đủ nội quy trường lớp.',
-        'Người Đánh Giá': latestRecord?.nguoiDanhGia || 'Cố vấn học tập',
-      };
+    const student = students.find((s) => s.maSV.toLowerCase() === entryStudentCode.toLowerCase());
+    const res = await trainingApiService.createTransaction({
+      studentCode: entryStudentCode,
+      studentName: student?.hoTen,
+      classId: student?.lop || selectedClass || '',
+      month: selectedMonth,
+      year: selectedYear,
+      criterionId: entryCriterionId,
+      occurredAt: `${entryOccurredAt} 08:00`,
+      occurrences: entryOccurrences,
+      pointsPerOccurrence: entryPointsPerOccurrence,
+      selectedLevelId: entrySelectedLevelId,
+      note: entryNote,
+      evidenceUrl: entryEvidenceUrl,
+      createdBy: currentUser?.username || '',
+      createdByName: currentUser?.fullName || currentUser?.username || '',
+      autoSubmit: true,
     });
 
-    const worksheet = XLSX.utils.json_to_sheet(exportData);
-
-    // Embed Excel formulas in exported sheet according to Quy chế 1519
-    exportStudents.forEach((_, idx) => {
-      const r = idx + 2; // Row 2 onwards
-      worksheet[`I${r}`] = {
-        t: 'n',
-        v: exportData[idx]['Tổng Điểm Rèn Luyện (Công thức SUM)'],
-        f: `SUM(F${r}:H${r})`,
-      };
-      const rankFormula = `IF(I${r}>=90,"Xuất sắc",IF(I${r}>=80,"Tốt",IF(I${r}>=65,"Khá",IF(I${r}>=50,"Trung bình",IF(I${r}>=35,"Yếu","Kém")))))`;
-      worksheet[`J${r}`] = {
-        t: 's',
-        v: exportData[idx]['Xếp Loại Rèn Luyện (Công thức IF)'],
-        f: rankFormula,
-      };
-    });
-
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'DiemRenLuyen_3TieuChi');
-    const fileName = `DiemRenLuyen_3TieuChi_${selectedMonth ? `Thang_${selectedMonth}` : 'Thang_8'}_${selectedClass || 'TatCaLop'}.xlsx`;
-    XLSX.writeFile(workbook, fileName);
+    showToast(res.message);
+    if (res.success) {
+      setIsQuickEntryOpen(false);
+      setEntryNote('');
+      setEntryEvidenceUrl('');
+      loadData();
+    }
   };
 
-  // Export Semester & Academic Year Total Excel storing 9 months & computing Average + Auto Rank
-  const handleExportSemesterYearExcel = () => {
-    const exportStudents = selectedClass ? students.filter((s) => s.lop === selectedClass) : students;
-    if (exportStudents.length === 0) {
-      alert('Không có dữ liệu sinh viên để xuất báo cáo!');
+  const handleApproveTransaction = async (txId: string) => {
+    const res = await trainingApiService.approveTransaction(
+      txId,
+      currentUser?.username || '',
+      currentUser?.fullName || currentUser?.username || ''
+    );
+    showToast(res.message);
+    if (res.success) {
+      loadData();
+    }
+  };
+
+  const openRejectTxModal = (txId: string) => {
+    setActionPrompt({
+      isOpen: true,
+      type: 'REJECT_TX',
+      targetId: txId,
+      title: 'Từ chối giao dịch điểm',
+      inputLabel: 'Lý do từ chối *',
+      inputValue: '',
+      showCheckbox: false,
+    });
+  };
+
+  const openCancelTxModal = (txId: string) => {
+    setActionPrompt({
+      isOpen: true,
+      type: 'CANCEL_TX',
+      targetId: txId,
+      title: 'Hủy giao dịch điểm',
+      inputLabel: 'Lý do hủy *',
+      inputValue: '',
+      showCheckbox: true,
+      checkboxLabel: 'Tạo giao dịch đảo để lưu lịch sử bù trừ',
+      checkboxChecked: true,
+    });
+  };
+
+  const openAcceptAppealModal = (appealId: string) => {
+    setActionPrompt({
+      isOpen: true,
+      type: 'ACCEPT_APPEAL',
+      targetId: appealId,
+      title: 'Chấp nhận khiếu nại',
+      inputLabel: 'Nội dung phản hồi *',
+      inputValue: '',
+      showCheckbox: false,
+    });
+  };
+
+  const openRejectAppealModal = (appealId: string) => {
+    setActionPrompt({
+      isOpen: true,
+      type: 'REJECT_APPEAL',
+      targetId: appealId,
+      title: 'Từ chối khiếu nại',
+      inputLabel: 'Lý do từ chối *',
+      inputValue: '',
+      showCheckbox: false,
+    });
+  };
+
+  const handleExecuteActionPrompt = async () => {
+    const { type, targetId, inputValue, checkboxChecked } = actionPrompt;
+    if (!inputValue.trim()) {
+      showToast('Vui lòng nhập đầy đủ nội dung.');
       return;
     }
 
-    const exportData = exportStudents.map((sv, index) => {
-      const svPoints = localPoints.filter(
-        (r) => r.maSV.toLowerCase() === sv.maSV.toLowerCase()
+    const actor = currentUser?.username || '';
+
+    if (type === 'REJECT_TX') {
+      const res = await trainingApiService.rejectTransaction(targetId, actor, inputValue.trim());
+      showToast(res.message);
+      setActionPrompt((prev) => ({ ...prev, isOpen: false }));
+      loadData();
+    } else if (type === 'CANCEL_TX') {
+      const res = await trainingApiService.cancelTransaction(
+        targetId,
+        actor,
+        inputValue.trim(),
+        Boolean(checkboxChecked)
       );
-
-      const getScoreForMonth = (m: number) => {
-        const found = svPoints.find((r) => r.thang === m);
-        if (found) return found.diemRL;
-        return svPoints[0]?.diemRL || 82;
-      };
-
-      const m9 = getScoreForMonth(9);
-      const m10 = getScoreForMonth(10);
-      const m11 = getScoreForMonth(11);
-      const m12 = getScoreForMonth(12);
-      const m1 = getScoreForMonth(1);
-      const m2 = getScoreForMonth(2);
-      const m3 = getScoreForMonth(3);
-      const m4 = getScoreForMonth(4);
-      const m5 = getScoreForMonth(5);
-
-      const avgScore = Math.round((m9 + m10 + m11 + m12 + m1 + m2 + m3 + m4 + m5) / 9);
-      const finalRank = calculateTrainingRank(avgScore);
-
-      return {
-        STT: index + 1,
-        'Mã Sinh Viên': sv.maSV,
-        'Họ và Tên': sv.hoTen,
-        'Lớp Học': sv.lop || 'Chưa phân lớp',
-        Khoa: sv.khoa || 'Khoa Chuyên Ngành',
-        'Tháng 9': m9,
-        'Tháng 10': m10,
-        'Tháng 11': m11,
-        'Tháng 12': m12,
-        'Tháng 1': m1,
-        'Tháng 2': m2,
-        'Tháng 3': m3,
-        'Tháng 4': m4,
-        'Tháng 5': m5,
-        'Điểm TB Rèn Luyện (Excel =AVERAGE)': avgScore,
-        'Xếp Loại Tổng Kết (Excel =IF)': finalRank,
-        'Ghi Chú Admin / Đào Tạo':
-          finalRank === 'Xuất sắc'
-            ? 'Khen thưởng cấp Khoa / Trường'
-            : finalRank === 'Yếu' || finalRank === 'Kém'
-            ? 'Cần cố vấn học tập nhắc nhở'
-            : 'Đạt yêu cầu rèn luyện',
-      };
-    });
-
-    const worksheet = XLSX.utils.json_to_sheet(exportData);
-
-    // Embed Excel formulas for 9-month Average (Col O) and Final Auto Rank (Col P) according to Quy chế 1519
-    exportStudents.forEach((_, idx) => {
-      const r = idx + 2;
-      worksheet[`O${r}`] = {
-        t: 'n',
-        v: exportData[idx]['Điểm TB Rèn Luyện (Excel =AVERAGE)'],
-        f: `ROUND(AVERAGE(F${r}:N${r}),0)`,
-      };
-
-      const rankFormula = `IF(O${r}>=90,"Xuất sắc",IF(O${r}>=80,"Tốt",IF(O${r}>=65,"Khá",IF(O${r}>=50,"Trung bình",IF(O${r}>=35,"Yếu","Kém")))))`;
-      worksheet[`P${r}`] = {
-        t: 's',
-        v: exportData[idx]['Xếp Loại Tổng Kết (Excel =IF)'],
-        f: rankFormula,
-      };
-    });
-
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'TongKet_Diem_9Thang');
-    const displayYear = selectedYear || 2026;
-    const nextYear = Number(displayYear) + 1;
-    const fileName = `BaoCao_TongKet_DiemRenLuyen_9Thang_NamHoc_${displayYear}-${nextYear}_${selectedClass || 'TatCaLop'}.xlsx`;
-    XLSX.writeFile(workbook, fileName);
+      showToast(res.message);
+      setActionPrompt((prev) => ({ ...prev, isOpen: false }));
+      loadData();
+    } else if (type === 'ACCEPT_APPEAL') {
+      const res = await trainingApiService.resolveAppeal(targetId, 'ACCEPTED', inputValue.trim(), actor);
+      showToast(res.message || 'Đã chấp nhận khiếu nại.');
+      setActionPrompt((prev) => ({ ...prev, isOpen: false }));
+      loadData();
+    } else if (type === 'REJECT_APPEAL') {
+      const res = await trainingApiService.resolveAppeal(targetId, 'REJECTED', inputValue.trim(), actor);
+      showToast(res.message || 'Đã từ chối khiếu nại.');
+      setActionPrompt((prev) => ({ ...prev, isOpen: false }));
+      loadData();
+    }
   };
+
+  const handleUpdateMonthStatus = async () => {
+    if (currentMonthObj.status === 'LOCKED' && lockTargetStatus !== 'LOCKED' && !reopenReason.trim()) {
+      showToast('Vui lòng nhập lý do mở lại tháng đã khóa.');
+      return;
+    }
+    const res = await trainingApiService.updateMonthStatus(
+      selectedMonth,
+      selectedYear,
+      lockTargetStatus,
+      currentUser?.username || '',
+      reopenReason
+    );
+    showToast(res.message);
+    if (res.success) {
+      setIsLockModalOpen(false);
+      setReopenReason('');
+      loadData();
+    }
+  };
+
+  const handleCreateAppeal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!appealReason.trim()) {
+      showToast('Vui lòng nhập lý do khiếu nại.');
+      return;
+    }
+    const res = await trainingApiService.createAppeal({
+      studentCode: activeStudentCode,
+      title: appealTitle || 'Khiếu nại điểm rèn luyện',
+      reason: appealReason,
+      month: selectedMonth,
+      year: selectedYear,
+      evidenceUrl: appealEvidenceUrl || undefined,
+    });
+    showToast(res.message);
+    if (res.success) {
+      setIsAppealModalOpen(false);
+      setAppealTitle('');
+      setAppealReason('');
+      setAppealEvidenceUrl('');
+      loadData();
+    }
+  };
+
+  const handleExportExcel = () => {
+    if (filteredAccounts.length === 0) {
+      showToast('Chưa có dữ liệu để xuất Excel.');
+      return;
+    }
+
+    const exportData = filteredAccounts.map((a, idx) => ({
+      STT: idx + 1,
+      'Mã Sinh Viên': a.studentCode,
+      'Họ và Tên': a.studentName || '',
+      Lớp: a.classId,
+      'Chức vụ': a.isOfficer ? a.officerRoleName || 'Cán bộ lớp' : 'Sinh viên',
+      'Điểm Nền': a.totalBasePoints,
+      'Nội dung I: Học tập (/35)': a.cat1Recognized,
+      'Nội dung II: Kỷ luật (/35)': a.cat2Recognized,
+      'Nội dung III: Hoạt động (/30)': a.cat3Recognized,
+      'Tổng điểm tháng (/100)': a.totalOfficialScore,
+      'Xếp loại': a.classification,
+      'Trạng thái tháng': a.monthStatus,
+      'Ngày tính toán': a.lastCalculatedAt ? a.lastCalculatedAt.substring(0, 10) : '',
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(exportData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `DRL_T${selectedMonth}_${selectedYear}`);
+    XLSX.writeFile(
+      wb,
+      `BangDiemRenLuyen_Thang${selectedMonth}_${selectedYear}_${selectedClass || 'ToanTruong'}.xlsx`
+    );
+    showToast('Đã xuất tệp Excel bảng điểm rèn luyện.');
+  };
+
+  const monthStatusMeta = getMonthStatusMeta(currentMonthObj.status);
+  const combinedLoadError = loadError || apiError;
+  const isInitialLoading = (isLoading || externalLoading) && accounts.length === 0 && criteria.length === 0;
 
   return (
-    <div className="space-y-6">
-      {/* Toast Notification */}
+    <div className="space-y-4">
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-3 rounded-2xl shadow-2xl border border-zinc-700 animate-in fade-in slide-in-from-bottom-4">
-          <CheckCircle2 className="w-5 h-5 text-emerald-400 dark:text-emerald-600 shrink-0" />
-          <span className="text-sm font-semibold">{toastMessage}</span>
-          <button
-            onClick={() => setToastMessage(null)}
-            className="p-1 hover:bg-zinc-800 dark:hover:bg-zinc-200 rounded-lg ml-2"
-          >
-            <X className="w-4 h-4" />
-          </button>
+        <div
+          role="status"
+          className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 bg-slate-900 text-white rounded border border-slate-700 text-xs font-medium shadow-lg"
+        >
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMessage}</span>
         </div>
       )}
 
-      {/* Title & Actions Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-zinc-900 p-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm">
-        <div>
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-6 h-6 text-amber-500" />
-            <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Quản lý Đánh giá Rèn luyện Sinh viên</h2>
-          </div>
-        </div>
+      <PageHeader
+        title="Điểm rèn luyện"
+        icon={Award}
+        actions={
+          <>
+            {isAdminOrLecturer ? (
+              <button
+                type="button"
+                onClick={() => setIsLockModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs font-medium text-slate-800 dark:text-slate-100 transition-colors cursor-pointer whitespace-nowrap"
+                title="Cập nhật trạng thái tháng"
+              >
+                {currentMonthObj.status === 'LOCKED' ? (
+                  <Lock className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
+                ) : (
+                  <Unlock className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                )}
+                <span>
+                  Tháng <span className="font-mono">{selectedMonth}/{selectedYear}</span>: {monthStatusMeta.label}
+                </span>
+                <Sliders className="w-3 h-3 text-slate-400" />
+              </button>
+            ) : (
+              <StatusBadge
+                label={`Tháng ${selectedMonth}/${selectedYear}: ${monthStatusMeta.label}`}
+                variant={monthStatusMeta.variant}
+                dot
+              />
+            )}
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Mode switch button */}
+            {isAdminOrLecturer && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setIsQuickEntryOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Cộng / Trừ điểm</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsBatchEntryOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded text-xs font-medium border border-slate-300 dark:border-slate-700 transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Nhập hàng loạt</span>
+                </button>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              disabled={filteredAccounts.length === 0}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded text-xs font-medium border border-slate-300 dark:border-slate-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              <span>Xuất Excel</span>
+            </button>
+          </>
+        }
+      />
+
+      {combinedLoadError && (
+        <ErrorBanner
+          message={combinedLoadError}
+          onRetry={() => {
+            if (onRetryLoad) onRetryLoad();
+            loadData();
+          }}
+        />
+      )}
+
+      {/* Filter & Sub-tab Container */}
+      <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-3.5 space-y-3">
+        <DataToolbar
+          searchValue={searchTerm}
+          onSearchChange={setSearchTerm}
+          searchPlaceholder="Tìm theo mã SV, họ tên, tiêu chí..."
+          hasActiveFilters={hasActiveFilters}
+          onClearFilters={handleClearFilters}
+          filters={
+            <>
+              <div>
+                <label htmlFor={filterMonthId} className="sr-only">
+                  Tháng đánh giá
+                </label>
+                <select
+                  id={filterMonthId}
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                  className="px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 cursor-pointer font-mono"
+                >
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
+                    <option key={m} value={m}>
+                      Tháng {m} ({m >= 8 ? 'HK1' : 'HK2'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor={filterYearId} className="sr-only">
+                  Năm đánh giá
+                </label>
+                <select
+                  id={filterYearId}
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(Number(e.target.value))}
+                  className="px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 cursor-pointer font-mono"
+                >
+                  {availableYears.map((y) => (
+                    <option key={y} value={y}>
+                      Năm {y}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {isAdminOrLecturer && (
+                <div>
+                  <label htmlFor={filterClassId} className="sr-only">
+                    Lớp sinh viên
+                  </label>
+                  <select
+                    id={filterClassId}
+                    value={selectedClass}
+                    onChange={(e) => setSelectedClass(e.target.value)}
+                    className="px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 cursor-pointer"
+                  >
+                    <option value="">Tất cả lớp</option>
+                    {availableClasses.map((cls) => (
+                      <option key={cls} value={cls}>
+                        {cls}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </>
+          }
+        />
+
+        <div
+          role="tablist"
+          aria-label="Phân mục điểm rèn luyện"
+          className="flex items-center gap-1 pt-2.5 border-t border-slate-200 dark:border-slate-800 overflow-x-auto"
+        >
+          {isAdminOrLecturer && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'CLASS_BOARD'}
+              onClick={() => setActiveTab('CLASS_BOARD')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'CLASS_BOARD'
+                  ? 'bg-blue-700 text-white'
+                  : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>Bảng điểm lớp ({filteredAccounts.length})</span>
+            </button>
+          )}
+
           <button
-            onClick={() => {
-              if (viewMode === 'HIERARCHICAL') {
-                setViewMode('FLAT');
-              } else {
-                setViewMode('HIERARCHICAL');
-                setSelectedClass(null);
-              }
-            }}
-            className="inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 hover:bg-zinc-200 transition-all cursor-pointer"
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'STUDENT_PORTAL'}
+            onClick={() => setActiveTab('STUDENT_PORTAL')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              activeTab === 'STUDENT_PORTAL'
+                ? 'bg-blue-700 text-white'
+                : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
           >
-            <Layers className="w-4 h-4 text-amber-500" />
-            <span>{viewMode === 'HIERARCHICAL' ? 'Xem Tất Cả (Dạng Danh Sách)' : 'Phân Cấp Theo Lớp'}</span>
+            <UserIcon className="w-3.5 h-3.5" />
+            <span>{isStudentRole ? 'Điểm rèn luyện cá nhân' : 'Chi tiết cá nhân'}</span>
           </button>
 
-          {(userRole === 'LECTURER' || userRole === 'ADMIN') && (
-            <>
-              <button
-                id="btn-import-training-excel"
-                onClick={() => setIsImportModalOpen(true)}
-                className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>Nhập File Excel Lớp</span>
-              </button>
-
-              <button
-                id="btn-add-comment"
-                onClick={() => handleOpenNew()}
-                className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs px-4 py-2.5 rounded-xl shadow-md shadow-blue-500/20 transition-all cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Nhập Đánh Giá Mới</span>
-              </button>
-            </>
+          {isAdminOrLecturer && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'APPROVAL'}
+              onClick={() => setActiveTab('APPROVAL')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'APPROVAL'
+                  ? 'bg-blue-700 text-white'
+                  : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>Duyệt giao dịch ({kpis.pendingCount})</span>
+            </button>
           )}
+
+          {isAdminOrLecturer && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'OFFICERS'}
+              onClick={() => setActiveTab('OFFICERS')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'OFFICERS'
+                  ? 'bg-blue-700 text-white'
+                  : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>Cán bộ lớp ({officerAssignments.length})</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'POLICY'}
+            onClick={() => setActiveTab('POLICY')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              activeTab === 'POLICY'
+                ? 'bg-blue-700 text-white'
+                : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            <span>Quy chế & Tiêu chí ({criteria.length})</span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'APPEALS'}
+            onClick={() => setActiveTab('APPEALS')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              activeTab === 'APPEALS'
+                ? 'bg-blue-700 text-white'
+                : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span>Khiếu nại ({visibleAppeals.length})</span>
+          </button>
         </div>
       </div>
 
-      {/* Admin Quick Export & Import Action Cards */}
-      {(userRole === 'ADMIN' || userRole === 'LECTURER') && (
-        <div className={`grid grid-cols-1 ${userRole === 'ADMIN' ? 'md:grid-cols-2' : 'md:grid-cols-3'} gap-4`}>
-          {userRole === 'LECTURER' && (
-            <div className="bg-gradient-to-r from-emerald-900/90 via-teal-900/90 to-slate-900 text-white p-5 rounded-2xl border border-emerald-700/50 shadow-md flex flex-col justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2 text-xs font-bold text-emerald-300">
-                  <Upload className="w-4 h-4" />
-                  <span>Nhập File Cho Cả Lớp</span>
-                </div>
-                <h4 className="text-sm font-bold mt-1">Import Excel Đánh Giá Rèn Luyện</h4>
-              </div>
-              <button
-                onClick={() => setIsImportModalOpen(true)}
-                className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-xl shadow-lg cursor-pointer transition-all flex items-center justify-center gap-1.5"
-              >
-                <Upload className="w-4 h-4" />
-                <span>Nhập File Excel Lớp</span>
-              </button>
-            </div>
-          )}
+      {/* RBAC Safety Fallback */}
+      {isStudentRole && (activeTab === 'CLASS_BOARD' || activeTab === 'APPROVAL' || activeTab === 'OFFICERS') ? (
+        <ErrorState type="403" onGoBack={() => setActiveTab('STUDENT_PORTAL')} />
+      ) : isInitialLoading ? (
+        <LoadingState rows={6} />
+      ) : (
+        <>
+          {/* TAB 1: CLASS BOARD */}
+          {isAdminOrLecturer && activeTab === 'CLASS_BOARD' && (
+            <div className="space-y-3">
+              <MetricStrip
+                metrics={[
+                  { label: 'Sĩ số đánh giá', value: kpis.totalCount, dotColor: 'blue' },
+                  { label: 'Điểm trung bình', value: `${kpis.avgScore} / 100`, dotColor: 'blue' },
+                  { label: 'Tỷ lệ Xuất sắc & Tốt', value: `${kpis.goodOrExcellentRate}%`, dotColor: 'emerald' },
+                  { label: 'Chờ duyệt', value: kpis.pendingCount, dotColor: kpis.pendingCount > 0 ? 'amber' : 'slate' },
+                ]}
+              />
 
-          <div className="bg-gradient-to-r from-blue-900/90 via-sky-900/90 to-slate-900 text-white p-5 rounded-2xl border border-blue-700/50 shadow-md flex flex-col justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 text-xs font-bold text-blue-300">
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>Xuất Excel Theo Tháng</span>
-              </div>
-              <h4 className="text-sm font-bold mt-1">Bảng Điểm Rèn Luyện (Công Thức Excel)</h4>
-            </div>
-            <button
-              onClick={handleExportMonthlyExcel}
-              className="w-full py-2.5 bg-blue-500 hover:bg-blue-400 text-white font-bold text-xs rounded-xl shadow-lg cursor-pointer transition-all flex items-center justify-center gap-1.5"
-            >
-              <Download className="w-4 h-4" />
-              <span>Xuất Excel Điểm Tháng</span>
-            </button>
-          </div>
-
-          <div className="bg-gradient-to-r from-indigo-900/90 via-purple-900/90 to-slate-900 text-white p-5 rounded-2xl border border-indigo-700/50 shadow-md flex flex-col justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 text-xs font-bold text-purple-300">
-                <Award className="w-4 h-4" />
-                <span>Báo Cáo Tổng Admin</span>
-              </div>
-              <h4 className="text-sm font-bold mt-1">File Báo Cáo 9 Tháng & Năm Học</h4>
-            </div>
-            <button
-              onClick={handleExportSemesterYearExcel}
-              className="w-full py-2.5 bg-indigo-500 hover:bg-indigo-400 text-white font-bold text-xs rounded-xl shadow-lg cursor-pointer transition-all flex items-center justify-center gap-1.5"
-            >
-              <Download className="w-4 h-4" />
-              <span>Xuất Báo Cáo 9 Tháng</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Breadcrumb & Class Navigator */}
-      {viewMode === 'HIERARCHICAL' && (
-        <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm space-y-3">
-          <div className="flex items-center flex-wrap gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            <button
-              onClick={() => setSelectedClass(null)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
-                selectedClass === null
-                  ? 'bg-amber-500 text-white font-bold shadow-sm'
-                  : 'bg-zinc-100 dark:bg-zinc-800 hover:bg-amber-50 dark:hover:bg-amber-950 hover:text-amber-600'
-              }`}
-            >
-              <Folder className="w-4 h-4" />
-              <span>Tất cả Lớp học</span>
-            </button>
-
-            {selectedClass && (
-              <>
-                <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />
-                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 text-white font-bold shadow-sm">
-                  <Users className="w-4 h-4" />
-                  <span>Lớp: {selectedClass}</span>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* LEVEL 1: CLASS CARDS GRID */}
-      {viewMode === 'HIERARCHICAL' && selectedClass === null && !isStudentRole && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="font-bold text-sm text-zinc-900 dark:text-white flex items-center gap-2">
-              <GraduationCap className="w-5 h-5 text-amber-500" />
-            </h3>
-            <span className="text-xs text-zinc-500 font-mono">
-              {availableClasses.length} lớp học
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {availableClasses.map((lopName) => {
-              const studentsInLop = students.filter((s) => s.lop === lopName);
-              const lopStudentIds = new Set(studentsInLop.map((s) => s.maSV));
-              const lopPoints = trainingPoints.filter((r) => lopStudentIds.has(r.maSV) || r.lop === lopName);
-              const avgScore = lopPoints.length
-                ? Math.round(lopPoints.reduce((acc, curr) => acc + curr.diemRL, 0) / lopPoints.length)
-                : 85;
-              const faculty = studentsInLop[0]?.khoa || 'Khoa Chuyên ngành';
-              const rank = calculateTrainingRank(avgScore);
-
-              return (
-                <div
-                  key={lopName}
-                  onClick={() => setSelectedClass(lopName)}
-                  className="group bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 hover:border-amber-500 dark:hover:border-amber-500 hover:shadow-lg transition-all cursor-pointer flex flex-col justify-between"
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] uppercase tracking-wider font-bold px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
-                        {faculty}
-                      </span>
-                      <ChevronRight className="w-5 h-5 text-zinc-400 group-hover:text-amber-500 group-hover:translate-x-1 transition-all" />
-                    </div>
-
-                    <h4 className="text-base font-black text-zinc-900 dark:text-white group-hover:text-amber-600 transition-colors">
-                      {lopName}
-                    </h4>
-
-                    <div className="grid grid-cols-2 gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400 pt-2 border-t border-zinc-100 dark:border-zinc-800">
-                      <div className="flex items-center gap-1.5">
-                        <Users className="w-4 h-4 text-blue-500" />
-                        <span>{studentsInLop.length || 20} Sinh viên</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <Award className="w-4 h-4 text-emerald-500" />
-                        <span>Điểm TB: {avgScore}/100</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 pt-3 text-xs font-bold text-amber-600 dark:text-amber-400 flex items-center justify-between">
-                    <span>Xem bảng điểm rèn luyện ({rank})</span>
-                    <span className="font-mono text-sm">➔</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* LEVEL 2 or FLAT MODE or STUDENT ROLE: TRAINING POINTS STUDENT LIST */}
-      {(viewMode === 'FLAT' || selectedClass !== null || isStudentRole) && (
-        <div className="space-y-4">
-          {/* Student Personal Banner */}
-          {isStudentRole && (
-            <div className="bg-amber-50/90 dark:bg-amber-950/60 p-4 rounded-2xl border border-amber-300 dark:border-amber-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-sm">
-              <div className="flex items-center gap-3">
-                <Award className="w-6 h-6 text-amber-600 dark:text-amber-400 shrink-0" />
-                <div>
-                  <h4 className="font-bold text-sm text-amber-950 dark:text-amber-100">
-                    🏆 Kết Quả Đánh Giá Rèn Luyện Cá Nhân — {selfStudent?.hoTen || 'Sinh viên'} ({selfStudent?.maSV || currentStudentCode || 'N/A'})
-                  </h4>
-                  <p className="text-xs text-amber-800 dark:text-amber-300 mt-0.5">
-                    Lớp: <strong>{selfStudent?.lop || 'Chưa phân lớp'}</strong> • Khoa: <strong>{selfStudent?.khoa || 'Khoa Chuyên Ngành'}</strong>. Tra cứu điểm rèn luyện lọc theo tháng, học kỳ và năm học.
-                  </p>
-                </div>
-              </div>
-              <div className="shrink-0 text-right">
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-lg bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-200">
-                  Role: Sinh viên
-                </span>
-              </div>
-            </div>
-          )}
-
-          {viewMode === 'HIERARCHICAL' && selectedClass && !isStudentRole && (
-            <div className="flex flex-wrap items-center justify-between gap-3 bg-amber-50/70 dark:bg-amber-950/40 p-4 rounded-2xl border border-amber-200 dark:border-amber-800/60">
-              <div>
-                <h3 className="font-bold text-sm text-amber-950 dark:text-amber-200 flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-amber-600" />
-                  <span>Bảng Điểm Rèn Luyện Lớp: {selectedClass}</span>
-                </h3>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setIsImportModalOpen(true)}
-                  className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition-all cursor-pointer shadow-sm"
-                >
-                  <FileSpreadsheet className="w-4 h-4" />
-                  <span>Import Excel Lớp</span>
-                </button>
-                <button
-                  onClick={() => setSelectedClass(null)}
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 transition-all cursor-pointer"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  <span>Đổi Lớp Khác</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Filter Bar */}
-          <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="sm:col-span-2 relative">
-              <label className="block text-[11px] font-semibold text-zinc-500 mb-1">
-                {isStudentRole ? 'Tìm kiếm trong điểm của tôi' : 'Tìm kiếm sinh viên'}
-              </label>
-              <div className="relative">
-                <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-2.5" />
-                <input
-                  id="search-training-input"
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder={isStudentRole ? "Lọc theo nhận xét, người đánh giá..." : "Mã SV, Tên SV, Nhận xét..."}
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-zinc-500 mb-1">Lọc theo Tháng</label>
-              <select
-                id="filter-month-select"
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value ? Number(e.target.value) : '')}
-                className="w-full px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">-- Tất cả các Tháng --</option>
-                {availableMonths.map((m) => (
-                  <option key={m} value={m}>
-                    Tháng {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-zinc-500 mb-1">Học Kỳ & Năm Học</label>
-              <div className="flex items-center gap-1">
-                <select
-                  value={selectedSemester}
-                  onChange={(e) => setSelectedSemester(e.target.value)}
-                  className="w-1/2 px-2 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">-- Tất cả HK --</option>
-                  {availableSemesters.map((s) => (
-                    <option key={s} value={s}>
-                      {s.startsWith('HK') ? s : `Học kỳ ${s}`}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={selectedYear}
-                  onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : '')}
-                  className="w-1/2 px-2 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">-- Tất cả Năm --</option>
-                  {availableYears.map((y) => (
-                    <option key={y} value={y}>
-                      {y}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* Training List Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filteredPoints.length > 0 ? (
-              filteredPoints.map((r) => {
-                const rank = r.xepLoai || calculateTrainingRank(r.diemRL);
-                const m1 = r.diemMuc1 !== undefined ? r.diemMuc1 : Math.min(40, Math.round(r.diemRL * 0.4));
-                const m2 = r.diemMuc2 !== undefined ? r.diemMuc2 : Math.min(35, Math.round(r.diemRL * 0.35));
-                const m3 = r.diemMuc3 !== undefined ? r.diemMuc3 : Math.min(25, r.diemRL - m1 - m2);
-
-                return (
-                  <div
-                    key={r.id}
-                    className="bg-white dark:bg-zinc-900 p-5 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm flex flex-col justify-between hover:border-blue-300 transition-all"
-                  >
-                    <div>
-                      <div className="flex items-start justify-between gap-2 mb-3">
-                        <div>
-                          <h3 className="font-bold text-zinc-900 dark:text-white text-sm">{r.hoTenSV || 'Sinh viên'}</h3>
-                          <p className="text-xs text-blue-600 dark:text-blue-400 font-mono font-medium">
-                            Mã SV: {r.maSV} • Lớp: {r.lop || selectedClass || 'CNKT Cơ khí 25DDS 09041'}
-                          </p>
-                        </div>
-
-                        <div className="text-right">
-                          <span className="text-2xl font-black font-mono text-zinc-900 dark:text-white">{r.diemRL}</span>
-                          <span className="text-[10px] text-zinc-400 block">/ 100 Điểm</span>
-                        </div>
-                      </div>
-
-                      {/* Rank & Evaluation Month */}
-                      <div className="flex items-center justify-between gap-2 mb-3 bg-zinc-50 dark:bg-zinc-800/50 p-2.5 rounded-xl border border-zinc-100 dark:border-zinc-800">
-                        <span className={`inline-block px-2.5 py-1 rounded-lg text-xs font-bold border ${getRankBadgeClass(rank)}`}>
-                          Xếp Loại: {rank}
-                        </span>
-                        <span className="text-xs font-semibold text-zinc-600 dark:text-zinc-300 flex items-center gap-1">
-                          <Calendar className="w-3.5 h-3.5 text-zinc-400" />
-                          Tháng {r.thang}/{r.nam} • {r.hocKy || 'HK1'}
-                        </span>
-                      </div>
-
-                      {/* 3 Categories Sub-score Breakdown */}
-                      <div className="space-y-1.5 text-[11px] mb-3 bg-blue-50/50 dark:bg-blue-950/30 p-3 rounded-xl border border-blue-100 dark:border-blue-900/40">
-                        <p className="font-bold text-blue-900 dark:text-blue-200 text-xs mb-1">
-                          Chi Tiết Điểm 3 Mục Đánh Giá:
-                        </p>
-                        <div className="flex justify-between items-center text-zinc-700 dark:text-zinc-300">
-                          <span>I. Ý thức học tập & kỷ luật (Tối đa 40):</span>
-                          <strong className="font-mono text-blue-600 dark:text-blue-400">{m1}/40đ</strong>
-                        </div>
-                        <div className="flex justify-between items-center text-zinc-700 dark:text-zinc-300">
-                          <span>II. Chấp hành nội quy & phong trào (Tối đa 35):</span>
-                          <strong className="font-mono text-emerald-600 dark:text-emerald-400">{m2}/35đ</strong>
-                        </div>
-                        <div className="flex justify-between items-center text-zinc-700 dark:text-zinc-300">
-                          <span>III. Phẩm chất đạo đức & lối sống (Tối đa 25):</span>
-                          <strong className="font-mono text-purple-600 dark:text-purple-400">{m3}/25đ</strong>
-                        </div>
-                      </div>
-
-                      {/* Lecturer Comment */}
-                      <div className="bg-zinc-50 dark:bg-zinc-800/60 p-3 rounded-xl border border-zinc-100 dark:border-zinc-700/80 mb-3">
-                        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                          <MessageSquare className="w-3.5 h-3.5 text-blue-500" />
-                          Nhận xét của Cố vấn Học tập / Giảng viên:
-                        </div>
-                        <p className="text-xs text-zinc-600 dark:text-zinc-300 italic">"{r.nhanXet}"</p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-2 border-t border-zinc-100 dark:border-zinc-800">
-                      <span>Đánh giá bởi: {r.nguoiDanhGia || 'Cố vấn HT'}</span>
-                      {(userRole === 'ADMIN' || userRole === 'LECTURER') && (
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleOpenEdit(r)}
-                            className="inline-flex items-center gap-1 text-xs font-bold text-blue-600 dark:text-blue-400 hover:text-blue-700 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 px-2.5 py-1.5 rounded-lg border border-blue-200 dark:border-blue-800 transition-all cursor-pointer"
-                            title="Sửa điểm rèn luyện của sinh viên này"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                            <span>Sửa điểm</span>
-                          </button>
-                          <button
-                            onClick={() => setDeleteIndividualRecord(r)}
-                            className="inline-flex items-center gap-1 text-xs font-bold text-rose-600 dark:text-rose-400 hover:text-rose-700 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 dark:hover:bg-rose-900/60 px-2.5 py-1.5 rounded-lg border border-rose-200 dark:border-rose-800 transition-all cursor-pointer"
-                            title="Xóa điểm rèn luyện của sinh viên này"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Xóa</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="md:col-span-2 p-12 text-center bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-zinc-500 text-xs">
-                Chưa có dữ liệu điểm rèn luyện phù hợp cho lựa chọn này.
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* MASTER CLASS EXCEL IMPORT MODAL */}
-      {isImportModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl max-w-4xl w-full p-6 shadow-2xl relative my-8">
-            <button
-              onClick={() => setIsImportModalOpen(false)}
-              className="absolute top-4 right-4 p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 rounded-full cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="flex items-center gap-2 mb-1">
-              <FileSpreadsheet className="w-6 h-6 text-emerald-600" />
-              <h3 className="text-lg font-bold text-zinc-900 dark:text-white">
-                Nhập File Excel Tổng Cho Lớp — Điểm Rèn Luyện
-              </h3>
-            </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-5">
-              Hệ thống tự động đọc điểm rèn luyện, tính tổng điểm và tự động phân loại 6 mức chuẩn Quy chế 1519 (Xuất sắc, Tốt, Khá, Trung bình, Yếu, Kém).
-            </p>
-
-            <div className="space-y-5">
-              {/* Target Academic Year & Period Configuration */}
-              <div className="bg-zinc-50 dark:bg-zinc-800/60 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-700">
-                <div className="flex items-center gap-2 mb-2 text-xs font-bold text-zinc-900 dark:text-white">
-                  <Calendar className="w-4 h-4 text-blue-500" />
-                  <span>Cấu hình Đợt Đánh Giá Mục Tiêu (Quy chuẩn dữ liệu khi nhập)</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
-                      Năm Học Mục Tiêu *
-                    </label>
-                    <select
-                      value={importTargetNamHoc}
-                      onChange={(e) => setImportTargetNamHoc(e.target.value)}
-                      className="w-full px-3 py-2 text-xs bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl font-medium"
-                    >
-                      <option value="2026-2027">Năm học 2026-2027 (Mặc định)</option>
-                      <option value="2025-2026">Năm học 2025-2026</option>
-                      <option value="2024-2025">Năm học 2024-2025</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
-                      Học Kỳ Mục Tiêu *
-                    </label>
-                    <select
-                      value={importTargetHocKy}
-                      onChange={(e) => setImportTargetHocKy(e.target.value)}
-                      className="w-full px-3 py-2 text-xs bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl font-medium"
-                    >
-                      <option value="HK1">Học kỳ 1 (HK1)</option>
-                      <option value="HK2">Học kỳ 2 (HK2)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
-                      Tháng Đánh Giá
-                    </label>
-                    <select
-                      value={importTargetThang}
-                      onChange={(e) => setImportTargetThang(e.target.value)}
-                      className="w-full px-3 py-2 text-xs bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl font-medium"
-                    >
-                      <option value="AUTO">Tự động nhận theo file Excel</option>
-                      <option value="8">Tháng 8 (Bắt đầu HK1)</option>
-                      <option value="9">Tháng 9</option>
-                      <option value="10">Tháng 10</option>
-                      <option value="11">Tháng 11</option>
-                      <option value="12">Tháng 12</option>
-                      <option value="1">Tháng 1</option>
-                      <option value="2">Tháng 2</option>
-                      <option value="3">Tháng 3</option>
-                      <option value="4">Tháng 4</option>
-                      <option value="5">Tháng 5</option>
-                    </select>
-                  </div>
-                </div>
-                <p className="text-[11px] text-zinc-500 mt-2">
-                  * Ghi chú: Nếu file Excel có tiêu đề cột "Tháng 8/2025 (HK1)", khi nhập vào năm học <strong>{importTargetNamHoc}</strong>, hệ thống tự động chuẩn hóa ghi nhận vào Năm học <strong>{importTargetNamHoc}</strong> (lịch năm 2026) theo đúng thời gian đào tạo.
-                </p>
-              </div>
-
-              {/* Step 1: Download Template */}
-              <div className="bg-emerald-50/70 dark:bg-emerald-950/40 p-4 rounded-2xl border border-emerald-200 dark:border-emerald-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h4 className="font-bold text-xs text-emerald-950 dark:text-emerald-200 flex items-center gap-1.5">
-                    <FileCheck className="w-4 h-4 text-emerald-600" />
-                    <span>Bước 1: Tải file mẫu Excel (.xlsx) đã điền danh sách lớp</span>
-                  </h4>
-                  <p className="text-[11px] text-emerald-800 dark:text-emerald-300 mt-0.5">
-                    File chứa danh sách sinh viên lớp <strong className="font-bold">{selectedClass || 'Tất cả Lớp'}</strong> với các cột điểm tiêu chí I, II, III chuẩn.
-                  </p>
-                </div>
-                <button
-                  onClick={handleDownloadTemplate}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer shrink-0 transition-all flex items-center gap-1.5"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Tải File Mẫu Excel</span>
-                </button>
-              </div>
-
-              {/* Step 2: Upload File */}
-              <div className="border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-2xl p-6 text-center hover:border-emerald-500 transition-all bg-zinc-50/50 dark:bg-zinc-800/30">
-                <Upload className="w-8 h-8 text-emerald-600 mx-auto mb-2" />
-                <p className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
-                  Bước 2: Chọn file Excel (.xlsx) chứa bảng điểm rèn luyện đã chấm
-                </p>
-                <p className="text-[11px] text-zinc-500 mt-1 mb-3">
-                  Kéo thả file vào đây hoặc bấm nút dưới đây để tải lên
-                </p>
-
-                <input
-                  type="file"
-                  accept=".xlsx, .xls"
-                  onChange={handleExcelFileUpload}
-                  className="hidden"
-                  id="excel-file-input"
-                />
-                <label
-                  htmlFor="excel-file-input"
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer transition-all"
-                >
-                  <Upload className="w-4 h-4" />
-                  <span>Chọn File Excel Điểm Rèn Luyện</span>
-                </label>
-
-                {importFileName && (
-                  <p className="text-xs text-emerald-600 font-medium mt-2">
-                    Đã chọn file: <strong>{importFileName}</strong>
-                  </p>
-                )}
-              </div>
-
-              {importStatus && (
-                <div className="p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded-xl text-xs text-blue-900 dark:text-blue-200 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
-                  <span>{importStatus}</span>
-                </div>
-              )}
-
-              {/* Step 3: Parsed Data Live Preview Table */}
-              {parsedImportData.length > 0 && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="font-bold text-xs text-zinc-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
-                      <Sparkles className="w-4 h-4 text-amber-500" />
-                      <span>Xem Trước Dữ Liệu {parsedImportData.length} Sinh Viên — Đã Tính Tổng & Tự Động Xếp Loại</span>
-                    </h4>
-                  </div>
-
-                  <div className="overflow-x-auto max-h-64 rounded-xl border border-zinc-200 dark:border-zinc-800">
-                    <table className="w-full text-left text-[11px]">
-                      <thead className="bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 sticky top-0 font-bold">
+              {accounts.length === 0 && !isLoading ? (
+                <EmptyState message="Chưa có dữ liệu." />
+              ) : filteredAccounts.length === 0 ? (
+                <FilteredEmptyState onClearFilters={handleClearFilters} />
+              ) : (
+                <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-slate-700 dark:text-slate-300">
+                      <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-slate-800 text-[11px] font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-800">
                         <tr>
-                          <th className="p-2.5">STT</th>
-                          <th className="p-2.5">Mã SV</th>
-                          <th className="p-2.5">Họ và Tên</th>
-                          <th className="p-2.5">Lớp</th>
-                          <th className="p-2.5 text-center">Mục I (40đ)</th>
-                          <th className="p-2.5 text-center">Mục II (35đ)</th>
-                          <th className="p-2.5 text-center">Mục III (25đ)</th>
-                          <th className="p-2.5 text-center">TỔNG ĐIỂM</th>
-                          <th className="p-2.5 text-center">XẾP LOẠI</th>
-                          <th className="p-2.5">Nhận Xét</th>
+                          <th className="py-2.5 px-3">Sinh viên</th>
+                          <th className="py-2.5 px-3">Lớp & Vai trò</th>
+                          <th className="py-2.5 px-3 text-center">Nền</th>
+                          <th className="py-2.5 px-3">I: Học tập (/35)</th>
+                          <th className="py-2.5 px-3">II: Kỷ luật (/35)</th>
+                          <th className="py-2.5 px-3">III: Hoạt động (/30)</th>
+                          <th className="py-2.5 px-3 text-center">Tổng điểm</th>
+                          <th className="py-2.5 px-3 text-center">Xếp loại</th>
+                          <th className="py-2.5 px-3 text-right">Thao tác</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                        {parsedImportData.map((item, index) => (
-                          <tr key={index} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
-                            <td className="p-2.5 text-zinc-500">{index + 1}</td>
-                            <td className="p-2.5 font-mono font-bold text-blue-600">{item.maSV}</td>
-                            <td className="p-2.5 font-semibold text-zinc-800 dark:text-zinc-200">{item.hoTenSV || 'Sinh viên'}</td>
-                            <td className="p-2.5 text-zinc-600">{item.lop}</td>
-                            <td className="p-2.5 text-center font-mono">{item.diemMuc1}</td>
-                            <td className="p-2.5 text-center font-mono">{item.diemMuc2}</td>
-                            <td className="p-2.5 text-center font-mono">{item.diemMuc3}</td>
-                            <td className="p-2.5 text-center font-mono font-black text-blue-700 dark:text-blue-300 text-xs">
-                              {item.totalScore}
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                        {paginatedAccounts.map((acc) => (
+                          <tr
+                            key={acc.id}
+                            className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors"
+                          >
+                            <td className="py-2.5 px-3">
+                              <div className="font-semibold text-slate-900 dark:text-slate-100">
+                                {acc.studentName || acc.studentCode}
+                              </div>
+                              <div className="text-[11px] font-mono tabular-nums text-blue-700 dark:text-blue-400">
+                                {acc.studentCode}
+                              </div>
                             </td>
-                            <td className="p-2.5 text-center">
-                              <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${getRankBadgeClass(item.autoRank)}`}>
-                                {item.autoRank}
-                              </span>
+                            <td className="py-2.5 px-3">
+                              <div className="font-medium text-slate-800 dark:text-slate-200">
+                                {acc.classId}
+                              </div>
+                              {acc.isOfficer ? (
+                                <StatusBadge
+                                  label={`${acc.officerRoleName || 'Cán bộ'} (75)`}
+                                  variant="info"
+                                  className="mt-0.5"
+                                />
+                              ) : (
+                                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                                  Sinh viên
+                                </span>
+                              )}
                             </td>
-                            <td className="p-2.5 text-zinc-500 italic max-w-xs truncate">{item.nhanXet}</td>
+                            <td className="py-2.5 px-3 text-center font-mono tabular-nums font-semibold text-slate-800 dark:text-slate-200">
+                              {acc.totalBasePoints}
+                            </td>
+                            <td className="py-2.5 px-3 min-w-[120px]">
+                              <div className="flex items-center justify-between text-[11px] font-mono tabular-nums mb-1">
+                                <span className="font-semibold text-slate-900 dark:text-slate-100">
+                                  {acc.cat1Recognized}/35
+                                </span>
+                                <span className={acc.cat1RawDelta >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}>
+                                  {acc.cat1RawDelta > 0 ? `+${acc.cat1RawDelta}` : acc.cat1RawDelta}
+                                </span>
+                              </div>
+                              <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded overflow-hidden">
+                                <div
+                                  className="bg-blue-700 h-full"
+                                  style={{ width: `${Math.min(100, (acc.cat1Recognized / 35) * 100)}%` }}
+                                />
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 min-w-[120px]">
+                              <div className="flex items-center justify-between text-[11px] font-mono tabular-nums mb-1">
+                                <span className="font-semibold text-slate-900 dark:text-slate-100">
+                                  {acc.cat2Recognized}/35
+                                </span>
+                                <span className={acc.cat2RawDelta >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}>
+                                  {acc.cat2RawDelta > 0 ? `+${acc.cat2RawDelta}` : acc.cat2RawDelta}
+                                </span>
+                              </div>
+                              <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded overflow-hidden">
+                                <div
+                                  className="bg-emerald-600 h-full"
+                                  style={{ width: `${Math.min(100, (acc.cat2Recognized / 35) * 100)}%` }}
+                                />
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 min-w-[120px]">
+                              <div className="flex items-center justify-between text-[11px] font-mono tabular-nums mb-1">
+                                <span className="font-semibold text-slate-900 dark:text-slate-100">
+                                  {acc.cat3Recognized}/30
+                                </span>
+                                <span className={acc.cat3RawDelta >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}>
+                                  {acc.cat3RawDelta > 0 ? `+${acc.cat3RawDelta}` : acc.cat3RawDelta}
+                                </span>
+                              </div>
+                              <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded overflow-hidden">
+                                <div
+                                  className="bg-amber-600 h-full"
+                                  style={{ width: `${Math.min(100, (acc.cat3Recognized / 30) * 100)}%` }}
+                                />
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-mono tabular-nums font-bold text-sm text-slate-900 dark:text-slate-100">
+                              {acc.totalOfficialScore}
+                            </td>
+                            <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                              <StatusBadge
+                                label={acc.classification}
+                                variant={getClassificationVariant(acc.classification)}
+                              />
+                            </td>
+                            <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                              <div className="inline-flex items-center justify-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEntryStudentCode(acc.studentCode);
+                                    setIsQuickEntryOpen(true);
+                                  }}
+                                  aria-label={`Cộng trừ điểm ${acc.studentName || acc.studentCode}`}
+                                  className="p-1.5 text-slate-600 dark:text-slate-300 hover:text-blue-700 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded cursor-pointer transition-colors"
+                                  title="Cộng / Trừ điểm"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const st = students.find(
+                                      (s) => s.maSV.toLowerCase() === acc.studentCode.toLowerCase()
+                                    );
+                                    if (st) {
+                                      setSelectedStudentForDetail(st);
+                                      setActiveTab('STUDENT_PORTAL');
+                                    }
+                                  }}
+                                  aria-label={`Xem chi tiết ${acc.studentName || acc.studentCode}`}
+                                  className="p-1.5 text-slate-600 dark:text-slate-300 hover:text-blue-700 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded cursor-pointer transition-colors"
+                                  title="Xem lịch sử chi tiết"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
+                  <PaginationBar
+                    currentPage={boardPage}
+                    pageSize={boardPageSize}
+                    totalItems={filteredAccounts.length}
+                    onPageChange={setBoardPage}
+                    onPageSizeChange={setBoardPageSize}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 2: STUDENT PORTAL */}
+          {activeTab === 'STUDENT_PORTAL' && (
+            <div className="space-y-4">
+              {isAdminOrLecturer && (
+                <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <label
+                    htmlFor={portalStudentSelectId}
+                    className="text-xs font-semibold text-slate-700 dark:text-slate-200"
+                  >
+                    Sinh viên đang xem:
+                  </label>
+                  <select
+                    id={portalStudentSelectId}
+                    value={selectedStudentForDetail?.maSV || ''}
+                    onChange={(e) => {
+                      const st = students.find((s) => s.maSV === e.target.value) || null;
+                      setSelectedStudentForDetail(st);
+                    }}
+                    className="px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 cursor-pointer min-w-[260px]"
+                  >
+                    <option value="">-- Chọn sinh viên để xem chi tiết --</option>
+                    {students.map((s) => (
+                      <option key={s.maSV} value={s.maSV}>
+                        {s.maSV} - {s.hoTen} ({s.lop})
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
 
-              <div className="pt-3 flex justify-end gap-2 border-t border-zinc-200 dark:border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => setIsImportModalOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 font-semibold text-xs cursor-pointer"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="button"
-                  disabled={parsedImportData.length === 0}
-                  onClick={handleConfirmImport}
-                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-emerald-600/20"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  Xác Nhận Import Vào Hệ Thống
-                </button>
+              {studentSelfAccount ? (
+                <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-4">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                          {studentSelfAccount.studentName || studentSelfAccount.studentCode}
+                        </h2>
+                        {studentSelfAccount.isOfficer && (
+                          <StatusBadge
+                            label={`${studentSelfAccount.officerRoleName || 'Cán bộ lớp'} (Nền 75)`}
+                            variant="info"
+                          />
+                        )}
+                      </div>
+                      <div className="flex items-center flex-wrap gap-2 text-xs text-slate-600 dark:text-slate-400 mt-1">
+                        <span>
+                          Mã SV: <strong className="font-mono text-slate-900 dark:text-slate-100">{studentSelfAccount.studentCode}</strong>
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span>
+                          Lớp: <strong className="text-slate-900 dark:text-slate-100">{studentSelfAccount.classId}</strong>
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span className="font-mono tabular-nums">
+                          Tháng {studentSelfAccount.month}/{studentSelfAccount.year}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/70 px-4 py-2.5 rounded border border-slate-200 dark:border-slate-700">
+                      <div className="text-center">
+                        <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 block">
+                          Tổng điểm
+                        </span>
+                        <div className="text-xl font-mono tabular-nums font-bold text-blue-700 dark:text-blue-400">
+                          {studentSelfAccount.totalOfficialScore}
+                          <span className="text-xs text-slate-500 dark:text-slate-400 font-normal"> / 100</span>
+                        </div>
+                      </div>
+                      <div className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
+                      <div className="text-center">
+                        <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 block mb-1">
+                          Xếp loại
+                        </span>
+                        <StatusBadge
+                          label={studentSelfAccount.classification}
+                          variant={getClassificationVariant(studentSelfAccount.classification)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
+                    <div className="bg-slate-50 dark:bg-slate-800/40 p-3 rounded border border-slate-200 dark:border-slate-700">
+                      <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                        <span>I. Học tập & NCKH</span>
+                        <span className="font-mono tabular-nums">Tối đa 35</span>
+                      </div>
+                      <div className="flex items-baseline gap-2 mt-1 font-mono tabular-nums">
+                        <span className="text-lg font-bold text-slate-900 dark:text-slate-100">
+                          {studentSelfAccount.cat1Recognized}
+                        </span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Nền {studentSelfAccount.cat1BasePoints} ·{' '}
+                          {studentSelfAccount.cat1RawDelta >= 0
+                            ? `+${studentSelfAccount.cat1RawDelta}`
+                            : studentSelfAccount.cat1RawDelta}
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded mt-2 overflow-hidden">
+                        <div
+                          className="bg-blue-700 h-full"
+                          style={{ width: `${Math.min(100, (studentSelfAccount.cat1Recognized / 35) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 dark:bg-slate-800/40 p-3 rounded border border-slate-200 dark:border-slate-700">
+                      <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                        <span>II. Kỷ luật & Nội quy</span>
+                        <span className="font-mono tabular-nums">Tối đa 35</span>
+                      </div>
+                      <div className="flex items-baseline gap-2 mt-1 font-mono tabular-nums">
+                        <span className="text-lg font-bold text-slate-900 dark:text-slate-100">
+                          {studentSelfAccount.cat2Recognized}
+                        </span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Nền {studentSelfAccount.cat2BasePoints} ·{' '}
+                          {studentSelfAccount.cat2RawDelta >= 0
+                            ? `+${studentSelfAccount.cat2RawDelta}`
+                            : studentSelfAccount.cat2RawDelta}
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded mt-2 overflow-hidden">
+                        <div
+                          className="bg-emerald-600 h-full"
+                          style={{ width: `${Math.min(100, (studentSelfAccount.cat2Recognized / 35) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 dark:bg-slate-800/40 p-3 rounded border border-slate-200 dark:border-slate-700">
+                      <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                        <span>III. Hoạt động & Phong trào</span>
+                        <span className="font-mono tabular-nums">Tối đa 30</span>
+                      </div>
+                      <div className="flex items-baseline gap-2 mt-1 font-mono tabular-nums">
+                        <span className="text-lg font-bold text-slate-900 dark:text-slate-100">
+                          {studentSelfAccount.cat3Recognized}
+                        </span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Nền {studentSelfAccount.cat3BasePoints} ·{' '}
+                          {studentSelfAccount.cat3RawDelta >= 0
+                            ? `+${studentSelfAccount.cat3RawDelta}`
+                            : studentSelfAccount.cat3RawDelta}
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded mt-2 overflow-hidden">
+                        <div
+                          className="bg-amber-600 h-full"
+                          style={{ width: `${Math.min(100, (studentSelfAccount.cat3Recognized / 30) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <EmptyState message="Chưa có dữ liệu." />
+              )}
+
+              {/* Transaction History */}
+              <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
+                      Lịch sử giao dịch điểm tháng {selectedMonth}/{selectedYear}
+                    </h3>
+                  </div>
+                  {isStudentRole && (
+                    <button
+                      type="button"
+                      onClick={() => setIsAppealModalOpen(true)}
+                      className="px-2.5 py-1 text-xs font-semibold bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 rounded border border-rose-300 dark:border-rose-800 hover:bg-rose-100 dark:hover:bg-rose-950 transition-colors inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      <span>Gửi khiếu nại</span>
+                    </button>
+                  )}
+                </div>
+
+                {studentPortalTransactions.length === 0 ? (
+                  <EmptyState message="Chưa có dữ liệu." />
+                ) : (
+                  <div className="space-y-2">
+                    {studentPortalTransactions.map((tx) => {
+                      const statusMeta = getTransactionStatusMeta(tx.status);
+                      return (
+                        <div
+                          key={tx.id}
+                          className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded border border-slate-200 dark:border-slate-700 flex flex-col md:flex-row md:items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="flex items-start gap-2.5">
+                            <span
+                              className={`px-2 py-1 rounded font-mono tabular-nums font-bold text-xs shrink-0 border ${
+                                tx.totalPointsDelta >= 0
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800'
+                                  : 'bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-800'
+                              }`}
+                            >
+                              {tx.totalPointsDelta > 0 ? `+${tx.totalPointsDelta}` : tx.totalPointsDelta}
+                            </span>
+                            <div>
+                              <div className="font-semibold text-slate-900 dark:text-slate-100">
+                                {tx.criterionName}
+                              </div>
+                              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 font-mono tabular-nums">
+                                {tx.categoryName} · {tx.occurredAt} · {tx.createdByName || tx.createdBy}
+                              </div>
+                              {tx.note && (
+                                <div className="text-[11px] text-slate-700 dark:text-slate-300 mt-1">
+                                  {tx.note}
+                                </div>
+                              )}
+                              {tx.evidenceUrl && (
+                                <a
+                                  href={tx.evidenceUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 text-[11px] text-blue-700 dark:text-blue-400 hover:underline mt-1"
+                                >
+                                  <ExternalLink className="w-3 h-3" />
+                                  <span>Minh chứng</span>
+                                </a>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 self-end md:self-center">
+                            <StatusBadge label={statusMeta.label} variant={statusMeta.variant} />
+                            {isAdminOrLecturer && tx.status === 'APPROVED' && (
+                              <button
+                                type="button"
+                                onClick={() => openCancelTxModal(tx.id)}
+                                aria-label="Hủy giao dịch"
+                                className="p-1 text-slate-500 hover:text-rose-700 dark:hover:text-rose-400 rounded cursor-pointer transition-colors"
+                                title="Hủy giao dịch"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-        </div>
+          )}
+
+          {/* TAB 3: APPROVAL */}
+          {isAdminOrLecturer && activeTab === 'APPROVAL' && (
+            transactions.length === 0 ? (
+              <EmptyState message="Chưa có dữ liệu." />
+            ) : filteredTransactions.length === 0 ? (
+              <FilteredEmptyState onClearFilters={handleClearFilters} />
+            ) : (
+              <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-700 dark:text-slate-300">
+                    <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-slate-800 text-[11px] font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-800">
+                      <tr>
+                        <th className="py-2.5 px-3">Mã & Thời gian</th>
+                        <th className="py-2.5 px-3">Sinh viên</th>
+                        <th className="py-2.5 px-3">Tiêu chí</th>
+                        <th className="py-2.5 px-3 text-center">Điểm</th>
+                        <th className="py-2.5 px-3">Ghi chú & Minh chứng</th>
+                        <th className="py-2.5 px-3">Người gửi</th>
+                        <th className="py-2.5 px-3 text-center">Trạng thái</th>
+                        <th className="py-2.5 px-3 text-right">Thao tác</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {paginatedTransactions.map((tx) => {
+                        const statusMeta = getTransactionStatusMeta(tx.status);
+                        return (
+                          <tr
+                            key={tx.id}
+                            className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors"
+                          >
+                            <td className="py-2.5 px-3 font-mono tabular-nums">
+                              <div className="font-semibold text-slate-900 dark:text-slate-100">#{tx.id}</div>
+                              <div className="text-[11px] text-slate-500 dark:text-slate-400">{tx.occurredAt}</div>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <div className="font-semibold text-slate-900 dark:text-slate-100">
+                                {tx.studentName || tx.studentCode}
+                              </div>
+                              <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                                {tx.studentCode} ({tx.classId})
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <div className="font-medium text-slate-900 dark:text-slate-100">{tx.criterionName}</div>
+                              <div className="text-[11px] text-slate-500 dark:text-slate-400">{tx.categoryName}</div>
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-mono tabular-nums font-bold">
+                              <span
+                                className={
+                                  tx.totalPointsDelta >= 0
+                                    ? 'text-emerald-700 dark:text-emerald-400'
+                                    : 'text-rose-700 dark:text-rose-400'
+                                }
+                              >
+                                {tx.totalPointsDelta > 0 ? `+${tx.totalPointsDelta}` : tx.totalPointsDelta}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-[11px]">
+                              {tx.note && <p className="text-slate-700 dark:text-slate-300 max-w-xs truncate">{tx.note}</p>}
+                              {tx.evidenceUrl && (
+                                <a
+                                  href={tx.evidenceUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-blue-700 dark:text-blue-400 hover:underline inline-flex items-center gap-1 font-medium mt-0.5"
+                                >
+                                  <ExternalLink className="w-3 h-3" />
+                                  <span>Minh chứng</span>
+                                </a>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-[11px] text-slate-600 dark:text-slate-400">
+                              {tx.createdByName || tx.createdBy}
+                            </td>
+                            <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                              <StatusBadge label={statusMeta.label} variant={statusMeta.variant} />
+                            </td>
+                            <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                              {tx.status === 'SUBMITTED' ? (
+                                <div className="inline-flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleApproveTransaction(tx.id)}
+                                    className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-[11px] font-semibold transition-colors inline-flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                    <span>Duyệt</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => openRejectTxModal(tx.id)}
+                                    className="px-2.5 py-1 bg-rose-700 hover:bg-rose-800 text-white rounded text-[11px] font-semibold transition-colors inline-flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <X className="w-3 h-3" />
+                                    <span>Từ chối</span>
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-[11px] text-slate-400">Đã xử lý</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <PaginationBar
+                  currentPage={approvalPage}
+                  pageSize={approvalPageSize}
+                  totalItems={filteredTransactions.length}
+                  onPageChange={setApprovalPage}
+                  onPageSizeChange={setApprovalPageSize}
+                />
+              </div>
+            )
+          )}
+
+          {/* TAB 4: OFFICERS */}
+          {isAdminOrLecturer && activeTab === 'OFFICERS' && (
+            <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                  <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
+                    Danh sách cán bộ lớp (Nền 75)
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsOfficerModalOpen(true)}
+                  className="px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded text-xs font-semibold transition-colors inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Phân công cán bộ</span>
+                </button>
+              </div>
+
+              {officerAssignments.length === 0 ? (
+                <EmptyState message="Chưa có dữ liệu." />
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {officerAssignments.map((oa) => (
+                    <div
+                      key={oa.id}
+                      className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded border border-slate-200 dark:border-slate-700 flex items-start justify-between gap-2"
+                    >
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold text-slate-900 dark:text-slate-100 text-xs">
+                            {oa.studentName}
+                          </span>
+                          <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                            ({oa.studentCode})
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-blue-700 dark:text-blue-400 font-semibold mt-0.5">
+                          {oa.roleName || 'Cán bộ'} · Lớp {oa.classId}
+                        </div>
+                        <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400 mt-1">
+                          {oa.academicYear} · Từ {oa.validFrom}
+                        </div>
+                      </div>
+                      <StatusBadge label="Đang hiệu lực" variant="info" />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 5: POLICY */}
+          {activeTab === 'POLICY' && (
+            <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-4">
+              <div className="border-b border-slate-200 dark:border-slate-800 pb-2.5 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                  <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
+                    Danh mục tiêu chí đánh giá
+                  </h2>
+                </div>
+                <span className="text-xs font-mono tabular-nums font-semibold text-slate-600 dark:text-slate-400">
+                  {criteria.length} tiêu chí
+                </span>
+              </div>
+
+              {categories.length === 0 ? (
+                <EmptyState message="Chưa có dữ liệu." />
+              ) : (
+                <div className="space-y-3">
+                  {categories.map((cat) => {
+                    const catCriteria = criteria.filter((c) => c.categoryId === cat.id);
+                    return (
+                      <div
+                        key={cat.id}
+                        className="border border-slate-200 dark:border-slate-800 rounded-md overflow-hidden"
+                      >
+                        <div className="bg-slate-100 dark:bg-slate-800 px-3.5 py-2 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
+                          <div className="font-bold text-slate-900 dark:text-slate-100">
+                            {cat.name}{' '}
+                            <span className="font-mono font-normal text-slate-600 dark:text-slate-400 ml-1.5">
+                              (Trần {cat.maxPoints}đ)
+                            </span>
+                          </div>
+                          <span className="text-[11px] font-mono tabular-nums text-slate-600 dark:text-slate-300">
+                            {catCriteria.length} tiêu chí
+                          </span>
+                        </div>
+
+                        <div className="divide-y divide-slate-200 dark:divide-slate-800">
+                          {catCriteria.map((c) => (
+                            <div
+                              key={c.id}
+                              className="p-3 text-xs flex items-center justify-between gap-2 hover:bg-blue-50/30 dark:hover:bg-blue-950/20 transition-colors"
+                            >
+                              <div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <StatusBadge
+                                    label={`${c.direction === 'ADD' ? '+' : '-'}${c.defaultPoints}đ`}
+                                    variant={c.direction === 'ADD' ? 'success' : 'danger'}
+                                    className="font-mono font-bold"
+                                  />
+                                  <span className="font-semibold text-slate-900 dark:text-slate-100">
+                                    {c.name}
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-2 font-mono">
+                                  <span>{c.code}</span>
+                                  <span aria-hidden="true">·</span>
+                                  <span>{c.calculationType}</span>
+                                  {c.allowBatch && (
+                                    <>
+                                      <span aria-hidden="true">·</span>
+                                      <span className="font-sans text-blue-700 dark:text-blue-400 font-medium">
+                                        Hỗ trợ nhập hàng loạt
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+
+                              {isAdminOrLecturer && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEntryCriterionId(c.id);
+                                    setIsQuickEntryOpen(true);
+                                  }}
+                                  className="px-2.5 py-1 text-xs text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 rounded border border-blue-200 dark:border-blue-800 transition-colors font-semibold cursor-pointer whitespace-nowrap"
+                                >
+                                  Áp dụng
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 6: APPEALS */}
+          {activeTab === 'APPEALS' && (
+            <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                  <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
+                    Phúc khảo & Khiếu nại điểm
+                  </h2>
+                </div>
+                {isStudentRole && (
+                  <button
+                    type="button"
+                    onClick={() => setIsAppealModalOpen(true)}
+                    className="px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded text-xs font-semibold transition-colors inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Gửi khiếu nại</span>
+                  </button>
+                )}
+              </div>
+
+              {visibleAppeals.length === 0 ? (
+                <EmptyState message="Chưa có dữ liệu." />
+              ) : (
+                <div className="space-y-2.5">
+                  {visibleAppeals.map((app) => {
+                    const appealMeta = getAppealStatusMeta(app.status);
+                    return (
+                      <div
+                        key={app.id}
+                        className="p-3.5 bg-slate-50 dark:bg-slate-800/40 rounded border border-slate-200 dark:border-slate-700 space-y-2 text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-slate-900 dark:text-slate-100">{app.title}</span>
+                            <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                              ({app.studentCode})
+                            </span>
+                          </div>
+                          <StatusBadge label={appealMeta.label} variant={appealMeta.variant} dot />
+                        </div>
+
+                        <p className="text-slate-700 dark:text-slate-300">{app.reason}</p>
+
+                        {app.evidenceUrl && (
+                          <a
+                            href={app.evidenceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] text-blue-700 dark:text-blue-400 hover:underline"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            <span>Minh chứng</span>
+                          </a>
+                        )}
+
+                        {app.replyNote && (
+                          <div className="p-2.5 bg-white dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-300">
+                            <strong className="text-slate-900 dark:text-slate-100">Phản hồi:</strong> {app.replyNote}
+                          </div>
+                        )}
+
+                        {isAdminOrLecturer && app.status === 'PENDING' && (
+                          <div className="flex items-center gap-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+                            <button
+                              type="button"
+                              onClick={() => openAcceptAppealModal(app.id)}
+                              className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-xs font-semibold cursor-pointer transition-colors"
+                            >
+                              Chấp nhận
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openRejectAppealModal(app.id)}
+                              className="px-2.5 py-1 bg-rose-700 hover:bg-rose-800 text-white rounded text-xs font-semibold cursor-pointer transition-colors"
+                            >
+                              Từ chối
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
 
-      {/* Lecturer Comment & 3 Evaluation Categories Entry Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative my-8">
-            <button
-              onClick={() => setIsModalOpen(false)}
-              className="absolute top-4 right-4 p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 rounded-full cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="flex items-center gap-2 mb-2">
-              <Award className="w-5 h-5 text-amber-500" />
-              <h3 className="text-lg font-bold text-zinc-900 dark:text-white">
-                {editingRecord ? 'Chỉnh Sửa Điểm Rèn Luyện 3 Mục' : 'Nhập Điểm Rèn Luyện 3 Mục & Nhận Xét'}
+      {/* MODAL 1: QUICK ENTRY */}
+      {isQuickEntryOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={quickEntryTitleId}
+          onClick={() => setIsQuickEntryOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-md max-w-xl w-full border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden flex flex-col max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex items-center justify-between">
+              <h3 id={quickEntryTitleId} className="font-bold text-sm text-slate-900 dark:text-slate-100">
+                Ghi nhận giao dịch điểm rèn luyện
               </h3>
+              <button
+                type="button"
+                onClick={() => setIsQuickEntryOpen(false)}
+                aria-label="Đóng biểu mẫu"
+                className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-              Nhập chi tiết 3 nội dung đánh giá theo Quy chế 1519/QC-TĐN. Hệ thống tự động tính tổng điểm và phân loại 6 mức chuẩn.
-            </p>
 
-            <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+            <form onSubmit={handleCreateQuickTransaction} className="p-4 space-y-3 overflow-y-auto flex-1 text-xs">
               <div>
-                <label className="font-semibold block mb-1">
-                  Chọn Sinh viên * {editingRecord && <span className="text-blue-600 font-normal">(Đang chỉnh sửa)</span>}
+                <label htmlFor={quickStudentId} className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  Sinh viên <span className="text-rose-600">*</span>
                 </label>
                 <select
-                  value={form.maSV}
-                  disabled={Boolean(editingRecord)}
-                  onChange={(e) => setForm({ ...form, maSV: e.target.value })}
-                  className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl disabled:opacity-75"
+                  id={quickStudentId}
+                  value={entryStudentCode}
+                  onChange={(e) => setEntryStudentCode(e.target.value)}
                   required
+                  className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
                 >
+                  <option value="">-- Chọn sinh viên --</option>
                   {students.map((s) => (
                     <option key={s.maSV} value={s.maSV}>
-                      {s.maSV} - {s.hoTen} ({s.lop})
+                      {s.hoTen} ({s.maSV}) - {s.lop}
                     </option>
                   ))}
                 </select>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-                <div>
-                  <label className="font-semibold block mb-1">Năm Học</label>
-                  <select
-                    value={form.namHoc}
-                    onChange={(e) => {
-                      const nh = e.target.value;
-                      const y = parseInt(nh.split('-')[0], 10) || 2026;
-                      setForm({ ...form, namHoc: nh, nam: form.thang >= 8 ? y : y + 1 });
-                    }}
-                    className="w-full p-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
-                  >
-                    <option value="2026-2027">2026-2027</option>
-                    <option value="2025-2026">2025-2026</option>
-                    <option value="2024-2025">2024-2025</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-semibold block mb-1">Học Kỳ</label>
-                  <select
-                    value={form.hocKy}
-                    onChange={(e) => setForm({ ...form, hocKy: e.target.value })}
-                    className="w-full p-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
-                  >
-                    <option value="HK1">Học kỳ 1</option>
-                    <option value="HK2">Học kỳ 2</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-semibold block mb-1">Tháng Đánh Giá</label>
-                  <select
-                    value={form.thang}
-                    onChange={(e) => {
-                      const m = Number(e.target.value);
-                      const y = parseInt((form.namHoc || '2026-2027').split('-')[0], 10) || 2026;
-                      setForm({ ...form, thang: m, nam: m >= 8 ? y : y + 1 });
-                    }}
-                    className="w-full p-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
-                  >
-                    <option value={8}>Tháng 8 (Bắt đầu HK1)</option>
-                    <option value={9}>Tháng 9</option>
-                    <option value={10}>Tháng 10</option>
-                    <option value={11}>Tháng 11</option>
-                    <option value={12}>Tháng 12</option>
-                    <option value={1}>Tháng 1</option>
-                    <option value={2}>Tháng 2</option>
-                    <option value={3}>Tháng 3</option>
-                    <option value={4}>Tháng 4</option>
-                    <option value={5}>Tháng 5</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-semibold block mb-1">Năm Lịch</label>
-                  <input
-                    type="number"
-                    value={form.nam}
-                    onChange={(e) => setForm({ ...form, nam: Number(e.target.value) })}
-                    className="w-full p-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl font-mono"
-                  />
-                </div>
-              </div>
-
-              {/* 3 Categories Sub-scores Entry */}
-              <div className="p-4 bg-zinc-50 dark:bg-zinc-800/80 rounded-2xl border border-zinc-200 dark:border-zinc-700 space-y-3">
-                <h4 className="font-bold text-zinc-900 dark:text-white text-xs uppercase tracking-wider flex items-center justify-between">
-                  <span>3 Nội Dung Đánh Giá (Tối đa 100 điểm)</span>
-                  <span className="text-amber-600 font-mono font-bold">{totalFormScore} / 100 điểm</span>
-                </h4>
-
-                <div>
-                  <label className="block text-[11px] font-medium text-zinc-700 dark:text-zinc-300 mb-1 flex items-center justify-between">
-                    <span>I. Ý thức học tập & kỷ luật lớp học *</span>
-                    <span className="text-blue-600 font-bold">Tối đa 40đ</span>
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="40"
-                    value={form.diemMuc1}
-                    onChange={(e) => setForm({ ...form, diemMuc1: Math.min(40, Math.max(0, Number(e.target.value))) })}
-                    className="w-full p-2 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl font-mono text-xs"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-medium text-zinc-700 dark:text-zinc-300 mb-1 flex items-center justify-between">
-                    <span>II. Chấp hành nội quy & phong trào Đoàn/Hội *</span>
-                    <span className="text-emerald-600 font-bold">Tối đa 35đ</span>
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="35"
-                    value={form.diemMuc2}
-                    onChange={(e) => setForm({ ...form, diemMuc2: Math.min(35, Math.max(0, Number(e.target.value))) })}
-                    className="w-full p-2 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl font-mono text-xs"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-medium text-zinc-700 dark:text-zinc-300 mb-1 flex items-center justify-between">
-                    <span>III. Phẩm chất đạo đức & lối sống cộng đồng *</span>
-                    <span className="text-purple-600 font-bold">Tối đa 25đ</span>
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="25"
-                    value={form.diemMuc3}
-                    onChange={(e) => setForm({ ...form, diemMuc3: Math.min(25, Math.max(0, Number(e.target.value))) })}
-                    className="w-full p-2 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl font-mono text-xs"
-                    required
-                  />
-                </div>
-
-                {/* Auto Calculated Live Result Bar */}
-                <div className="pt-2 border-t border-zinc-200 dark:border-zinc-700 flex items-center justify-between">
-                  <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
-                    Tổng: <strong className="font-mono text-sm text-blue-600 dark:text-blue-400">{totalFormScore}đ</strong>
-                  </span>
-                  <span className={`px-3 py-1 rounded-full text-xs font-bold border ${getRankBadgeClass(calculatedRank)}`}>
-                    Xếp loại: {calculatedRank}
-                  </span>
-                </div>
-              </div>
-
               <div>
-                <label className="font-semibold block mb-1">Nhận xét của Cố vấn / Giảng viên *</label>
-                <textarea
-                  rows={3}
-                  value={form.nhanXet}
-                  onChange={(e) => setForm({ ...form, nhanXet: e.target.value })}
-                  placeholder="Nhập nhận xét về chuyên cần, quy chế, hoạt động đoàn thể..."
-                  className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
+                <label htmlFor={quickCriterionId} className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  Tiêu chí cộng / trừ <span className="text-rose-600">*</span>
+                </label>
+                <select
+                  id={quickCriterionId}
+                  value={entryCriterionId}
+                  onChange={(e) => setEntryCriterionId(e.target.value)}
                   required
-                />
+                  className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                >
+                  <option value="">-- Chọn tiêu chí --</option>
+                  {criteria.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      [{c.direction === 'ADD' ? '+' : '-'}] [{c.categoryName}] {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedCriterionObj && (
+                <div className="bg-slate-50 dark:bg-slate-800/60 p-3 rounded border border-slate-200 dark:border-slate-700 space-y-2.5">
+                  {selectedCriterionObj.calculationType === 'SELECT_LEVEL' && selectedCriterionObj.levels && (
+                    <div>
+                      <label htmlFor={quickLevelId} className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
+                        Cấp bậc khen thưởng / vi phạm
+                      </label>
+                      <select
+                        id={quickLevelId}
+                        value={entrySelectedLevelId}
+                        onChange={(e) => {
+                          setEntrySelectedLevelId(e.target.value);
+                          const lvl = selectedCriterionObj.levels?.find((l) => l.id === e.target.value);
+                          if (lvl) setEntryPointsPerOccurrence(lvl.points);
+                        }}
+                        className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                      >
+                        {selectedCriterionObj.levels.map((lvl) => (
+                          <option key={lvl.id} value={lvl.id}>
+                            {lvl.levelName} ({lvl.points > 0 ? `+${lvl.points}` : lvl.points} điểm)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {selectedCriterionObj.calculationType === 'PER_OCCURRENCE' && (
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label htmlFor={quickOccId} className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
+                          Số lần phát sinh
+                        </label>
+                        <input
+                          id={quickOccId}
+                          type="number"
+                          min="1"
+                          max="20"
+                          value={entryOccurrences}
+                          onChange={(e) => setEntryOccurrences(Math.max(1, Number(e.target.value)))}
+                          className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs font-mono text-slate-900 dark:text-slate-100"
+                        />
+                      </div>
+                      <div>
+                        <span className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
+                          Điểm mỗi lần
+                        </span>
+                        <div className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 rounded text-xs font-mono font-bold text-slate-800 dark:text-slate-200">
+                          {entryPointsPerOccurrence > 0 ? `+${entryPointsPerOccurrence}` : entryPointsPerOccurrence} đ
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedCriterionObj.calculationType === 'MANUAL_RANGE' && (
+                    <div>
+                      <label htmlFor={quickRangeId} className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
+                        Điểm ({selectedCriterionObj.minPoints} đến {selectedCriterionObj.maxPoints})
+                      </label>
+                      <input
+                        id={quickRangeId}
+                        type="number"
+                        min={selectedCriterionObj.minPoints || 0}
+                        max={selectedCriterionObj.maxPoints || 10}
+                        value={entryPointsPerOccurrence}
+                        onChange={(e) => setEntryPointsPerOccurrence(Number(e.target.value))}
+                        className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs font-mono text-slate-900 dark:text-slate-100"
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between text-xs font-bold pt-2 border-t border-slate-200 dark:border-slate-700">
+                    <span>Tổng điểm thay đổi:</span>
+                    <span
+                      className={`text-sm font-mono tabular-nums ${
+                        entryOccurrences * entryPointsPerOccurrence >= 0
+                          ? 'text-emerald-700 dark:text-emerald-400'
+                          : 'text-rose-700 dark:text-rose-400'
+                      }`}
+                    >
+                      {entryOccurrences * entryPointsPerOccurrence > 0
+                        ? `+${entryOccurrences * entryPointsPerOccurrence}`
+                        : entryOccurrences * entryPointsPerOccurrence}{' '}
+                      điểm
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label htmlFor={quickDateId} className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                    Ngày phát sinh
+                  </label>
+                  <input
+                    id={quickDateId}
+                    type="date"
+                    value={entryOccurredAt}
+                    onChange={(e) => setEntryOccurredAt(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs font-mono text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+                <div>
+                  <label htmlFor={quickUrlId} className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                    Liên kết minh chứng
+                  </label>
+                  <input
+                    id={quickUrlId}
+                    type="url"
+                    placeholder="https://..."
+                    value={entryEvidenceUrl}
+                    onChange={(e) => setEntryEvidenceUrl(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="font-semibold block mb-1">Tên Giảng viên / Cố vấn</label>
-                <input
-                  type="text"
-                  value={form.nguoiDanhGia}
-                  onChange={(e) => setForm({ ...form, nguoiDanhGia: e.target.value })}
-                  className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
+                <label htmlFor={quickNoteId} className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  Ghi chú lý do
+                </label>
+                <textarea
+                  id={quickNoteId}
+                  rows={2}
+                  value={entryNote}
+                  onChange={(e) => setEntryNote(e.target.value)}
+                  className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
                 />
               </div>
 
-              <div className="pt-3 flex justify-end gap-2">
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
-                  onClick={() => {
-                    setIsModalOpen(false);
-                    setEditingRecord(null);
-                  }}
-                  className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 font-semibold cursor-pointer"
+                  onClick={() => setIsQuickEntryOpen(false)}
+                  className="px-3.5 py-1.5 text-xs text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors cursor-pointer"
                 >
                   Hủy
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold flex items-center gap-1.5 cursor-pointer shadow-md shadow-blue-600/20"
+                  className="px-4 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded text-xs font-semibold transition-colors cursor-pointer"
                 >
-                  <Send className="w-3.5 h-3.5" />
-                  {isSubmitting ? 'Đang lưu...' : editingRecord ? 'Cập Nhật Điểm' : 'Lưu Đánh Giá'}
+                  Lưu giao dịch
                 </button>
               </div>
             </form>
@@ -1590,119 +2028,506 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
         </div>
       )}
 
-      {/* MODAL CONFIRM DELETE INDIVIDUAL TRAINING POINT */}
-      {deleteIndividualRecord && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl max-w-md w-full p-6 shadow-2xl relative">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-3 bg-rose-100 dark:bg-rose-950/60 rounded-2xl text-rose-600">
-                <Trash2 className="w-6 h-6" />
-              </div>
+      {/* MODAL 2: BATCH EVENT ENTRY */}
+      {isBatchEntryOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={batchTitleId}
+          onClick={() => setIsBatchEntryOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-md max-w-xl w-full border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
+              <h3 id={batchTitleId} className="font-bold text-sm text-slate-900 dark:text-slate-100">
+                Nhập điểm sự kiện hàng loạt
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsBatchEntryOpen(false)}
+                aria-label="Đóng biểu mẫu"
+                className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3 text-xs">
               <div>
-                <h3 className="text-base font-bold text-zinc-900 dark:text-white">
-                  Xác Nhận Xóa Điểm Rèn Luyện
-                </h3>
-                <p className="text-xs text-zinc-500">Hành động này không thể hoàn tác</p>
+                <label htmlFor={batchClassSelectId} className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  Lớp sinh viên <span className="text-rose-600">*</span>
+                </label>
+                <select
+                  id={batchClassSelectId}
+                  value={batchClassId}
+                  onChange={(e) => {
+                    const c = e.target.value;
+                    setBatchClassId(c);
+                    if (c) {
+                      const classMates = students
+                        .filter((s) => s.lop.toLowerCase() === c.toLowerCase())
+                        .map((s) => s.maSV);
+                      setBatchSelectedStudents(classMates);
+                    } else {
+                      setBatchSelectedStudents([]);
+                    }
+                  }}
+                  className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                >
+                  <option value="">-- Chọn lớp sinh viên --</option>
+                  {availableClasses.map((cls) => (
+                    <option key={cls} value={cls}>
+                      {cls}
+                    </option>
+                  ))}
+                </select>
               </div>
-            </div>
 
-            <div className="bg-zinc-50 dark:bg-zinc-800/60 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-700/80 mb-5 space-y-2 text-xs">
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Sinh viên:</span>
-                <strong className="text-zinc-900 dark:text-white">
-                  {deleteIndividualRecord.hoTenSV || 'Sinh viên'} ({deleteIndividualRecord.maSV})
-                </strong>
+              <div>
+                <label htmlFor={batchCriterionSelectId} className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  Tiêu chí áp dụng <span className="text-rose-600">*</span>
+                </label>
+                <select
+                  id={batchCriterionSelectId}
+                  value={batchCriterionId}
+                  onChange={(e) => setBatchCriterionId(e.target.value)}
+                  className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                >
+                  <option value="">-- Chọn tiêu chí --</option>
+                  {criteria
+                    .filter((c) => c.allowBatch)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        [{c.direction === 'ADD' ? '+' : '-'}] {c.name} ({c.defaultPoints}đ)
+                      </option>
+                    ))}
+                </select>
               </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Lớp:</span>
-                <span className="font-medium text-zinc-800 dark:text-zinc-200">{deleteIndividualRecord.lop || selectedClass}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Kỳ đánh giá:</span>
-                <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                  Tháng {deleteIndividualRecord.thang}/{deleteIndividualRecord.nam} ({deleteIndividualRecord.hocKy || 'HK1'})
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Điểm & Xếp loại:</span>
-                <strong className="text-blue-600 dark:text-blue-400">
-                  {deleteIndividualRecord.diemRL} điểm — {deleteIndividualRecord.xepLoai || calculateTrainingRank(deleteIndividualRecord.diemRL)}
-                </strong>
-              </div>
-            </div>
 
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setDeleteIndividualRecord(null)}
-                className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-semibold text-xs cursor-pointer"
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={handleConfirmDeleteIndividual}
-                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-rose-600/20"
-              >
-                <Trash2 className="w-4 h-4" />
-                <span>{isSubmitting ? 'Đang xóa...' : 'Xóa Bản Ghi'}</span>
-              </button>
+              <div>
+                <label htmlFor={batchNoteInputId} className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  Ghi chú sự kiện
+                </label>
+                <input
+                  id={batchNoteInputId}
+                  type="text"
+                  value={batchNote}
+                  onChange={(e) => setBatchNote(e.target.value)}
+                  className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                />
+              </div>
+
+              <div className="p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 font-mono tabular-nums">
+                Số sinh viên được áp dụng: <strong>{batchSelectedStudents.length}</strong>
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsBatchEntryOpen(false)}
+                  className="px-3.5 py-1.5 text-xs text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (batchSelectedStudents.length === 0 || !batchCriterionId) {
+                      showToast('Vui lòng chọn lớp và tiêu chí sự kiện.');
+                      return;
+                    }
+                    const payload = {
+                      students: batchSelectedStudents.map((code) => {
+                        const st = students.find((s) => s.maSV.toLowerCase() === code.toLowerCase());
+                        return { studentCode: code, studentName: st?.hoTen, classId: st?.lop };
+                      }),
+                      criterionId: batchCriterionId,
+                      month: selectedMonth,
+                      year: selectedYear,
+                      note: batchNote || 'Hoạt động tập thể',
+                      createdBy: currentUser?.username || '',
+                      createdByName: currentUser?.fullName || currentUser?.username || '',
+                      autoSubmit: true,
+                    };
+                    const res = await trainingApiService.createBatchTransactions(payload);
+                    showToast(res.message);
+                    if (res.success) {
+                      setIsBatchEntryOpen(false);
+                      loadData();
+                    }
+                  }}
+                  className="px-4 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Xác nhận
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL CONFIRM DELETE CLASS TRAINING POINTS */}
-      {isDeleteClassModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl max-w-md w-full p-6 shadow-2xl relative">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-3 bg-rose-100 dark:bg-rose-950/60 rounded-2xl text-rose-600">
-                <AlertTriangle className="w-6 h-6" />
-              </div>
+      {/* MODAL 3: LOCK / STATUS WORKFLOW */}
+      {isLockModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={lockTitleId}
+          onClick={() => setIsLockModalOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-md max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
+              <h3 id={lockTitleId} className="font-bold text-sm text-slate-900 dark:text-slate-100">
+                Trạng thái tháng {selectedMonth}/{selectedYear}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsLockModalOpen(false)}
+                aria-label="Đóng hộp thoại"
+                className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3 text-xs">
               <div>
-                <h3 className="text-base font-bold text-zinc-900 dark:text-white">
-                  Xác Nhận Xóa ĐRL Cả Lớp
-                </h3>
-                <p className="text-xs text-rose-600 font-semibold">Cảnh báo: Toàn bộ bản ghi của lớp sẽ bị xóa</p>
+                <label htmlFor={lockStatusSelectId} className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  Trạng thái mới
+                </label>
+                <select
+                  id={lockStatusSelectId}
+                  value={lockTargetStatus}
+                  onChange={(e) => setLockTargetStatus(e.target.value as MonthStatus)}
+                  className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                >
+                  <option value="OPEN">Đang mở (Nhập điểm)</option>
+                  <option value="REVIEWING">Đang rà soát</option>
+                  <option value="PUBLISHED">Đã công bố tạm thời</option>
+                  <option value="LOCKED">Đã khóa sổ chính thức</option>
+                  <option value="DRAFT">Bản nháp</option>
+                </select>
+              </div>
+
+              {currentMonthObj.status === 'LOCKED' && lockTargetStatus !== 'LOCKED' && (
+                <div>
+                  <label htmlFor={lockReasonId} className="block font-semibold text-rose-700 dark:text-rose-400 mb-1">
+                    Lý do mở lại tháng đã khóa <span className="text-rose-600">*</span>
+                  </label>
+                  <textarea
+                    id={lockReasonId}
+                    rows={2}
+                    value={reopenReason}
+                    onChange={(e) => setReopenReason(e.target.value)}
+                    required
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-800 border border-rose-300 dark:border-rose-800 rounded text-xs text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+              )}
+
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsLockModalOpen(false)}
+                  className="px-3.5 py-1.5 text-xs text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  onClick={handleUpdateMonthStatus}
+                  className="px-4 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Cập nhật
+                </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
 
-            <p className="text-xs text-zinc-600 dark:text-zinc-300 mb-4 leading-relaxed">
-              Bạn có chắc chắn muốn xóa điểm rèn luyện của toàn bộ sinh viên thuộc lớp <strong className="text-zinc-900 dark:text-white">{selectedClass}</strong>?
-            </p>
-
-            <div className="bg-amber-50 dark:bg-amber-950/40 p-4 rounded-2xl border border-amber-200 dark:border-amber-800 mb-5 space-y-1.5 text-xs text-amber-900 dark:text-amber-200">
-              <p className="font-semibold">Phạm vi áp dụng theo bộ lọc hiện tại:</p>
-              <ul className="list-disc list-inside space-y-0.5 text-[11px] text-amber-800 dark:text-amber-300">
-                <li>Lớp: <strong>{selectedClass}</strong></li>
-                <li>Tháng: <strong>{selectedMonth ? `Tháng ${selectedMonth}` : 'Tất cả các tháng'}</strong></li>
-                <li>Học kỳ: <strong>{selectedSemester || 'Tất cả học kỳ'}</strong></li>
-                <li>Năm: <strong>{selectedYear || 'Tất cả các năm'}</strong></li>
-              </ul>
+      {/* MODAL 4: OFFICER ASSIGNMENT */}
+      {isOfficerModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={officerTitleId}
+          onClick={() => setIsOfficerModalOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-md max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
+              <h3 id={officerTitleId} className="font-bold text-sm text-slate-900 dark:text-slate-100">
+                Phân công cán bộ lớp
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsOfficerModalOpen(false)}
+                aria-label="Đóng biểu mẫu"
+                className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
-            <div className="flex justify-end gap-3">
+            <div className="p-4 space-y-3 text-xs">
+              <div>
+                <label htmlFor={officerStudentSelectId} className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  Sinh viên <span className="text-rose-600">*</span>
+                </label>
+                <select
+                  id={officerStudentSelectId}
+                  value={newOfficerStudentCode}
+                  onChange={(e) => {
+                    const code = e.target.value;
+                    setNewOfficerStudentCode(code);
+                    const st = students.find((s) => s.maSV.toLowerCase() === code.toLowerCase());
+                    if (st) setNewOfficerClassId(st.lop);
+                  }}
+                  className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                >
+                  <option value="">-- Chọn sinh viên --</option>
+                  {students.map((s) => (
+                    <option key={s.maSV} value={s.maSV}>
+                      {s.hoTen} ({s.maSV}) - {s.lop}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor={officerRoleSelectId} className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  Chức vụ <span className="text-rose-600">*</span>
+                </label>
+                <select
+                  id={officerRoleSelectId}
+                  value={newOfficerRoleId}
+                  onChange={(e) => setNewOfficerRoleId(e.target.value)}
+                  className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                >
+                  <option value="">-- Chọn chức vụ --</option>
+                  {officerRoles.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name} (Nền 75đ)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsOfficerModalOpen(false)}
+                  className="px-3.5 py-1.5 text-xs text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!newOfficerStudentCode || !newOfficerRoleId) {
+                      showToast('Vui lòng chọn sinh viên và chức vụ.');
+                      return;
+                    }
+                    const st = students.find(
+                      (s) => s.maSV.toLowerCase() === newOfficerStudentCode.toLowerCase()
+                    );
+                    const res = await trainingApiService.createOfficerAssignment({
+                      studentCode: newOfficerStudentCode,
+                      studentName: st?.hoTen,
+                      classId: newOfficerClassId || st?.lop,
+                      roleId: newOfficerRoleId,
+                      academicYear: `${selectedYear}-${selectedYear + 1}`,
+                      assignedBy: currentUser?.username || '',
+                    });
+                    showToast(res.message);
+                    if (res.success) {
+                      setIsOfficerModalOpen(false);
+                      loadData();
+                    }
+                  }}
+                  className="px-4 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Lưu phân công
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: STUDENT APPEAL */}
+      {isAppealModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={appealModalTitleId}
+          onClick={() => setIsAppealModalOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-md max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
+              <h3 id={appealModalTitleId} className="font-bold text-sm text-slate-900 dark:text-slate-100">
+                Gửi khiếu nại điểm rèn luyện
+              </h3>
               <button
                 type="button"
-                onClick={() => setIsDeleteClassModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-semibold text-xs cursor-pointer"
+                onClick={() => setIsAppealModalOpen(false)}
+                aria-label="Đóng biểu mẫu"
+                className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded cursor-pointer"
               >
-                Hủy
+                <X className="w-4 h-4" />
               </button>
+            </div>
+
+            <form onSubmit={handleCreateAppeal} className="p-4 space-y-3 text-xs">
+              <div>
+                <label htmlFor={appealTitleInputId} className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  Tiêu đề <span className="text-rose-600">*</span>
+                </label>
+                <input
+                  id={appealTitleInputId}
+                  type="text"
+                  value={appealTitle}
+                  onChange={(e) => setAppealTitle(e.target.value)}
+                  required
+                  className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                />
+              </div>
+
+              <div>
+                <label htmlFor={appealReasonInputId} className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  Nội dung giải trình <span className="text-rose-600">*</span>
+                </label>
+                <textarea
+                  id={appealReasonInputId}
+                  rows={3}
+                  value={appealReason}
+                  onChange={(e) => setAppealReason(e.target.value)}
+                  required
+                  className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                />
+              </div>
+
+              <div>
+                <label htmlFor={appealUrlInputId} className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  Liên kết minh chứng
+                </label>
+                <input
+                  id={appealUrlInputId}
+                  type="url"
+                  placeholder="https://..."
+                  value={appealEvidenceUrl}
+                  onChange={(e) => setAppealEvidenceUrl(e.target.value)}
+                  className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                />
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsAppealModalOpen(false)}
+                  className="px-3.5 py-1.5 text-xs text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Gửi khiếu nại
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 6: ACTION PROMPT */}
+      {actionPrompt.isOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={actionPromptTitleId}
+          onClick={() => setActionPrompt((prev) => ({ ...prev, isOpen: false }))}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-md max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
+              <h3 id={actionPromptTitleId} className="font-bold text-sm text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                <span>{actionPrompt.title}</span>
+              </h3>
               <button
                 type="button"
-                disabled={isSubmitting}
-                onClick={async () => {
-                  await handleConfirmDeleteClass();
-                  setIsDeleteClassModalOpen(false);
-                }}
-                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-rose-600/20"
+                onClick={() => setActionPrompt((prev) => ({ ...prev, isOpen: false }))}
+                aria-label="Đóng hộp thoại"
+                className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded cursor-pointer"
               >
-                <Trash2 className="w-4 h-4" />
-                <span>{isSubmitting ? 'Đang xóa...' : 'Xác Nhận Xóa Cả Lớp'}</span>
+                <X className="w-4 h-4" />
               </button>
+            </div>
+
+            <div className="p-4 space-y-3 text-xs">
+              <div>
+                <label htmlFor={actionPromptInputId} className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  {actionPrompt.inputLabel}
+                </label>
+                <textarea
+                  id={actionPromptInputId}
+                  rows={3}
+                  value={actionPrompt.inputValue}
+                  onChange={(e) => setActionPrompt((prev) => ({ ...prev, inputValue: e.target.value }))}
+                  required
+                  className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                />
+              </div>
+
+              {actionPrompt.showCheckbox && (
+                <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer pt-1">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(actionPrompt.checkboxChecked)}
+                    onChange={(e) =>
+                      setActionPrompt((prev) => ({ ...prev, checkboxChecked: e.target.checked }))
+                    }
+                    className="rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+                  />
+                  <span>{actionPrompt.checkboxLabel}</span>
+                </label>
+              )}
+
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setActionPrompt((prev) => ({ ...prev, isOpen: false }))}
+                  className="px-3.5 py-1.5 text-xs text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteActionPrompt}
+                  className="px-4 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Xác nhận
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -144,28 +144,28 @@ export const Header: React.FC<HeaderProps> = ({
     switch (role) {
       case 'ADMIN':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-purple-100 text-purple-800 dark:bg-purple-950/80 dark:text-purple-300 border border-purple-200 dark:border-purple-800/50">
-            <ShieldCheck className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
-            Admin
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-semibold bg-purple-50 text-purple-900 dark:bg-purple-950/80 dark:text-purple-200 border border-purple-200 dark:border-purple-700">
+            <ShieldCheck className="w-3 h-3 text-purple-700 dark:text-purple-300" />
+            Quản trị
           </span>
         );
       case 'LECTURER':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 border border-blue-200 dark:border-blue-800/50">
-            <UserCheck className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-semibold bg-blue-50 text-blue-900 dark:bg-blue-950/80 dark:text-blue-200 border border-blue-200 dark:border-blue-700">
+            <UserCheck className="w-3 h-3 text-blue-700 dark:text-blue-300" />
             Giảng viên
           </span>
         );
       case 'STUDENT':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/50">
-            <GraduationCap className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-900 dark:bg-emerald-950/80 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-700">
+            <GraduationCap className="w-3 h-3 text-emerald-700 dark:text-emerald-300" />
             Sinh viên
           </span>
         );
       default:
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
             Khách
           </span>
         );
@@ -465,8 +465,9 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header id="app-header" className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800/80 px-4 lg:px-8 py-3 transition-colors shadow-xs">
-      <div className="flex items-center justify-between gap-4 max-w-7xl mx-auto">
+    <header id="app-header" className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 h-[52px] px-4 lg:px-6 transition-colors shadow-xs dark:shadow-md dark:shadow-slate-950/40">
+      <div className="flex items-center justify-between gap-8 h-full max-w-full">
+        {/* Zone 1: Brand Wordmark (Single text element, no subtitle clutter) */}
         <div
           id="header-brand-logo"
           onClick={handleGoToDashboard}
@@ -480,26 +481,28 @@ export const Header: React.FC<HeaderProps> = ({
           tabIndex={0}
           title="Về trang tổng quan"
           aria-label="Về trang tổng quan"
-          className="flex items-center gap-3 cursor-pointer select-none group transition-all duration-200 hover:opacity-90 active:scale-[0.98] outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 rounded-xl p-1 -m-1"
+          className="flex items-center gap-2.5 cursor-pointer select-none group shrink-0 outline-hidden focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
         >
           <img
             src="/logo-truong.svg"
             alt="Logo Trường ĐH Trần Đại Nghĩa"
-            className="w-10 h-10 md:w-11 md:h-11 object-contain drop-shadow-sm shrink-0 group-hover:scale-105 transition-transform duration-200"
+            className="w-7 h-7 object-contain shrink-0"
             referrerPolicy="no-referrer"
           />
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-black tracking-tight text-slate-900 dark:text-white leading-none group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                TDNU <span className="text-blue-600 dark:text-blue-400">EDU</span>
-              </h1>
-             
-            </div>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 hidden sm:block font-medium">
-              Trường ĐH Trần Đại Nghĩa • Quản lý Đào tạo
-            </p>
-          </div>
+          <span className="text-base font-extrabold tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap">
+            TDNU <span className="text-blue-700 dark:text-blue-400 font-bold">EduAdmin</span>
+          </span>
         </div>
+
+        {/* Zone 2: Academic Period / Semester indicator (Contextual center) */}
+        <div className="hidden md:flex items-center gap-2 text-xs text-slate-700 dark:text-slate-200 font-medium">
+          <Calendar className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+          <span className="text-slate-600 dark:text-slate-200 font-semibold">Học kỳ hiện hành:</span>
+          <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-blue-300 rounded border border-slate-300 dark:border-slate-700 font-bold tabular-nums">
+            {currentActiveSemCode}
+          </span>
+        </div>
+
         <input
           type="file"
           ref={avatarInputRef}
@@ -507,127 +510,101 @@ export const Header: React.FC<HeaderProps> = ({
           className="hidden"
           onChange={handleAvatarFileSelect}
         />
-        <div className="flex items-center gap-2 sm:gap-3">
+
+        {/* Zone 3: Actions (Theme switcher, Notifications, User profile) */}
+        <div className="flex items-center gap-2 shrink-0">
           {/* Theme Toggle Button */}
           <button
             id="btn-theme-toggle"
             type="button"
             onClick={toggleTheme}
-            className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/80 rounded-2xl transition-all duration-200 cursor-pointer border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
-            title={`Chuyển chế độ ${isDark ? 'Sáng' : 'Tối'} (Hiện tại: ${theme === 'system' ? `Tự động (${isDark ? 'Tối' : 'Sáng'})` : isDark ? 'Tối' : 'Sáng'})`}
+            className="p-1.5 text-slate-700 hover:text-slate-900 dark:text-amber-300 dark:hover:text-amber-200 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer border border-transparent dark:border-slate-700 hover:border-slate-300"
+            title={`Chuyển chế độ ${isDark ? 'Sáng' : 'Tối'}`}
             aria-label="Chuyển chế độ giao diện Sáng / Tối"
           >
             {isDark ? (
-              <Sun className="w-5 h-5 text-amber-400 hover:rotate-90 transition-transform duration-300" />
+              <Sun className="w-4 h-4 text-amber-400" />
             ) : (
-              <Moon className="w-5 h-5 text-slate-700 dark:text-slate-300 hover:-rotate-12 transition-transform duration-300" />
+              <Moon className="w-4 h-4 text-slate-600" />
             )}
           </button>
 
+          {/* Notifications */}
           <div className="relative" ref={notificationRef}>
             <button
               onClick={handleToggleNotifications}
-              className="relative p-2 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/80 rounded-2xl transition-all duration-200 cursor-pointer border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
+              className="relative p-1.5 text-slate-700 hover:text-slate-900 dark:text-slate-200 dark:hover:text-white hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer border border-transparent dark:border-slate-700 hover:border-slate-300"
               title="Thông báo hệ thống"
             >
-              <Bell className="w-5 h-5" />
+              <Bell className="w-4 h-4" />
               {unreadCount > 0 ? (
-                <span className="absolute -top-1 -right-1 px-1.5 py-0.2 text-[10px] font-black text-white bg-rose-600 rounded-full min-w-[18px] text-center shadow-md border-2 border-white dark:border-slate-900 animate-pulse">
+                <span className="absolute top-0 right-0 px-1 py-0.2 text-[9px] font-bold text-white bg-rose-600 dark:bg-rose-500 rounded-sm min-w-[14px] text-center leading-tight shadow-xs">
                   {unreadCount}
                 </span>
               ) : null}
             </button>
             {isNotificationOpen && (
-              <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-                <div className="p-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
-                  <div className="flex items-center gap-2">
-                    <BellRing className="w-4 h-4 text-amber-400 animate-bounce" />
-                    <span className="font-extrabold text-xs uppercase tracking-wider">
-                      {currentUser?.role === 'STUDENT'
-                        ? `Thông Báo (${currentActiveSemCode})`
-                        : 'Đơn Đăng Ký Thi Lại / Học Lại'}
-                    </span>
-                  </div>
-                  <span className="bg-blue-600 text-white text-[10px] font-extrabold px-2.5 py-0.5 rounded-full">
-                    {notifications.length} thông báo
+              <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md shadow-lg dark:shadow-2xl dark:shadow-black/70 z-50 overflow-hidden">
+                <div className="p-3 bg-slate-50 dark:bg-slate-800/90 flex items-center justify-between border-b border-slate-200 dark:border-slate-700">
+                  <span className="font-bold text-xs text-slate-900 dark:text-white">
+                    {currentUser?.role === 'STUDENT'
+                      ? `Thông Báo (${currentActiveSemCode})`
+                      : 'Đơn Đăng Ký Thi Lại / Học Lại'}
+                  </span>
+                  <span className="bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-100 text-[10px] font-bold px-2 py-0.5 rounded border border-transparent dark:border-slate-600">
+                    {notifications.length}
                   </span>
                 </div>
-                <div className="max-h-80 overflow-y-auto p-3.5 space-y-2.5">
+                <div className="max-h-80 overflow-y-auto p-2 space-y-1.5">
                   {notifications.map((noti) => {
                     const isRead = readNotiIds.includes(noti.id);
                     return (
                       <div
                         key={noti.id}
-                        className={`p-3.5 rounded-2xl border text-xs space-y-1.5 transition-all ${
-                          isRead ? 'opacity-70 bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800' : ''
-                        } ${
-                          !isRead && noti.type === 'DANGER'
-                            ? 'bg-rose-50 dark:bg-rose-950/70 border-rose-200 dark:border-rose-800 text-rose-900 dark:text-rose-100 shadow-xs'
-                            : !isRead && noti.type === 'WARNING'
-                            ? 'bg-amber-50 dark:bg-amber-950/70 border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-100 shadow-xs'
-                            : !isRead && noti.type === 'EXAM'
-                            ? 'bg-indigo-50 dark:bg-indigo-950/70 border-indigo-200 dark:border-indigo-800 text-indigo-900 dark:text-indigo-100 shadow-xs'
-                            : !isRead && noti.type === 'RETAKE'
-                            ? 'bg-purple-50 dark:bg-purple-950/70 border-purple-200 dark:border-purple-800 text-purple-900 dark:text-purple-100 shadow-xs'
-                            : isRead
-                            ? 'text-slate-700 dark:text-slate-300'
-                            : 'bg-emerald-50 dark:bg-emerald-950/70 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-100 shadow-xs'
+                        className={`p-2.5 rounded border text-xs space-y-1 transition-colors ${
+                          isRead
+                            ? 'opacity-80 bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700/60 text-slate-600 dark:text-slate-300'
+                            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 shadow-xs'
                         }`}
                       >
-                        <div className="flex items-center justify-between gap-1.5 font-bold">
-                          <span className="line-clamp-1 flex items-center gap-1.5 text-xs">
-                            {noti.type === 'DANGER' && <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0" />}
-                            {noti.type === 'WARNING' && <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />}
-                            {noti.type === 'EXAM' && <BookOpen className="w-4 h-4 text-indigo-600 shrink-0" />}
-                            {noti.type === 'INFO' && <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
+                        <div className="flex items-center justify-between gap-1.5 font-semibold">
+                          <span className="line-clamp-1 flex items-center gap-1.5 text-xs text-slate-900 dark:text-slate-100">
+                            {noti.type === 'DANGER' && <ShieldAlert className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" />}
+                            {noti.type === 'WARNING' && <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />}
+                            {noti.type === 'EXAM' && <BookOpen className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />}
+                            {noti.type === 'INFO' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />}
                             {noti.title}
                           </span>
-                          <span
-                            className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 ${
-                              isRead
-                                ? 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                                : noti.type === 'DANGER'
-                                ? 'bg-rose-600 text-white'
-                                : noti.type === 'WARNING'
-                                ? 'bg-amber-500 text-slate-950'
-                                : noti.type === 'EXAM'
-                                ? 'bg-indigo-600 text-white'
-                                : noti.type === 'RETAKE'
-                                ? 'bg-purple-600 text-white'
-                                : 'bg-emerald-600 text-white'
-                            }`}
-                          >
-                            {isRead ? 'Đã đọc' : noti.tag}
+                          <span className="text-[10px] text-slate-500 dark:text-slate-300 font-medium shrink-0">
+                            {noti.time}
                           </span>
                         </div>
-                        <p className="text-[11px] leading-relaxed opacity-95 font-medium">{noti.content}</p>
-                        <div className="text-[10px] opacity-75 font-semibold pt-1.5 border-t border-black/5 dark:border-white/5 flex items-center justify-between">
-                          <span>{noti.time}</span>
-                          <span className="italic">{isRead ? '✓ Đã xem' : 'Mới'}</span>
-                        </div>
+                        <p className="text-[11.5px] leading-relaxed text-slate-700 dark:text-slate-200">{noti.content}</p>
                       </div>
                     );
                   })}
                 </div>
-                <div className="p-3 bg-slate-50 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-800 text-center">
+                <div className="p-2 bg-slate-50 dark:bg-slate-800/90 border-t border-slate-200 dark:border-slate-700 text-center">
                   <button
                     onClick={() => {
                       setIsNotificationOpen(false);
                       onSwitchView('dashboard');
                     }}
-                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-2xl shadow-sm hover:shadow transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    className="w-full py-1.5 text-xs text-blue-700 dark:text-blue-300 hover:dark:text-blue-200 hover:underline font-semibold flex items-center justify-center gap-1 cursor-pointer"
                   >
-                    <span>Xem chi tiết trong Báo Cáo</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
+                    <span>Xem toàn bộ thông báo trong Báo cáo</span>
+                    <ArrowRight className="w-3 h-3" />
                   </button>
                 </div>
               </div>
             )}
           </div>
+
+          {/* User Profile */}
           {currentUser ? (
-            <div className="flex items-center gap-3 pl-3 border-l border-slate-200 dark:border-slate-800 relative" ref={dropdownRef}>
+            <div className="flex items-center gap-2.5 pl-2 border-l border-slate-200 dark:border-slate-800 relative" ref={dropdownRef}>
               <div className="hidden sm:flex flex-col items-end">
-                <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                <span className="text-xs font-bold text-slate-900 dark:text-white leading-tight">
                   {currentUser.fullName}
                 </span>
                 <div className="mt-0.5">{getRoleBadge(currentUser.role)}</div>
@@ -635,32 +612,30 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                className="relative group cursor-pointer focus:outline-none"
+                className="flex items-center gap-1 p-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer focus:outline-none"
                 title="Tùy chọn tài khoản"
               >
                 <img
                   src={currentAvatar}
                   alt={currentUser.fullName}
-                  className="w-9 h-9 rounded-2xl object-cover ring-2 ring-blue-500/30 group-hover:ring-blue-600 transition-all shadow-xs"
+                  className="w-7 h-7 rounded object-cover border border-slate-200 dark:border-slate-700"
                 />
-                <span className="absolute -bottom-0.5 -right-0.5 bg-blue-600 text-white p-0.5 rounded-full shadow-md group-hover:scale-110 transition-transform">
-                  <Camera className="w-2.5 h-2.5" />
-                </span>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-500 dark:text-slate-300" />
               </button>
               {isDropdownOpen && (
-                <div className="absolute right-0 top-12 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
-                  <div className="px-4 py-3.5 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-800/30">
+                <div className="absolute right-0 top-10 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md shadow-lg dark:shadow-2xl dark:shadow-black/70 py-1 z-50">
+                  <div className="px-4 py-3.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/60">
                     <div className="flex items-center gap-3">
                       <img
                         src={currentAvatar}
                         alt={currentUser.fullName}
-                        className="w-10 h-10 rounded-2xl object-cover ring-2 ring-blue-500/30"
+                        className="w-9 h-9 rounded object-cover border border-slate-200 dark:border-slate-600"
                       />
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
                           {currentUser.fullName}
                         </p>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                        <p className="text-[11px] text-slate-500 dark:text-slate-300 truncate">
                           {currentUser.email || currentUser.username}
                         </p>
                         <div className="mt-1">{getRoleBadge(currentUser.role)}</div>
@@ -676,18 +651,18 @@ export const Header: React.FC<HeaderProps> = ({
                             setIsDropdownOpen(false);
                             onSwitchView('admin');
                           }}
-                          className="w-full text-left px-4 py-2.5 flex items-center gap-2.5 bg-indigo-50/80 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 transition-colors cursor-pointer border-b border-indigo-100 dark:border-indigo-900/50"
+                          className="w-full text-left px-4 py-2 flex items-center gap-2.5 text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors cursor-pointer border-b border-slate-100 dark:border-slate-800"
                         >
-                          <ShieldAlert className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                          <ShieldAlert className="w-4 h-4 text-blue-700 dark:text-blue-400" />
                           <div>
-                            <span className="font-bold block flex items-center gap-1.5">
+                            <span className="font-semibold block flex items-center gap-1.5">
                               Admin Console
-                              <span className="text-[9px] bg-indigo-600 text-white px-1.5 py-0.2 rounded font-mono font-bold">
-                                TOÀN QUYỀN
+                              <span className="text-[9px] bg-blue-700 text-white px-1.5 py-0.2 rounded font-mono font-bold">
+                                QUẢN TRỊ
                               </span>
                             </span>
-                            <span className="text-[10px] text-indigo-500/80 dark:text-indigo-400/80">
-                              Quản trị người dùng, import & sao lưu CSDL
+                            <span className="text-[10px] text-slate-500 dark:text-slate-300">
+                              Người dùng, import & sao lưu
                             </span>
                           </div>
                         </button>
@@ -699,12 +674,12 @@ export const Header: React.FC<HeaderProps> = ({
                       onClick={() => {
                         avatarInputRef.current?.click();
                       }}
-                      className="w-full text-left px-4 py-2.5 flex items-center gap-2.5 text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-950/60 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                      className="w-full text-left px-4 py-2 flex items-center gap-2.5 text-slate-700 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/80 hover:text-blue-700 dark:hover:text-blue-300 transition-colors cursor-pointer"
                     >
-                      <Camera className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      <Camera className="w-4 h-4 text-slate-500 dark:text-slate-300" />
                       <div>
-                        <span className="font-bold block">Đổi hình đại diện</span>
-                        <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                        <span className="font-semibold block">Đổi hình đại diện</span>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-300">
                           Tải ảnh từ thiết bị
                         </span>
                       </div>
@@ -719,13 +694,13 @@ export const Header: React.FC<HeaderProps> = ({
                         setConfirmPassword('');
                         setIsChangePasswordModalOpen(true);
                       }}
-                      className="w-full text-left px-4 py-2.5 flex items-center gap-2.5 text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-950/60 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                      className="w-full text-left px-4 py-2 flex items-center gap-2.5 text-slate-700 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800/80 hover:text-blue-700 dark:hover:text-blue-300 transition-colors cursor-pointer"
                     >
-                      <KeyRound className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                      <KeyRound className="w-4 h-4 text-slate-500 dark:text-slate-300" />
                       <div>
-                        <span className="font-bold block">Đổi mật khẩu</span>
-                        <span className="text-[10px] text-slate-400 dark:text-slate-500">
-                          Yêu cầu nhập mật khẩu cũ
+                        <span className="font-semibold block">Đổi mật khẩu</span>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-300">
+                          Yêu cầu mật khẩu cũ
                         </span>
                       </div>
                     </button>
@@ -734,17 +709,17 @@ export const Header: React.FC<HeaderProps> = ({
 
                     {/* Theme Selector Section */}
                     <div className="px-4 py-2">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
+                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-300 uppercase tracking-wider block mb-1.5">
                         Giao diện
                       </span>
-                      <div className="grid grid-cols-3 gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl">
+                      <div className="grid grid-cols-3 gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded border border-transparent dark:border-slate-700">
                         <button
                           type="button"
                           onClick={() => setTheme('light')}
-                          className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                          className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded text-[11px] font-bold transition-all cursor-pointer ${
                             theme === 'light'
-                              ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
-                              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                              ? 'bg-white dark:bg-slate-700 text-blue-700 dark:text-blue-300 shadow-xs border border-slate-200 dark:border-slate-600'
+                              : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                           }`}
                           title="Chế độ Sáng"
                         >
@@ -754,10 +729,10 @@ export const Header: React.FC<HeaderProps> = ({
                         <button
                           type="button"
                           onClick={() => setTheme('dark')}
-                          className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                          className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded text-[11px] font-bold transition-all cursor-pointer ${
                             theme === 'dark'
-                              ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
-                              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                              ? 'bg-white dark:bg-slate-700 text-blue-700 dark:text-blue-300 shadow-xs border border-slate-200 dark:border-slate-600'
+                              : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                           }`}
                           title="Chế độ Tối"
                         >
@@ -767,10 +742,10 @@ export const Header: React.FC<HeaderProps> = ({
                         <button
                           type="button"
                           onClick={() => setTheme('system')}
-                          className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                          className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded text-[11px] font-bold transition-all cursor-pointer ${
                             theme === 'system'
-                              ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
-                              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                              ? 'bg-white dark:bg-slate-700 text-blue-700 dark:text-blue-300 shadow-xs border border-slate-200 dark:border-slate-600'
+                              : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                           }`}
                           title="Theo hệ điều hành"
                         >
@@ -800,7 +775,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               id="btn-login-open"
               onClick={onOpenLoginModal}
-              className="inline-flex items-center gap-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-2xl shadow-sm transition-all cursor-pointer"
+              className="inline-flex items-center gap-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow-sm transition-all cursor-pointer"
             >
               Đăng nhập
             </button>
@@ -808,28 +783,29 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
       {isChangePasswordModalOpen && currentUser && createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl max-w-md w-full p-6 shadow-2xl relative">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4" role="dialog" aria-modal="true" aria-labelledby="modal-change-password-title">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg max-w-md w-full p-6 shadow-xl relative animate-in fade-in zoom-in-95 duration-150">
             <button
               type="button"
               onClick={() => setIsChangePasswordModalOpen(false)}
-              className="absolute top-4 right-4 p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 rounded-full transition-colors cursor-pointer"
+              aria-label="Đóng hộp thoại đổi mật khẩu"
+              className="absolute top-4 right-4 p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
-            <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-4">
-              Đổi Mật Khẩu
+            <h3 id="modal-change-password-title" className="text-base font-bold text-slate-900 dark:text-white mb-4">
+              Đổi Mật Khẩu Tài Khoản
             </h3>
             {errorMsg && (
-              <div className="mb-4 p-3 rounded-xl bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800/80 text-red-700 dark:text-red-300 text-xs flex items-start gap-2 animate-in fade-in">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-600 dark:text-red-400" />
+              <div className="mb-4 p-2.5 rounded border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 text-xs flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
                 <span>{errorMsg}</span>
               </div>
             )}
-            <form onSubmit={handleChangePasswordSubmit} className="space-y-3 text-xs">
+            <form onSubmit={handleChangePasswordSubmit} className="space-y-3.5 text-xs">
               <div>
-                <label className="font-semibold block mb-1 text-zinc-700 dark:text-zinc-300">
-                  Mật khẩu hiện tại (Mật khẩu cũ) <span className="text-red-500">*</span>
+                <label className="font-semibold block mb-1 text-slate-700 dark:text-slate-300">
+                  Mật khẩu hiện tại (Mật khẩu cũ) <span className="text-rose-600">*</span>
                 </label>
                 <div className="relative">
                   <input
@@ -837,21 +813,22 @@ export const Header: React.FC<HeaderProps> = ({
                     value={oldPassword}
                     onChange={(e) => setOldPassword(e.target.value)}
                     placeholder="Nhập mật khẩu hiện tại"
-                    className="w-full p-2.5 pr-10 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-zinc-900 dark:text-white font-medium"
+                    className="w-full px-3 py-1.5 pr-9 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 focus:border-blue-600 focus:ring-1 focus:ring-blue-600 focus:outline-none font-medium"
                     required
                   />
                   <button
                     type="button"
                     onClick={() => setShowOldPw(!showOldPw)}
-                    className="absolute right-3 top-2.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer"
+                    aria-label={showOldPw ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                    className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
                   >
-                    {showOldPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showOldPw ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                   </button>
                 </div>
               </div>
               <div>
-                <label className="font-semibold block mb-1 text-zinc-700 dark:text-zinc-300">
-                  Mật khẩu mới <span className="text-red-500">*</span>
+                <label className="font-semibold block mb-1 text-slate-700 dark:text-slate-300">
+                  Mật khẩu mới <span className="text-rose-600">*</span>
                 </label>
                 <div className="relative">
                   <input
@@ -859,21 +836,22 @@ export const Header: React.FC<HeaderProps> = ({
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     placeholder="Nhập mật khẩu mới (ít nhất 4 ký tự)"
-                    className="w-full p-2.5 pr-10 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-zinc-900 dark:text-white font-medium"
+                    className="w-full px-3 py-1.5 pr-9 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 focus:border-blue-600 focus:ring-1 focus:ring-blue-600 focus:outline-none font-medium"
                     required
                   />
                   <button
                     type="button"
                     onClick={() => setShowNewPw(!showNewPw)}
-                    className="absolute right-3 top-2.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer"
+                    aria-label={showNewPw ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                    className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
                   >
-                    {showNewPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showNewPw ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                   </button>
                 </div>
               </div>
               <div>
-                <label className="font-semibold block mb-1 text-zinc-700 dark:text-zinc-300">
-                  Xác nhận mật khẩu mới <span className="text-red-500">*</span>
+                <label className="font-semibold block mb-1 text-slate-700 dark:text-slate-300">
+                  Xác nhận mật khẩu mới <span className="text-rose-600">*</span>
                 </label>
                 <div className="relative">
                   <input
@@ -881,30 +859,31 @@ export const Header: React.FC<HeaderProps> = ({
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="Nhập lại mật khẩu mới"
-                    className="w-full p-2.5 pr-10 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-zinc-900 dark:text-white font-medium"
+                    className="w-full px-3 py-1.5 pr-9 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 focus:border-blue-600 focus:ring-1 focus:ring-blue-600 focus:outline-none font-medium"
                     required
                   />
                   <button
                     type="button"
                     onClick={() => setShowConfirmPw(!showConfirmPw)}
-                    className="absolute right-3 top-2.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer"
+                    aria-label={showConfirmPw ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                    className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
                   >
-                    {showConfirmPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showConfirmPw ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                   </button>
                 </div>
               </div>
-              <div className="pt-3 flex justify-end gap-2">
+              <div className="pt-3 flex justify-end gap-2 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setIsChangePasswordModalOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium text-xs hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors cursor-pointer"
+                  className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium text-xs hover:bg-slate-50 dark:hover:bg-slate-750 transition-colors cursor-pointer"
                 >
                   Hủy
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium text-xs transition-colors cursor-pointer shadow-md flex items-center gap-1.5"
+                  className="px-3.5 py-1.5 rounded bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white font-medium text-xs transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
                 >
                   {isSubmitting ? (
                     <>

@@ -339,15 +339,12 @@ volumes:
 
   return (
     <div className="space-y-6">
-      <div className="bg-white dark:bg-zinc-900 p-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
             <Container className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
-            <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Thư mục & Mã nguồn Backend NestJS Chuẩn</h2>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Thư mục & Mã nguồn Backend NestJS Chuẩn</h2>
           </div>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-            Kiến trúc Microservice chuẩn NestJS với TypeORM Entities, Controllers, Services, Migration và Dockerfile
-          </p>
         </div>
         <button
           onClick={handleCopy}
@@ -359,8 +356,8 @@ volumes:
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-4 bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm space-y-2">
-          <div className="text-xs font-bold text-zinc-400 uppercase tracking-wider px-2 mb-2 flex items-center gap-1.5">
+        <div className="lg:col-span-4 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
+          <div className="text-xs font-bold text-slate-400 uppercase tracking-wider px-2 mb-2 flex items-center gap-1.5">
             <FolderTree className="w-4 h-4 text-emerald-500" />
             Cấu trúc thư mục NestJS:
           </div>
@@ -374,13 +371,13 @@ volumes:
                   className={`w-full px-3 py-2.5 rounded-xl text-left text-xs font-mono transition-all flex items-center gap-2.5 ${
                     isActive
                       ? 'bg-emerald-50 text-emerald-900 border border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-200 dark:border-emerald-800 font-bold'
-                      : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/60'
+                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60'
                   }`}
                 >
-                  <FileCode className={`w-4 h-4 shrink-0 ${isActive ? 'text-emerald-600' : 'text-zinc-400'}`} />
+                  <FileCode className={`w-4 h-4 shrink-0 ${isActive ? 'text-emerald-600' : 'text-slate-400'}`} />
                   <div className="truncate">
                     <div className="truncate">{file.path}</div>
-                    <div className="text-[10px] text-zinc-400 font-sans truncate">{file.title}</div>
+                    <div className="text-[10px] text-slate-400 font-sans truncate">{file.title}</div>
                   </div>
                 </button>
               );
@@ -388,19 +385,19 @@ volumes:
           </div>
         </div>
 
-        <div className="lg:col-span-8 bg-zinc-950 p-5 rounded-2xl border border-zinc-800 shadow-xl overflow-hidden flex flex-col justify-between">
+        <div className="lg:col-span-8 bg-slate-950 p-5 rounded-2xl border border-slate-800 shadow-xl overflow-hidden flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between pb-3 mb-3 border-b border-zinc-800">
+            <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
               <span className="text-xs font-mono font-semibold text-emerald-400">{activeFile.path}</span>
-              <span className="text-[10px] font-mono uppercase bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded">
+              <span className="text-[10px] font-mono uppercase bg-slate-800 text-slate-300 px-2 py-0.5 rounded">
                 {activeFile.language}
               </span>
             </div>
-            <pre className="text-xs font-mono text-zinc-200 leading-relaxed overflow-x-auto p-2">
+            <pre className="text-xs font-mono text-slate-200 leading-relaxed overflow-x-auto p-2">
               <code>{activeFile.content}</code>
             </pre>
           </div>
-          <div className="mt-4 pt-3 border-t border-zinc-800 text-[11px] text-zinc-500 flex items-center justify-between font-mono">
+          <div className="mt-4 pt-3 border-t border-slate-800 text-[11px] text-slate-500 flex items-center justify-between font-mono">
             <span>Sử dụng NestJS CLI: nest g module {activeFile.id}</span>
             <span>TypeORM PostgreSQL Driver</span>
           </div>

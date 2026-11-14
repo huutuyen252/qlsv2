@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useId } from 'react';
 import { NghiLe } from '../../types';
 import { apiService } from '../../services/apiService';
-import { Sparkles, Calendar, Trash2, Edit3, X, CheckCircle2, Info, Plus } from 'lucide-react';
+import { Calendar, Trash2, Edit3, X, CheckCircle2, Plus } from 'lucide-react';
+import { ConfirmDialog, EmptyState, LoadingState, StatusBadge } from '../common';
 
 interface HolidayModalProps {
   isOpen: boolean;
@@ -18,12 +19,12 @@ interface HolidayModalProps {
 }
 
 const COMMON_HOLIDAYS_PRESETS = [
-  { label: '🇻🇳 Lễ Quốc khánh 02/09', name: 'Nghỉ lễ Quốc khánh 02/09', days: 2, defaultMonthDay: '09-01' },
-  { label: '🌸 Tết Nguyên Đán', name: 'Nghỉ Tết Nguyên Đán', days: 7 },
-  { label: '🎆 Tết Dương lịch 01/01', name: 'Nghỉ Tết Dương lịch 01/01', days: 1, defaultMonthDay: '01-01' },
-  { label: '🎖️ Lễ 30/4 & 01/05', name: 'Nghỉ lễ Giải phóng miền Nam 30/4 & Quốc tế Lao động 1/5', days: 2, defaultMonthDay: '04-30' },
-  { label: '👑 Giỗ Tổ Hùng Vương (10/3 AL)', name: 'Nghỉ Giỗ Tổ Hùng Vương', days: 1 },
-  { label: '🏖️ Nghỉ Hè / Giữa kỳ', name: 'Nghỉ Hè / Hoạt động ngoại khóa', days: 7 },
+  { label: 'Lễ Quốc khánh 02/09', name: 'Nghỉ lễ Quốc khánh 02/09', days: 2, defaultMonthDay: '09-01' },
+  { label: 'Tết Nguyên Đán', name: 'Nghỉ Tết Nguyên Đán', days: 7 },
+  { label: 'Tết Dương lịch 01/01', name: 'Nghỉ Tết Dương lịch 01/01', days: 1, defaultMonthDay: '01-01' },
+  { label: 'Lễ 30/4 & 01/05', name: 'Nghỉ lễ 30/4 & 01/05', days: 2, defaultMonthDay: '04-30' },
+  { label: 'Giỗ Tổ Hùng Vương', name: 'Nghỉ Giỗ Tổ Hùng Vương', days: 1 },
+  { label: 'Nghỉ Hè / Giữa kỳ', name: 'Nghỉ Hè / Hoạt động ngoại khóa', days: 7 },
 ];
 
 export const HolidayModal: React.FC<HolidayModalProps> = ({
@@ -39,11 +40,12 @@ export const HolidayModal: React.FC<HolidayModalProps> = ({
   showToast,
   editingHolidayItem = null,
 }) => {
+  const titleId = useId();
   const [holidays, setHolidays] = useState<NghiLe[]>([]);
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<NghiLe | null>(null);
 
-  // Form state
   const todayStr = new Date().toISOString().split('T')[0];
   const [dipLe, setDipLe] = useState('');
   const [tuNgay, setTuNgay] = useState(todayStr);
@@ -67,36 +69,49 @@ export const HolidayModal: React.FC<HolidayModalProps> = ({
     }
   };
 
-  useEffect(() => {
-    if (isOpen) {
-      loadHolidays();
-      if (editingHolidayItem) {
-        setEditingId(editingHolidayItem.id);
-        setDipLe(editingHolidayItem.dipLe);
-        setTuNgay(editingHolidayItem.tuNgay);
-        setDenNgay(editingHolidayItem.denNgay);
-        setGhiChu(editingHolidayItem.ghiChu || '');
-        setLop(editingHolidayItem.lop || 'ALL');
-        setHocKy(editingHolidayItem.hocKy || 'ALL');
-        setNamHoc(editingHolidayItem.namHoc || 'ALL');
-      } else {
-        resetForm();
-      }
-    }
-  }, [isOpen, editingHolidayItem]);
-
   const resetForm = () => {
     setEditingId(null);
     setDipLe('');
-    setTuNgay(new Date().toISOString().split('T')[0]);
-    setDenNgay(new Date().toISOString().split('T')[0]);
+    const today = new Date().toISOString().split('T')[0];
+    setTuNgay(today);
+    setDenNgay(today);
     setGhiChu('');
     setLop(currentClass || 'ALL');
     setHocKy(currentSemester !== 'ALL' ? currentSemester : 'ALL');
     setNamHoc(currentNamHoc !== 'ALL' ? currentNamHoc : 'ALL');
   };
 
-  const handleApplyPreset = (preset: typeof COMMON_HOLIDAYS_PRESETS[0]) => {
+  useEffect(() => {
+    if (!isOpen) return;
+    loadHolidays();
+    if (editingHolidayItem) {
+      setEditingId(editingHolidayItem.id);
+      setDipLe(editingHolidayItem.dipLe);
+      setTuNgay(editingHolidayItem.tuNgay);
+      setDenNgay(editingHolidayItem.denNgay);
+      setGhiChu(editingHolidayItem.ghiChu || '');
+      setLop(editingHolidayItem.lop || 'ALL');
+      setHocKy(editingHolidayItem.hocKy || 'ALL');
+      setNamHoc(editingHolidayItem.namHoc || 'ALL');
+    } else {
+      resetForm();
+    }
+  }, [isOpen, editingHolidayItem]);
+
+  useEffect(() => {
+    if (!isOpen || deleteTarget) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, deleteTarget, onClose]);
+
+  if (!isOpen) return null;
+
+  const handleApplyPreset = (preset: (typeof COMMON_HOLIDAYS_PRESETS)[0]) => {
     setDipLe(preset.name);
     const currentYear = new Date().getFullYear();
     if (preset.defaultMonthDay) {
@@ -112,10 +127,8 @@ export const HolidayModal: React.FC<HolidayModalProps> = ({
       endDate.setDate(startDate.getDate() + (preset.days - 1));
       setDenNgay(endDate.toISOString().split('T')[0]);
     }
-    setGhiChu(`Sinh viên được nghỉ học dịp ${preset.name} theo kế hoạch đào tạo của Nhà trường.`);
   };
 
-  // Calculate day count
   const calculateDays = () => {
     if (!tuNgay || !denNgay) return 1;
     const start = new Date(tuNgay);
@@ -127,15 +140,15 @@ export const HolidayModal: React.FC<HolidayModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!dipLe.trim()) {
-      showToast('Vui lòng nhập tên dịp nghỉ lễ!');
+      showToast('Vui lòng nhập tên dịp nghỉ lễ.');
       return;
     }
     if (!tuNgay || !denNgay) {
-      showToast('Vui lòng chọn khoảng ngày nghỉ lễ!');
+      showToast('Vui lòng chọn khoảng ngày nghỉ lễ.');
       return;
     }
     if (new Date(tuNgay) > new Date(denNgay)) {
-      showToast('Ngày bắt đầu không được lớn hơn ngày kết thúc!');
+      showToast('Ngày bắt đầu không được lớn hơn ngày kết thúc.');
       return;
     }
 
@@ -152,25 +165,17 @@ export const HolidayModal: React.FC<HolidayModalProps> = ({
 
       if (editingId) {
         const res = await apiService.updateHoliday(editingId, payload);
-        if (res.success) {
-          showToast(`Đã cập nhật lịch nghỉ lễ "${dipLe}"!`);
-        } else {
-          showToast('Cập nhật nghỉ lễ thất bại');
-        }
+        showToast(res.success ? `Đã cập nhật lịch nghỉ lễ "${dipLe}".` : 'Cập nhật nghỉ lễ thất bại.');
       } else {
         const res = await apiService.createHoliday(payload);
-        if (res.success) {
-          showToast(`Đã thêm mới lịch nghỉ lễ "${dipLe}"!`);
-        } else {
-          showToast('Thêm lịch nghỉ lễ thất bại');
-        }
+        showToast(res.success ? `Đã thêm lịch nghỉ lễ "${dipLe}".` : 'Thêm lịch nghỉ lễ thất bại.');
       }
 
       await loadHolidays();
       resetForm();
       if (onSuccess) onSuccess();
     } catch {
-      showToast('Có lỗi xảy ra khi lưu lịch nghỉ lễ');
+      showToast('Có lỗi xảy ra khi lưu lịch nghỉ lễ.');
     }
   };
 
@@ -185,65 +190,49 @@ export const HolidayModal: React.FC<HolidayModalProps> = ({
     setNamHoc(item.namHoc || 'ALL');
   };
 
-  const handleDeleteItem = async (id: string, name: string) => {
-    if (!window.confirm(`Bạn có chắc chắn muốn xóa lịch nghỉ lễ "${name}"?`)) return;
-    try {
-      const res = await apiService.deleteHoliday(id);
-      if (res.success) {
-        showToast(`Đã xóa lịch nghỉ lễ "${name}"!`);
-        await loadHolidays();
-        if (editingId === id) resetForm();
-        if (onSuccess) onSuccess();
-      } else {
-        showToast('Xóa nghỉ lễ thất bại');
-      }
-    } catch {
-      showToast('Không thể xóa lịch nghỉ lễ này');
-    }
-  };
-
-  if (!isOpen) return null;
-
   const totalDays = calculateDays();
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-xs z-50 flex items-start justify-center p-4 pt-16 sm:pt-20 pb-6 overflow-y-auto">
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 w-full max-w-2xl p-5 sm:p-6 shadow-2xl relative max-h-[calc(100vh-5rem)] flex flex-col">
-        {/* Header */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 p-1.5 text-zinc-400 hover:text-zinc-600 rounded-lg cursor-pointer z-10"
-        >
-          <X className="w-5 h-5" />
-        </button>
-        <div className="flex items-center gap-2.5 mb-4 shrink-0">
-          <div className="w-9 h-9 rounded-xl bg-emerald-100 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-300 flex items-center justify-center font-bold">
-            <Sparkles className="w-5 h-5" />
-          </div>
-          <div>
-            <h3 className="text-base font-bold text-zinc-900 dark:text-white">
-              {editingId ? 'Chỉnh Sửa Lịch Nghỉ Lễ / Tết' : 'Thêm Lịch Nghỉ Lễ / Tết'}
+    <div
+      className="fixed inset-0 bg-slate-950/60 z-50 flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      onClick={onClose}
+    >
+      <div
+        className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shrink-0">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
+            <h3 id={titleId} className="text-sm font-bold text-slate-900 dark:text-slate-100">
+              {editingId ? 'Chỉnh sửa lịch nghỉ lễ' : 'Lịch nghỉ lễ'}
             </h3>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Cấu hình các dịp nghỉ lễ theo khoảng ngày (tự động áp dụng toàn bộ các tiết học)
-            </p>
           </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Đóng hộp thoại"
+            className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded hover:bg-slate-200/60 dark:hover:bg-slate-800 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
 
-        {/* Scrollable Container */}
-        <div className="overflow-y-auto space-y-4 pr-1 flex-1 text-xs">
-          {/* Preset Chips */}
+        <div className="p-4 overflow-y-auto space-y-4 flex-1 text-xs">
           <div>
-            <label className="font-bold text-zinc-700 dark:text-zinc-300 block mb-1.5 flex items-center gap-1.5">
-              <span>Gợi ý nhanh dịp nghỉ lễ:</span>
-            </label>
+            <span className="font-semibold text-slate-700 dark:text-slate-300 block mb-1.5">
+              Mẫu dịp nghỉ lễ:
+            </span>
             <div className="flex flex-wrap gap-1.5">
               {COMMON_HOLIDAYS_PRESETS.map((p) => (
                 <button
                   key={p.name}
                   type="button"
                   onClick={() => handleApplyPreset(p)}
-                  className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800/80 transition-colors cursor-pointer"
+                  className="px-2.5 py-1 rounded text-[11px] font-medium bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 cursor-pointer"
                 >
                   {p.label}
                 </button>
@@ -251,39 +240,37 @@ export const HolidayModal: React.FC<HolidayModalProps> = ({
             </div>
           </div>
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-3 bg-zinc-50 dark:bg-zinc-800/50 p-4 rounded-xl border border-zinc-200 dark:border-zinc-700">
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-3 bg-slate-50 dark:bg-slate-800/40 p-3.5 rounded-md border border-slate-200 dark:border-slate-800"
+          >
             <div>
-              <label className="font-bold text-zinc-800 dark:text-zinc-200 block mb-1">
-                Dịp nghỉ lễ / Tên kỳ nghỉ <span className="text-red-500">*</span>
+              <label htmlFor="holiday-name-input" className="font-semibold text-slate-800 dark:text-slate-200 block mb-1">
+                Tên dịp nghỉ lễ *
               </label>
               <input
+                id="holiday-name-input"
                 type="text"
                 value={dipLe}
                 onChange={(e) => setDipLe(e.target.value)}
-                placeholder="Ví dụ: Nghỉ lễ Quốc khánh 02/09, Nghỉ Tết Nguyên Đán Giáp Thìn..."
-                className="w-full p-2.5 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl font-bold text-xs focus:ring-2 focus:ring-emerald-500/20 focus:outline-none"
+                placeholder="Nhập tên dịp nghỉ lễ"
+                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 focus:border-blue-600 focus:outline-none"
                 required
               />
             </div>
 
-            {/* Date Range Selection */}
-            <div className="bg-emerald-50/50 dark:bg-emerald-950/20 p-3 rounded-xl border border-emerald-200/80 dark:border-emerald-900/50 space-y-2">
+            <div className="bg-white dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-800 space-y-2">
               <div className="flex items-center justify-between">
-                <label className="font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
-                  <Calendar className="w-4 h-4 text-emerald-600" />
-                  <span>Khoảng ngày nghỉ lễ (Không cần chọn tiết) <span className="text-red-500">*</span>:</span>
-                </label>
-                <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/60 px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-700">
-                  {totalDays} ngày nghỉ
-                </span>
+                <span className="font-semibold text-slate-800 dark:text-slate-200">Khoảng ngày nghỉ *</span>
+                <StatusBadge label={`${totalDays} ngày`} variant="success" />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="font-semibold block mb-1 text-zinc-600 dark:text-zinc-400 text-[11px]">
-                    Từ ngày:
+                  <label htmlFor="holiday-from-date" className="font-medium block mb-1 text-slate-600 dark:text-slate-300 text-[11px]">
+                    Từ ngày
                   </label>
                   <input
+                    id="holiday-from-date"
                     type="date"
                     value={tuNgay}
                     onChange={(e) => {
@@ -292,59 +279,55 @@ export const HolidayModal: React.FC<HolidayModalProps> = ({
                         setDenNgay(e.target.value);
                       }
                     }}
-                    className="w-full p-2 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg font-bold text-xs"
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded font-mono text-slate-900 dark:text-slate-100"
                     required
                   />
                 </div>
                 <div>
-                  <label className="font-semibold block mb-1 text-zinc-600 dark:text-zinc-400 text-[11px]">
-                    Đến hết ngày:
+                  <label htmlFor="holiday-to-date" className="font-medium block mb-1 text-slate-600 dark:text-slate-300 text-[11px]">
+                    Đến ngày
                   </label>
                   <input
+                    id="holiday-to-date"
                     type="date"
                     value={denNgay}
                     min={tuNgay}
                     onChange={(e) => setDenNgay(e.target.value)}
-                    className="w-full p-2 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg font-bold text-xs"
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded font-mono text-slate-900 dark:text-slate-100"
                     required
                   />
                 </div>
               </div>
-              <div className="flex items-center gap-1.5 text-[11px] text-emerald-800 dark:text-emerald-300 pt-1">
-                <Info className="w-3.5 h-3.5 shrink-0" />
-                <span>
-                  Nghỉ lễ áp dụng toàn bộ ngày (các tiết sáng và chiều đều nghỉ), không phải chọn từng tiết học.
-                </span>
-              </div>
             </div>
 
-            {/* Scope: Class, Semester, Academic Year */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
               <div>
-                <label className="font-semibold block mb-1 text-zinc-600 dark:text-zinc-400 text-[11px]">
-                  Lớp áp dụng:
+                <label htmlFor="holiday-lop" className="font-medium block mb-1 text-slate-600 dark:text-slate-300 text-[11px]">
+                  Lớp áp dụng
                 </label>
                 <select
+                  id="holiday-lop"
                   value={lop}
                   onChange={(e) => setLop(e.target.value)}
-                  className="w-full p-2 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg text-xs font-semibold"
+                  className="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100"
                 >
-                  <option value="ALL">Toàn trường (Tất cả lớp)</option>
+                  <option value="ALL">Tất cả lớp</option>
                   {availableClasses.map((c) => (
                     <option key={c} value={c}>
-                      Lớp {c}
+                      {c}
                     </option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="font-semibold block mb-1 text-zinc-600 dark:text-zinc-400 text-[11px]">
-                  Học kỳ:
+                <label htmlFor="holiday-hocky" className="font-medium block mb-1 text-slate-600 dark:text-slate-300 text-[11px]">
+                  Học kỳ
                 </label>
                 <select
+                  id="holiday-hocky"
                   value={hocKy}
                   onChange={(e) => setHocKy(e.target.value)}
-                  className="w-full p-2 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg text-xs font-semibold"
+                  className="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100"
                 >
                   <option value="ALL">Tất cả học kỳ</option>
                   {availableSemesters.map((s) => (
@@ -355,13 +338,14 @@ export const HolidayModal: React.FC<HolidayModalProps> = ({
                 </select>
               </div>
               <div>
-                <label className="font-semibold block mb-1 text-zinc-600 dark:text-zinc-400 text-[11px]">
-                  Năm học:
+                <label htmlFor="holiday-namhoc" className="font-medium block mb-1 text-slate-600 dark:text-slate-300 text-[11px]">
+                  Năm học
                 </label>
                 <select
+                  id="holiday-namhoc"
                   value={namHoc}
                   onChange={(e) => setNamHoc(e.target.value)}
-                  className="w-full p-2 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg text-xs font-semibold"
+                  className="w-full px-2 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded font-mono text-slate-900 dark:text-slate-100"
                 >
                   <option value="ALL">Tất cả năm học</option>
                   {availableNamHoc.map((y) => (
@@ -373,105 +357,95 @@ export const HolidayModal: React.FC<HolidayModalProps> = ({
               </div>
             </div>
 
-            {/* Note */}
             <div>
-              <label className="font-semibold block mb-1 text-zinc-600 dark:text-zinc-400 text-[11px]">
-                Ghi chú / Thông báo cho sinh viên:
+              <label htmlFor="holiday-ghichu" className="font-medium block mb-1 text-slate-600 dark:text-slate-300 text-[11px]">
+                Ghi chú
               </label>
               <textarea
+                id="holiday-ghichu"
                 rows={2}
                 value={ghiChu}
                 onChange={(e) => setGhiChu(e.target.value)}
-                placeholder="VD: Sinh viên toàn trường nghỉ học theo quy định. Chúc các đồng chí kỳ nghỉ lễ an toàn, vui vẻ!"
-                className="w-full p-2 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg text-xs"
+                className="w-full p-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100"
               />
             </div>
 
-            {/* Form Actions */}
             <div className="flex items-center justify-end gap-2 pt-1">
               {editingId && (
                 <button
                   type="button"
                   onClick={resetForm}
-                  className="px-3 py-2 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-xl font-semibold cursor-pointer"
+                  className="px-3 py-1.5 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 rounded font-medium cursor-pointer"
                 >
                   Hủy sửa
                 </button>
               )}
               <button
                 type="submit"
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md shadow-emerald-600/20 transition-all flex items-center gap-1.5 cursor-pointer"
+                className="px-3.5 py-1.5 bg-blue-700 hover:bg-blue-800 text-white font-semibold rounded inline-flex items-center gap-1.5 cursor-pointer"
               >
                 {editingId ? (
                   <>
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Lưu Cập Nhật Nghỉ Lễ</span>
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Lưu cập nhật</span>
                   </>
                 ) : (
                   <>
-                    <Plus className="w-4 h-4" />
-                    <span>Thêm Kỳ Nghỉ Lễ</span>
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Thêm lịch nghỉ lễ</span>
                   </>
                 )}
               </button>
             </div>
           </form>
 
-          {/* List of holidays */}
-          <div className="space-y-2 pt-2">
-            <div className="flex items-center justify-between">
-              <label className="font-bold text-zinc-800 dark:text-zinc-200">
-                Danh sách các dịp nghỉ lễ đã thêm ({holidays.length}):
-              </label>
-            </div>
+          <div className="space-y-2">
+            <span className="font-bold uppercase tracking-wider text-[11px] text-slate-500 dark:text-slate-400 block">
+              Danh sách nghỉ lễ ({holidays.length})
+            </span>
 
             {loading ? (
-              <div className="text-center py-4 text-zinc-400">Đang tải dữ liệu nghỉ lễ...</div>
+              <LoadingState rows={3} />
             ) : holidays.length === 0 ? (
-              <div className="p-4 text-center text-zinc-400 bg-zinc-50 dark:bg-zinc-800/30 rounded-xl border border-zinc-200 dark:border-zinc-800 italic">
-                Chưa có lịch nghỉ lễ nào được lưu. Bạn có thể chọn gợi ý bên trên hoặc nhập thông tin để thêm mới.
-              </div>
+              <EmptyState message="Chưa có dữ liệu." />
             ) : (
               <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                 {holidays.map((h) => (
                   <div
                     key={h.id}
-                    className="p-3 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-xs flex items-center justify-between gap-3 hover:border-emerald-300 dark:hover:border-emerald-700 transition-colors"
+                    className="p-2.5 bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3"
                   >
                     <div className="space-y-0.5 flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-extrabold text-xs text-zinc-900 dark:text-white truncate">
-                          🎉 {h.dipLe}
+                        <span className="font-semibold text-slate-900 dark:text-slate-100 truncate">
+                          {h.dipLe}
                         </span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300/80 dark:border-emerald-800">
-                          {h.tuNgay === h.denNgay ? h.tuNgay : `${h.tuNgay} → ${h.denNgay}`}
-                        </span>
-                        {h.lop && h.lop !== 'ALL' && (
-                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200">
-                            Lớp {h.lop}
-                          </span>
-                        )}
+                        <StatusBadge
+                          label={h.tuNgay === h.denNgay ? h.tuNgay : `${h.tuNgay} → ${h.denNgay}`}
+                          variant="success"
+                        />
+                        {h.lop && h.lop !== 'ALL' && <StatusBadge label={h.lop} variant="info" />}
                       </div>
                       {h.ghiChu && (
-                        <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                          {h.ghiChu}
-                        </p>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{h.ghiChu}</p>
                       )}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
                         type="button"
                         onClick={() => handleEditItem(h)}
-                        title="Sửa kỳ nghỉ"
-                        className="p-1.5 text-zinc-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950 rounded-lg cursor-pointer transition-colors"
+                        aria-label={`Sửa ${h.dipLe}`}
+                        title="Sửa"
+                        className="p-1.5 text-slate-400 hover:text-blue-700 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 rounded cursor-pointer"
                       >
                         <Edit3 className="w-3.5 h-3.5" />
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleDeleteItem(h.id, h.dipLe)}
-                        title="Xóa kỳ nghỉ"
-                        className="p-1.5 text-zinc-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950 rounded-lg cursor-pointer transition-colors"
+                        onClick={() => setDeleteTarget(h)}
+                        aria-label={`Xóa ${h.dipLe}`}
+                        title="Xóa"
+                        className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -483,17 +457,43 @@ export const HolidayModal: React.FC<HolidayModalProps> = ({
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="pt-3 mt-3 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-end">
+        <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex items-center justify-end shrink-0">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-bold rounded-xl cursor-pointer text-xs"
+            className="px-3.5 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium rounded cursor-pointer text-xs"
           >
             Đóng
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={Boolean(deleteTarget)}
+        title="Xác nhận xóa lịch nghỉ lễ"
+        message={`Bạn có chắc chắn muốn xóa lịch nghỉ lễ "${deleteTarget?.dipLe || ''}"?`}
+        confirmLabel="Xóa"
+        variant="danger"
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          try {
+            const res = await apiService.deleteHoliday(deleteTarget.id);
+            if (res.success) {
+              showToast(`Đã xóa lịch nghỉ lễ "${deleteTarget.dipLe}".`);
+              await loadHolidays();
+              if (editingId === deleteTarget.id) resetForm();
+              if (onSuccess) onSuccess();
+            } else {
+              showToast('Xóa nghỉ lễ thất bại.');
+            }
+          } catch {
+            showToast('Không thể xóa lịch nghỉ lễ này.');
+          } finally {
+            setDeleteTarget(null);
+          }
+        }}
+      />
     </div>
   );
 };

@@ -38,26 +38,611 @@
     background-color: rgba(37, 99, 235, 0.25);
     color: inherit;
   }
+
+  /* High-contrast visible focus rings for keyboard navigation (WCAG 2.1 AA) */
+  :focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+  }
 }
 
-/* Custom UI Utilities for modern feel */
-.glass-panel {
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+.dark :focus-visible {
+  outline: 2px solid #60a5fa !important;
+  outline-offset: 2px !important;
 }
 
-.dark .glass-panel {
-  background: rgba(15, 23, 42, 0.85);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+/* Screen reader only utility class for accessible skip links and announcements */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border-width: 0 !important;
 }
 
-.modern-card {
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+.focus\:not-sr-only:focus {
+  position: static !important;
+  width: auto !important;
+  height: auto !important;
+  padding: inherit !important;
+  margin: inherit !important;
+  overflow: visible !important;
+  clip: auto !important;
+  white-space: normal !important;
 }
 
-.modern-card:hover {
-  transform: translateY(-1px);
+/* Touch friendly horizontal scrollbar for mobile segmented navigation */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
 }
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Tabular numbers for all numeric data */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Academic Administration System Design Tokens - TDNU Visual Source of Truth */
+:root {
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f1f5f9;
+  --color-surface-hover: #f8fafc;
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted: #64748b;
+  --color-primary: #1d4ed8;
+  --color-primary-hover: #1e40af;
+  --color-primary-subtle: #eff6ff;
+  --color-success: #15803d;
+  --color-success-bg: #f0fdf4;
+  --color-warning: #b45309;
+  --color-warning-bg: #fffbeb;
+  --color-danger: #b91c1c;
+  --color-danger-bg: #fef2f2;
+  --color-info: #0369a1;
+  --color-info-bg: #f0f9ff;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+}
+
+.dark {
+  --color-bg: #090d16;
+  --color-surface: #0f172a;
+  --color-surface-subtle: #1e293b;
+  --color-surface-hover: #1e293b;
+  --color-border: #1e293b;
+  --color-border-strong: #334155;
+  --color-text-primary: #f8fafc;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #64748b;
+  --color-primary: #3b82f6;
+  --color-primary-hover: #60a5fa;
+  --color-primary-subtle: #1e293b;
+  --color-success: #22c55e;
+  --color-success-bg: #052e16;
+  --color-warning: #f59e0b;
+  --color-warning-bg: #451a03;
+  --color-danger: #ef4444;
+  --color-danger-bg: #450a0a;
+  --color-info: #38bdf8;
+  --color-info-bg: #082f49;
+}
+
+/* ========================================================================= */
+/* HIGH-CONTRAST DARK MODE DATAGRID & ACADEMIC TABLE OPTIMIZATION           */
+/* ========================================================================= */
+
+.dark table {
+  color: #f1f5f9;
+}
+
+.dark thead {
+  background-color: #1e293b !important;
+}
+
+.dark thead th {
+  color: #e2e8f0 !important;
+  font-weight: 700 !important;
+  border-bottom: 1px solid #334155 !important;
+  letter-spacing: 0.025em;
+}
+
+.dark tbody tr {
+  background-color: #0f172a;
+  border-color: #1e293b;
+}
+
+.dark tbody tr:hover {
+  background-color: #1e293b !important;
+}
+
+.dark tbody tr:nth-child(even) {
+  background-color: rgba(15, 23, 42, 0.7);
+}
+
+.dark td {
+  color: #e2e8f0;
+  border-color: #1e293b;
+}
+
+/* High-contrast status badges in dark mode */
+.dark [class*="bg-emerald-50"] {
+  background-color: rgba(6, 78, 59, 0.4) !important;
+  color: #6ee7b7 !important;
+  border-color: rgba(5, 150, 105, 0.45) !important;
+}
+
+.dark [class*="bg-rose-50"],
+.dark [class*="bg-red-50"] {
+  background-color: rgba(136, 19, 55, 0.4) !important;
+  color: #fda4af !important;
+  border-color: rgba(225, 29, 72, 0.45) !important;
+}
+
+.dark [class*="bg-amber-50"] {
+  background-color: rgba(120, 53, 15, 0.4) !important;
+  color: #fcd34d !important;
+  border-color: rgba(217, 119, 6, 0.45) !important;
+}
+
+.dark [class*="bg-blue-50"] {
+  background-color: rgba(30, 58, 138, 0.4) !important;
+  color: #93c5fd !important;
+  border-color: rgba(37, 99, 235, 0.45) !important;
+}
+
+.dark [class*="bg-purple-50"] {
+  background-color: rgba(88, 28, 135, 0.4) !important;
+  color: #d8b4fe !important;
+  border-color: rgba(147, 51, 234, 0.45) !important;
+}
+
+.dark [class*="bg-indigo-50"] {
+  background-color: rgba(49, 46, 129, 0.4) !important;
+  color: #a5b4fc !important;
+  border-color: rgba(79, 70, 229, 0.45) !important;
+}
+
+/* Crisp text readability in Dark Mode with !important utility overrides */
+.dark .text-slate-950,
+.dark .text-slate-900,
+.dark .text-gray-950,
+.dark .text-gray-900,
+.dark .text-zinc-950,
+.dark .text-zinc-900,
+.dark .text-neutral-950,
+.dark .text-neutral-900 {
+  color: #ffffff !important;
+}
+
+.dark .text-slate-800,
+.dark .text-gray-800,
+.dark .text-zinc-800,
+.dark .text-neutral-800 {
+  color: #f8fafc !important; /* slate-50 */
+}
+
+.dark .text-slate-700,
+.dark .text-gray-700,
+.dark .text-zinc-700,
+.dark .text-neutral-700 {
+  color: #f1f5f9 !important; /* slate-100 */
+}
+
+.dark .text-slate-600,
+.dark .text-gray-600,
+.dark .text-zinc-600,
+.dark .text-neutral-600 {
+  color: #e2e8f0 !important; /* slate-200 */
+}
+
+.dark .text-slate-500,
+.dark .text-gray-500,
+.dark .text-zinc-500,
+.dark .text-neutral-500 {
+  color: #cbd5e1 !important; /* slate-300 */
+}
+
+.dark .text-slate-400,
+.dark .text-gray-400,
+.dark .text-zinc-400,
+.dark .text-neutral-400 {
+  color: #cbd5e1 !important; /* slate-300 */
+}
+
+/* ========================================================================= */
+/* SWEEPING DARK MODE OVERRIDES FOR PRIMARY CONTAINERS IN MAIN AREA          */
+/* ========================================================================= */
+
+.dark #main-content,
+.dark main,
+.dark [role="main"],
+.dark .main-container {
+  background-color: #090d16 !important;
+  color: #f1f5f9 !important; /* text-slate-100 */
+}
+
+/* Force text-slate-100 or higher on all primary container elements inside main */
+.dark #main-content .bg-white:not(.keep-white),
+.dark #main-content .bg-slate-50,
+.dark #main-content .bg-slate-100,
+.dark #main-content .bg-slate-200,
+.dark #main-content .bg-gray-50,
+.dark #main-content .bg-gray-100,
+.dark #main-content section,
+.dark #main-content article,
+.dark #main-content .card,
+.dark #main-content .panel,
+.dark #main-content fieldset,
+.dark main .bg-white:not(.keep-white),
+.dark main .bg-slate-50,
+.dark main .bg-slate-100,
+.dark main section,
+.dark main article {
+  background-color: #0f172a !important;
+  color: #f1f5f9 !important; /* text-slate-100 */
+  border-color: #334155 !important;
+}
+
+/* Headings & strong emphasis within main: pure white */
+.dark #main-content h1,
+.dark #main-content h2,
+.dark #main-content h3,
+.dark #main-content h4,
+.dark #main-content h5,
+.dark #main-content h6,
+.dark #main-content strong,
+.dark #main-content b,
+.dark main h1,
+.dark main h2,
+.dark main h3,
+.dark main h4,
+.dark main h5,
+.dark main h6,
+.dark main strong,
+.dark main b {
+  color: #ffffff !important;
+}
+
+/* Primary text & paragraph elements forced to text-slate-100 or higher */
+.dark #main-content p,
+.dark #main-content label,
+.dark #main-content dt,
+.dark #main-content dd,
+.dark #main-content li,
+.dark #main-content legend,
+.dark main p,
+.dark main label,
+.dark main dt,
+.dark main dd,
+.dark main li {
+  color: #f1f5f9 !important; /* text-slate-100 */
+}
+
+/* Spans, small, and div text: forced to text-slate-100 unless explicitly badge-colored */
+.dark #main-content span:not(:where([class*="text-emerald-"], [class*="text-rose-"], [class*="text-red-"], [class*="text-amber-"], [class*="text-blue-"], [class*="text-purple-"], [class*="text-indigo-"], [class*="text-teal-"], [class*="text-cyan-"], [class*="text-yellow-"], [class*="text-green-"], .keep-colored)),
+.dark #main-content small:not(:where([class*="text-emerald-"], [class*="text-rose-"], [class*="text-red-"], [class*="text-amber-"], [class*="text-blue-"], [class*="text-purple-"], [class*="text-indigo-"], .keep-colored)),
+.dark main span:not(:where([class*="text-emerald-"], [class*="text-rose-"], [class*="text-red-"], [class*="text-amber-"], [class*="text-blue-"], [class*="text-purple-"], [class*="text-indigo-"], [class*="text-teal-"], [class*="text-cyan-"], [class*="text-yellow-"], [class*="text-green-"], .keep-colored)) {
+  color: #f1f5f9 !important; /* text-slate-100 */
+}
+
+/* Sweeping class-level overrides in main area ensuring no text renders as dark-slate */
+.dark #main-content .text-slate-950,
+.dark #main-content .text-slate-900,
+.dark #main-content .text-slate-800,
+.dark #main-content .text-slate-700,
+.dark #main-content .text-gray-950,
+.dark #main-content .text-gray-900,
+.dark #main-content .text-gray-800,
+.dark #main-content .text-gray-700,
+.dark #main-content .text-zinc-950,
+.dark #main-content .text-zinc-900,
+.dark #main-content .text-zinc-800,
+.dark #main-content .text-zinc-700,
+.dark #main-content .text-neutral-900,
+.dark #main-content .text-neutral-800,
+.dark #main-content .text-neutral-700,
+.dark main .text-slate-950,
+.dark main .text-slate-900,
+.dark main .text-slate-800,
+.dark main .text-slate-700 {
+  color: #f8fafc !important; /* slate-50 (even higher contrast than slate-100) */
+}
+
+.dark #main-content .text-slate-600,
+.dark #main-content .text-gray-600,
+.dark #main-content .text-zinc-600,
+.dark #main-content .text-neutral-600,
+.dark main .text-slate-600 {
+  color: #f1f5f9 !important; /* slate-100 */
+}
+
+.dark #main-content .text-slate-500,
+.dark #main-content .text-slate-400,
+.dark #main-content .text-gray-500,
+.dark #main-content .text-gray-400,
+.dark #main-content .text-zinc-500,
+.dark #main-content .text-zinc-400,
+.dark main .text-slate-500,
+.dark main .text-slate-400 {
+  color: #cbd5e1 !important; /* slate-300 (crisp secondary text, never dark-slate) */
+}
+
+/* Form controls (select, input, textarea) inside main in dark mode */
+.dark #main-content select,
+.dark #main-content input,
+.dark #main-content textarea,
+.dark main select,
+.dark main input,
+.dark main textarea {
+  background-color: #1e293b !important;
+  color: #ffffff !important;
+  border-color: #334155 !important;
+}
+
+.dark #main-content select option,
+.dark main select option {
+  background-color: #0f172a !important;
+  color: #ffffff !important;
+}
+
+/* Ensure all tables and table headers in main have crisp white/light-slate text */
+.dark #main-content table,
+.dark main table {
+  color: #f1f5f9 !important; /* text-slate-100 */
+  border-color: #334155 !important;
+}
+
+.dark #main-content table th,
+.dark main table th {
+  color: #ffffff !important;
+  background-color: #1e293b !important;
+  border-color: #334155 !important;
+}
+
+.dark #main-content table td:not(:where([class*="text-emerald-"], [class*="text-rose-"], [class*="text-red-"], [class*="text-amber-"], [class*="text-blue-"], [class*="text-purple-"], [class*="text-indigo-"])),
+.dark main table td:not(:where([class*="text-emerald-"], [class*="text-rose-"], [class*="text-red-"], [class*="text-amber-"], [class*="text-blue-"], [class*="text-purple-"], [class*="text-indigo-"])) {
+  color: #f1f5f9 !important; /* text-slate-100 */
+  border-color: #1e293b !important;
+}
+
+.dark #main-content table tr:hover,
+.dark main table tr:hover {
+  background-color: #1e293b !important;
+}
+
+/* Ensure A4 Preview Document inside main renders sharply in Dark Mode */
+.dark #main-content .print-page:not(.report-view-a4) {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: #334155 !important;
+}
+
+.dark #main-content .print-page:not(.report-view-a4) table th {
+  background-color: #1e293b !important;
+  color: #ffffff !important;
+  border-color: #475569 !important;
+}
+
+.dark #main-content .print-page:not(.report-view-a4) table td {
+  color: #f1f5f9 !important;
+  border-color: #475569 !important;
+}
+
+.dark #main-content .print-page:not(.report-view-a4) p,
+.dark #main-content .print-page:not(.report-view-a4) span,
+.dark #main-content .print-page:not(.report-view-a4) h1 {
+  color: #f8fafc !important;
+}
+
+/* ========================================================================= */
+/* A4 ADMINISTRATIVE REPORT VIEW (2cm top/bottom, 3.5cm left, 1.4cm right)   */
+/* ========================================================================= */
+.report-view-a4 {
+  width: 210mm;
+  min-width: 210mm;
+  min-height: 297mm;
+  padding: 20mm 14mm 20mm 35mm;
+  box-sizing: border-box;
+  font-family: 'Times New Roman', Times, serif;
+}
+
+.dark #main-content .report-view-a4,
+.dark main .report-view-a4 {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+.dark #main-content .report-view-a4 header,
+.dark #main-content .report-view-a4 footer,
+.dark #main-content .report-view-a4 div,
+.dark #main-content .report-view-a4 h1,
+.dark #main-content .report-view-a4 h2,
+.dark #main-content .report-view-a4 h3,
+.dark #main-content .report-view-a4 p,
+.dark #main-content .report-view-a4 strong,
+.dark #main-content .report-view-a4 span:not(:where([class*="text-rose-"], [class*="text-emerald-"], [class*="text-blue-"])),
+.dark main .report-view-a4 [class*="text-slate-"] {
+  color: #0f172a !important;
+}
+
+.dark #main-content .report-view-a4 [class*="text-rose-"] {
+  color: #b91c1c !important;
+}
+
+.dark #main-content .report-view-a4 [class*="text-emerald-"] {
+  color: #15803d !important;
+}
+
+.dark #main-content .report-view-a4 [class*="text-blue-"] {
+  color: #1d4ed8 !important;
+}
+
+.dark #main-content .report-view-a4 table {
+  color: #0f172a !important;
+  border-color: #334155 !important;
+}
+
+.dark #main-content .report-view-a4 thead {
+  background-color: #f1f5f9 !important;
+}
+
+.dark #main-content .report-view-a4 table th {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+  border-color: #334155 !important;
+}
+
+.dark #main-content .report-view-a4 tbody tr {
+  background-color: #ffffff !important;
+}
+
+.dark #main-content .report-view-a4 table td {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #334155 !important;
+}
+
+.dark #main-content .report-view-a4 table td[class*="text-rose-"] {
+  color: #b91c1c !important;
+}
+
+.dark #main-content .report-view-a4 table tr:hover {
+  background-color: #f8fafc !important;
+}
+
+
+/* ========================================================================= */
+/* ACADEMIC REPORT PRINT OPTIMIZATION (A4 Clean Document Printing)           */
+/* ========================================================================= */
+@media print {
+  html,
+  body,
+  #root,
+  #root > div,
+  #root > div > div,
+  #main-content,
+  main {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    display: block !important;
+    position: static !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 11pt !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Reset dark mode overrides with higher specificity on white A4 paper */
+  .dark #main-content,
+  .dark #main-content *,
+  .dark #main-content [class*="text-"],
+  .dark main,
+  .dark main *,
+  .dark main [class*="text-"],
+  .dark .print-page,
+  .dark .print-page *,
+  .dark .print-page [class*="text-"] {
+    background-color: transparent !important;
+    color: #0f172a !important;
+    border-color: #334155 !important;
+  }
+
+  /* Hide app shell elements and interactive buttons when printing (keep report header/footer) */
+  #app-header,
+  #app-sidebar,
+  aside,
+  header:not(.report-a4-header),
+  footer:not(.report-a4-footer),
+  nav,
+  .no-print,
+  button,
+  .btn-print-hide {
+    display: none !important;
+  }
+
+  .report-view-viewport {
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .print-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: #ffffff !important;
+  }
+
+  .dark #main-content .print-page,
+  .print-page,
+  .dark #main-content .report-view-a4,
+  .report-view-a4 {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: auto !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+  }
+
+  tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .dark #main-content .print-page table th,
+  .dark #main-content table th,
+  .print-page table th,
+  th {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+    border: 1px solid #334155 !important;
+  }
+
+  .dark #main-content .print-page table td,
+  .dark #main-content table td,
+  .print-page table td,
+  td {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    border: 1px solid #334155 !important;
+  }
+
+  @page {
+    size: A4 portrait;
+    margin: 20mm 14mm 20mm 35mm;
+  }
+}
+
+
+
 

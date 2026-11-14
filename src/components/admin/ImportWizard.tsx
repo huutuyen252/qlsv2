@@ -345,9 +345,6 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onSuccess, showToast
                       <span>{conf.title}</span>
                       {isSelected && <CheckCircle2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />}
                     </div>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-snug">
-                      {conf.description}
-                    </p>
                   </div>
                 );
               })}

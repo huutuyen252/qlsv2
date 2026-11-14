@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, UserRole, SinhVien, Diem, ThoiKhoaBieu, ThiLaiHocLai, MonHoc } from '../../types';
+import { User } from '../../types';
 import { ProtectedRoute } from '../auth/ProtectedRoute';
 import { ADMIN_MENU_ITEMS } from '../../config/menu.config';
 import { Breadcrumb } from '../common/Breadcrumb';
@@ -8,16 +8,9 @@ import { useTheme } from '../../context/ThemeContext';
 import {
   ShieldAlert,
   ArrowLeft,
-  LayoutDashboard,
-  Users,
-  FileSpreadsheet,
-  Database,
-  History,
   LogOut,
   ChevronRight,
   ShieldCheck,
-  Building2,
-  Lock,
   Sun,
   Moon,
 } from 'lucide-react';
@@ -51,30 +44,30 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
       title="403 - Yêu cầu Quyền Quản Trị Viên Tối Cao"
       onGoHome={onExitAdminConsole}
     >
-      <div className="min-h-screen bg-slate-100/70 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans antialiased">
-        {/* Admin Header (Full-Width Topbar) */}
-        <header className="h-14 bg-slate-900 text-white flex items-center justify-between px-4 lg:px-8 border-b border-slate-800 shrink-0 sticky top-0 z-40 shadow-sm">
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans antialiased">
+        {/* Admin Header (Unified 52px Topbar matching AppShell) */}
+        <header className="h-[52px] bg-slate-900 text-white flex items-center justify-between px-4 lg:px-6 border-b border-slate-800 shrink-0 sticky top-0 z-40 transition-colors">
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 bg-indigo-600/30 text-indigo-400 px-3 py-1 rounded-xl border border-indigo-500/30 text-xs font-black tracking-wide">
-              <ShieldAlert className="w-4 h-4 text-indigo-400" />
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded border border-blue-500/40 bg-blue-600/20 text-blue-400 text-[11px] font-bold tracking-wider">
+              <ShieldAlert className="w-3.5 h-3.5 text-blue-400" />
               <span>ADMIN CONSOLE</span>
             </div>
             <button
               type="button"
               onClick={onExitAdminConsole}
-              className="flex items-center gap-1.5 text-xs text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 px-3 py-1.5 rounded-xl transition-all cursor-pointer border border-slate-700/60"
+              className="flex items-center gap-1.5 text-xs text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-750 px-2.5 py-1 rounded border border-slate-700 transition-colors cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>Về Cổng Thông Tin</span>
             </button>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             <button
               id="btn-admin-theme-toggle"
               type="button"
               onClick={toggleTheme}
-              className="p-1.5 text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-all cursor-pointer border border-slate-700/60"
+              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors cursor-pointer border border-transparent hover:border-slate-700"
               title={`Chuyển chế độ ${isDark ? 'Sáng' : 'Tối'}`}
               aria-label="Chuyển chế độ giao diện"
             >
@@ -86,37 +79,38 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             </button>
 
             <div className="hidden sm:flex flex-col items-end text-right">
-              <span className="text-xs font-bold text-white leading-none">
+              <span className="text-xs font-semibold text-white leading-tight">
                 {currentUser?.fullName || 'Quản Trị Viên'}
               </span>
-              <span className="text-[10px] text-indigo-400 font-extrabold uppercase mt-0.5">
-                SUPER ADMIN
+              <span className="text-[10px] text-blue-400 font-mono uppercase">
+                QUẢN TRỊ VIÊN
               </span>
             </div>
             <img
               src={currentUser?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'}
-              alt={currentUser?.fullName}
-              className="w-8 h-8 rounded-full object-cover ring-2 ring-indigo-500/50"
+              alt={currentUser?.fullName || 'Avatar'}
+              className="w-7 h-7 rounded object-cover border border-slate-700"
             />
             <button
               onClick={onLogout}
-              className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded transition-colors cursor-pointer"
               title="Đăng xuất"
+              aria-label="Đăng xuất tài khoản"
             >
               <LogOut className="w-4 h-4" />
             </button>
           </div>
         </header>
 
-        {/* Main Content Area with 12-Column Grid */}
-        <div className="flex-1 flex flex-col md:flex-row w-full max-w-7xl mx-auto">
+        {/* Main Workspace Body */}
+        <div className="flex-1 flex flex-col md:flex-row w-full overflow-hidden min-h-0">
           {/* Admin Sidebar */}
-          <aside className="w-full md:w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 p-4 shrink-0 flex flex-col justify-between shadow-xs">
-            <div className="space-y-4">
-              <div className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                Menu Quản Trị Hệ Thống
+          <aside className="w-full md:w-60 bg-white dark:bg-slate-900 border-b md:border-b-0 md:border-r border-slate-200 dark:border-slate-800 py-1 md:py-3 shrink-0 flex flex-col justify-between select-none z-20">
+            <div>
+              <div className="hidden md:block px-4 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Quản trị hệ thống
               </div>
-              <nav className="space-y-1">
+              <nav className="flex md:flex-col items-center md:items-stretch overflow-x-auto md:overflow-x-visible space-x-1 md:space-x-0 md:space-y-0.5 px-2 md:px-0 scrollbar-none" aria-label="Danh mục quản trị">
                 {ADMIN_MENU_ITEMS.map((item) => {
                   const Icon = item.icon;
                   const isActive = currentAdminTab === item.id;
@@ -125,42 +119,37 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                     <a
                       key={item.id}
                       href={itemHref}
+                      aria-current={isActive ? 'page' : undefined}
                       onClick={(e) => {
                         e.preventDefault();
                         onSelectAdminTab(item.id);
                       }}
-                      className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-left text-xs font-bold transition-all cursor-pointer no-underline select-none ${
+                      className={`flex items-center justify-between px-3 py-1.5 md:px-4 md:py-2 text-xs font-medium transition-colors cursor-pointer no-underline select-none rounded md:rounded-none md:border-l-2 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none whitespace-nowrap shrink-0 ${
                         isActive
-                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
-                          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/80 hover:text-slate-900 dark:hover:text-slate-100'
+                          ? 'border border-blue-600/40 md:border-0 md:border-l-2 md:border-blue-600 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 font-semibold'
+                          : 'border-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-slate-100'
                       }`}
                     >
-                      <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate">{item.title}</div>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`} />
+                        <span className="truncate">{item.title}</span>
                       </div>
-                      {isActive && <ChevronRight className="w-3.5 h-3.5 shrink-0 opacity-80" />}
+                      {isActive && <ChevronRight className="hidden md:block w-3.5 h-3.5 shrink-0 opacity-80" />}
                     </a>
                   );
                 })}
               </nav>
             </div>
 
-            <div className="pt-4 mt-6 border-t border-slate-100 dark:border-slate-800">
-              <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/20 rounded-2xl border border-indigo-100 dark:border-indigo-900/40 text-[11px] text-indigo-900 dark:text-indigo-300">
-                <div className="font-bold flex items-center gap-1.5 mb-1">
-                  <ShieldCheck className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-                  <span>Bảo mật RBAC 100%</span>
-                </div>
-                <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-snug">
-                  Các hành động tại đây có hiệu lực tức thì trên cơ sở dữ liệu toàn trường.
-                </p>
-              </div>
+            <div className="hidden md:block p-3 border-t border-slate-200 dark:border-slate-800 text-center">
+              <span className="text-[10px] text-slate-400 font-mono">
+                Admin Console · TDNU
+              </span>
             </div>
           </aside>
 
-          {/* Admin Main Body */}
-          <main className="flex-1 p-4 md:p-6 lg:p-8 min-w-0">
+          {/* Admin Main View */}
+          <main id="admin-main-content" tabIndex={-1} className="flex-1 p-3 sm:p-4 md:p-6 overflow-y-auto min-w-0 outline-none">
             <Breadcrumb
               isAdmin
               items={[
@@ -168,19 +157,6 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
                 { label: currentTabObj.title, active: true },
               ]}
             />
-
-            <div className="mb-5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
-                  {currentTabObj.title}
-                </h1>
-                {currentTabObj.description && (
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    {currentTabObj.description}
-                  </p>
-                )}
-              </div>
-            </div>
 
             <AnimatePresence mode="wait">
               <motion.div

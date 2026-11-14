@@ -42,6 +42,7 @@ export interface SinhVien {
   ngaySinh: string;
   gioiTinh: 'Nam' | 'Nữ';
   lop: string;
+  lopId?: string;
   khoa: string;
   soDienThoai: string;
   email: string;
@@ -76,12 +77,19 @@ export interface Diem {
   tenMH?: string;
   soTinChi?: number;
   hocKy: string;
+  hocKyId?: string;
   namHoc: string;
+  namHocId?: string;
   diemChuyenCan: number;
   diemGiuaKy: number;
   diemCuoiKy: number;
   diemTongKet10: number;
   diemThang4: number;
+  diemChuyenCanNum?: number;
+  diemGiuaKyNum?: number;
+  diemCuoiKyNum?: number;
+  diemTongKet10Num?: number;
+  diemThang4Num?: number;
   diemChu: string;
   trangThai: 'PASSED' | 'FAILED';
 }
@@ -203,11 +211,39 @@ export interface ThiLaiHocLai {
   loaiDangKy: 'THI_LAI' | 'HOC_LAI';
   lanThi: number;
   hocKy: string;
+  hocKyId?: string;
   namHoc: string;
+  namHocId?: string;
   phiDiem: number;
   trangThai: 'CHO_DUYET' | 'DA_DUYET' | 'DANG_HOC' | 'HOAN_THANH' | 'TU_CHOI';
   ketQua?: 'DAT' | 'CHUA_DAT' | 'CHUA_CO_DIEM';
   ngayDangKy: string;
+}
+
+export interface IdMapping {
+  id: string;
+  entityType: string;
+  sourceTable: string;
+  sourceId: string;
+  canonicalTable: string;
+  canonicalId: string;
+  mappingReason: string;
+  migrationStatus: 'MIGRATED' | 'FAILED' | 'PENDING';
+  conflictDetails?: string;
+  migratedAt?: string;
+}
+
+export interface MigrationConflictLog {
+  id: string;
+  migrationBatch: string;
+  tableName: string;
+  recordId: string;
+  columnName: string;
+  conflictType: string;
+  rawValue?: string;
+  expectedReference?: string;
+  notes?: string;
+  createdAt?: string;
 }
 
 export interface GpaSummary {

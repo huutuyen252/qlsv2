@@ -1,5 +1,58 @@
 import { User, SinhVien, Diem, RenLuyen, ThoiKhoaBieu, ThiLaiHocLai, GpaSummary, HocKy, NamHoc, Lop, DiemDanh, ThongBaoKiemTra, MonHoc, NghiLe } from '../types';
 const API_BASE = '/api';
+const AUTH_TOKEN_KEY = 'app_auth_token';
+
+export const getAuthToken = (): string | null => {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+};
+
+export const setAuthToken = (token: string | null): void => {
+  try {
+    if (token) {
+      localStorage.setItem(AUTH_TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+    }
+  } catch {
+    // ignore storage error
+  }
+};
+
+export const clearAuthToken = (): void => setAuthToken(null);
+
+export const getAuthHeaders = (extra?: HeadersInit): HeadersInit => {
+  const token = getAuthToken();
+  const headers: Record<string, string> = {};
+  if (extra) {
+    if (Array.isArray(extra)) {
+      extra.forEach(([k, v]) => {
+        headers[k] = v;
+      });
+    } else if (extra instanceof Headers) {
+      extra.forEach((v, k) => {
+        headers[k] = v;
+      });
+    } else {
+      Object.assign(headers, extra);
+    }
+  }
+  if (token && !headers.Authorization) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+};
+
+const authFetch = (input: RequestInfo | URL, init: RequestInit = {}) => {
+  return fetch(input, {
+    ...init,
+    headers: getAuthHeaders(init.headers),
+  });
+};
+
 export const apiService = {
   async login(username: string, password: string): Promise<{ success: boolean; user?: User; accessToken?: string; message?: string }> {
     try {
@@ -8,7 +61,11 @@ export const apiService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
-      return await res.json();
+      const data = await res.json();
+      if (data?.success && data?.accessToken) {
+        setAuthToken(data.accessToken);
+      }
+      return data;
     } catch {
       return { success: false, message: 'Lỗi kết nối máy chủ API' };
     }
@@ -23,7 +80,7 @@ export const apiService = {
     faculty?: string;
   }): Promise<{ success: boolean; user?: User; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/auth/register`, {
+      const res = await authFetch(`${API_BASE}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(userData),
@@ -35,7 +92,7 @@ export const apiService = {
   },
   async getUsers(): Promise<{ success: boolean; data: User[] }> {
     try {
-      const res = await fetch(`${API_BASE}/users`);
+      const res = await authFetch(`${API_BASE}/users`);
       return await res.json();
     } catch {
       return { success: false, data: [] };
@@ -43,7 +100,7 @@ export const apiService = {
   },
   async createUser(userData: Partial<User>): Promise<{ success: boolean; message: string; data?: User }> {
     try {
-      const res = await fetch(`${API_BASE}/users`, {
+      const res = await authFetch(`${API_BASE}/users`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(userData),
@@ -55,7 +112,7 @@ export const apiService = {
   },
   async updateUser(id: string, userData: Partial<User>): Promise<{ success: boolean; message: string; data?: User }> {
     try {
-      const res = await fetch(`${API_BASE}/users/${id}`, {
+      const res = await authFetch(`${API_BASE}/users/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(userData),
@@ -67,7 +124,7 @@ export const apiService = {
   },
   async updateUserRole(id: string, role: string, permissions?: any): Promise<{ success: boolean; message: string; data?: User }> {
     try {
-      const res = await fetch(`${API_BASE}/users/${id}/role`, {
+      const res = await authFetch(`${API_BASE}/users/${id}/role`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ role, permissions }),
@@ -79,7 +136,7 @@ export const apiService = {
   },
   async updateUserPermissions(id: string, permissions: any): Promise<{ success: boolean; message: string; data?: User }> {
     try {
-      const res = await fetch(`${API_BASE}/users/${id}/permissions`, {
+      const res = await authFetch(`${API_BASE}/users/${id}/permissions`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ permissions }),
@@ -91,7 +148,7 @@ export const apiService = {
   },
   async updateUserStatus(id: string, status: 'ACTIVE' | 'LOCKED' | 'PENDING'): Promise<{ success: boolean; message: string; data?: User }> {
     try {
-      const res = await fetch(`${API_BASE}/users/${id}/status`, {
+      const res = await authFetch(`${API_BASE}/users/${id}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
@@ -103,7 +160,7 @@ export const apiService = {
   },
   async deleteUser(id: string): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/users/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`${API_BASE}/users/${id}`, { method: 'DELETE' });
       return await res.json();
     } catch {
       return { success: false, message: 'Xóa tài khoản thất bại' };
@@ -112,7 +169,7 @@ export const apiService = {
   async getStudents(params?: { search?: string; khoa?: string; lop?: string }): Promise<{ success: boolean; data: SinhVien[] }> {
     try {
       const query = new URLSearchParams(params as Record<string, string>).toString();
-      const res = await fetch(`${API_BASE}/students?${query}`);
+      const res = await authFetch(`${API_BASE}/students?${query}`);
       return await res.json();
     } catch {
       return { success: false, data: [] };
@@ -120,7 +177,7 @@ export const apiService = {
   },
   async createStudent(student: SinhVien): Promise<{ success: boolean; message: string; data?: SinhVien }> {
     try {
-      const res = await fetch(`${API_BASE}/students`, {
+      const res = await authFetch(`${API_BASE}/students`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(student),
@@ -132,7 +189,7 @@ export const apiService = {
   },
   async updateStudent(maSV: string, student: Partial<SinhVien>): Promise<{ success: boolean; message: string; data?: SinhVien }> {
     try {
-      const res = await fetch(`${API_BASE}/students/${maSV}`, {
+      const res = await authFetch(`${API_BASE}/students/${maSV}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(student),
@@ -144,7 +201,7 @@ export const apiService = {
   },
   async deleteStudent(maSV: string): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/students/${maSV}`, { method: 'DELETE' });
+      const res = await authFetch(`${API_BASE}/students/${maSV}`, { method: 'DELETE' });
       return await res.json();
     } catch {
       return { success: false, message: 'Không thể xóa sinh viên' };
@@ -152,7 +209,7 @@ export const apiService = {
   },
   async uploadHoSoFile(maSV: string, fileName: string, fileData?: string): Promise<{ success: boolean; fileUrl: string; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/students/upload-hoso`, {
+      const res = await authFetch(`${API_BASE}/students/upload-hoso`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ maSV, fileName, fileData }),
@@ -164,7 +221,7 @@ export const apiService = {
   },
   async uploadAvatar(maSV: string, fileData: string): Promise<{ success: boolean; avatarUrl: string; message: string; provider?: string }> {
     try {
-      const res = await fetch(`${API_BASE}/students/upload-avatar`, {
+      const res = await authFetch(`${API_BASE}/students/upload-avatar`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ maSV, fileData }),
@@ -176,7 +233,7 @@ export const apiService = {
   },
   async getStorageStatus(): Promise<{ success: boolean; data: any }> {
     try {
-      const res = await fetch(`${API_BASE}/storage/status`);
+      const res = await authFetch(`${API_BASE}/storage/status`);
       return await res.json();
     } catch {
       return { success: false, data: null };
@@ -184,7 +241,7 @@ export const apiService = {
   },
   async importStudentsExcel(students: Partial<SinhVien>[]): Promise<{ success: boolean; message: string; importedCount?: number; newUsersCreated?: number }> {
     try {
-      const res = await fetch(`${API_BASE}/students/import`, {
+      const res = await authFetch(`${API_BASE}/students/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ students }),
@@ -197,7 +254,7 @@ export const apiService = {
   async getGrades(params?: { maSV?: string; hocKy?: string; namHoc?: string }): Promise<{ success: boolean; data: Diem[] }> {
     try {
       const query = new URLSearchParams(params as Record<string, string>).toString();
-      const res = await fetch(`${API_BASE}/grades?${query}`);
+      const res = await authFetch(`${API_BASE}/grades?${query}`);
       return await res.json();
     } catch {
       return { success: false, data: [] };
@@ -205,7 +262,7 @@ export const apiService = {
   },
   async saveGrade(grade: Partial<Diem>): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/grades`, {
+      const res = await authFetch(`${API_BASE}/grades`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(grade),
@@ -217,7 +274,7 @@ export const apiService = {
   },
   async deleteGrade(id: string): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/grades/${encodeURIComponent(id)}`, {
+      const res = await authFetch(`${API_BASE}/grades/${encodeURIComponent(id)}`, {
         method: 'DELETE',
       });
       return await res.json();
@@ -227,7 +284,7 @@ export const apiService = {
   },
   async importGradesExcel(grades: Partial<Diem>[]): Promise<{ success: boolean; message: string; importedCount?: number }> {
     try {
-      const res = await fetch(`${API_BASE}/grades/import`, {
+      const res = await authFetch(`${API_BASE}/grades/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ grades }),
@@ -239,7 +296,7 @@ export const apiService = {
   },
   async getGpaSummary(maSV: string): Promise<{ success: boolean; data?: GpaSummary; message?: string }> {
     try {
-      const res = await fetch(`${API_BASE}/grades/gpa/${maSV}`);
+      const res = await authFetch(`${API_BASE}/grades/gpa/${maSV}`);
       return await res.json();
     } catch {
       return { success: false, message: 'Không thể tính GPA' };
@@ -248,7 +305,7 @@ export const apiService = {
   async getTrainingPoints(params?: { maSV?: string; thang?: number; nam?: number }): Promise<{ success: boolean; data: RenLuyen[] }> {
     try {
       const query = new URLSearchParams(params as unknown as Record<string, string>).toString();
-      const res = await fetch(`${API_BASE}/training?${query}`);
+      const res = await authFetch(`${API_BASE}/training?${query}`);
       return await res.json();
     } catch {
       return { success: false, data: [] };
@@ -267,7 +324,7 @@ export const apiService = {
     hocKy?: string;
   }): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/training/comment`, {
+      const res = await authFetch(`${API_BASE}/training/comment`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -279,7 +336,7 @@ export const apiService = {
   },
   async importTrainingExcel(training: Partial<RenLuyen>[]): Promise<{ success: boolean; message: string; importedCount?: number }> {
     try {
-      const res = await fetch(`${API_BASE}/training/import`, {
+      const res = await authFetch(`${API_BASE}/training/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ training }),
@@ -291,7 +348,7 @@ export const apiService = {
   },
   async updateTrainingPoint(id: string, data: Partial<RenLuyen>): Promise<{ success: boolean; message: string; data?: RenLuyen }> {
     try {
-      const res = await fetch(`${API_BASE}/training/${id}`, {
+      const res = await authFetch(`${API_BASE}/training/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -303,7 +360,7 @@ export const apiService = {
   },
   async deleteTrainingPoint(id: string): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/training/${id}`, {
+      const res = await authFetch(`${API_BASE}/training/${id}`, {
         method: 'DELETE',
       });
       return await res.json();
@@ -318,7 +375,7 @@ export const apiService = {
       if (params?.nam) queryObj.nam = String(params.nam);
       if (params?.hocKy && params.hocKy !== 'ALL') queryObj.hocKy = params.hocKy;
       const query = new URLSearchParams(queryObj).toString();
-      const res = await fetch(`${API_BASE}/training-class/delete?${query}`, {
+      const res = await authFetch(`${API_BASE}/training-class/delete?${query}`, {
         method: 'DELETE',
       });
       return await res.json();
@@ -328,7 +385,7 @@ export const apiService = {
   },
   async getSemesters(): Promise<{ success: boolean; data: HocKy[] }> {
     try {
-      const res = await fetch(`${API_BASE}/hocky`);
+      const res = await authFetch(`${API_BASE}/hocky`);
       return await res.json();
     } catch {
       return { success: false, data: [] };
@@ -336,7 +393,7 @@ export const apiService = {
   },
   async addSemester(data: Partial<HocKy>): Promise<{ success: boolean; message: string; data?: HocKy }> {
     try {
-      const res = await fetch(`${API_BASE}/hocky`, {
+      const res = await authFetch(`${API_BASE}/hocky`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -348,7 +405,7 @@ export const apiService = {
   },
   async updateSemester(id: string, data: Partial<HocKy>): Promise<{ success: boolean; message: string; data?: HocKy }> {
     try {
-      const res = await fetch(`${API_BASE}/hocky/${id}`, {
+      const res = await authFetch(`${API_BASE}/hocky/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -360,7 +417,7 @@ export const apiService = {
   },
   async deleteSemester(id: string): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/hocky/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`${API_BASE}/hocky/${id}`, { method: 'DELETE' });
       return await res.json();
     } catch {
       return { success: false, message: 'Xóa học kỳ thất bại' };
@@ -368,7 +425,7 @@ export const apiService = {
   },
   async getAcademicYears(): Promise<{ success: boolean; data: NamHoc[] }> {
     try {
-      const res = await fetch(`${API_BASE}/namhoc`);
+      const res = await authFetch(`${API_BASE}/namhoc`);
       return await res.json();
     } catch {
       return { success: false, data: [] };
@@ -376,7 +433,7 @@ export const apiService = {
   },
   async addAcademicYear(data: Partial<NamHoc>): Promise<{ success: boolean; message: string; data?: NamHoc }> {
     try {
-      const res = await fetch(`${API_BASE}/namhoc`, {
+      const res = await authFetch(`${API_BASE}/namhoc`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -388,7 +445,7 @@ export const apiService = {
   },
   async updateAcademicYear(id: string, data: Partial<NamHoc>): Promise<{ success: boolean; message: string; data?: NamHoc }> {
     try {
-      const res = await fetch(`${API_BASE}/namhoc/${id}`, {
+      const res = await authFetch(`${API_BASE}/namhoc/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -400,7 +457,7 @@ export const apiService = {
   },
   async deleteAcademicYear(id: string): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/namhoc/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`${API_BASE}/namhoc/${id}`, { method: 'DELETE' });
       return await res.json();
     } catch {
       return { success: false, message: 'Xóa năm học thất bại' };
@@ -409,7 +466,7 @@ export const apiService = {
   async getSchedule(params?: { maSV?: string; lop?: string; hocKy?: string; namHoc?: string }): Promise<{ success: boolean; data: ThoiKhoaBieu[] }> {
     try {
       const query = new URLSearchParams(params as Record<string, string>).toString();
-      const res = await fetch(`${API_BASE}/schedule?${query}`);
+      const res = await authFetch(`${API_BASE}/schedule?${query}`);
       return await res.json();
     } catch {
       return { success: false, data: [] };
@@ -417,7 +474,7 @@ export const apiService = {
   },
   async addSchedule(data: Record<string, any>): Promise<{ success: boolean; message: string; data?: ThoiKhoaBieu[] }> {
     try {
-      const res = await fetch(`${API_BASE}/schedule`, {
+      const res = await authFetch(`${API_BASE}/schedule`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -429,7 +486,7 @@ export const apiService = {
   },
   async updateSchedule(id: string, data: Partial<ThoiKhoaBieu>): Promise<{ success: boolean; message: string; data?: ThoiKhoaBieu }> {
     try {
-      const res = await fetch(`${API_BASE}/schedule/${id}`, {
+      const res = await authFetch(`${API_BASE}/schedule/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -441,7 +498,7 @@ export const apiService = {
   },
   async uploadScheduleFile(payload: { fileName: string; fileType: string; fileContent?: string; schedules?: any[]; lop?: string; hocKy?: string; namHoc?: string }): Promise<{ success: boolean; message: string; parsedCount?: number; data?: ThoiKhoaBieu[] }> {
     try {
-      const res = await fetch(`${API_BASE}/tkb/upload`, {
+      const res = await authFetch(`${API_BASE}/tkb/upload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -453,7 +510,7 @@ export const apiService = {
   },
   async importScheduleExcel(schedules: any[]): Promise<{ success: boolean; message: string; importedCount?: number }> {
     try {
-      const res = await fetch(`${API_BASE}/schedule/import`, {
+      const res = await authFetch(`${API_BASE}/schedule/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ schedules }),
@@ -466,7 +523,7 @@ export const apiService = {
   async deleteSchedule(id: string, maMH?: string): Promise<{ success: boolean; message: string }> {
     try {
       const query = maMH ? `?maMH=${encodeURIComponent(maMH)}` : '';
-      const res = await fetch(`${API_BASE}/schedule/${id}${query}`, {
+      const res = await authFetch(`${API_BASE}/schedule/${id}${query}`, {
         method: 'DELETE',
       });
       return await res.json();
@@ -480,7 +537,7 @@ export const apiService = {
       params.append('namHoc', namHoc);
       if (hocKy && hocKy !== 'ALL') params.append('hocKy', hocKy);
       if (lop && lop !== 'ALL') params.append('lop', lop);
-      const res = await fetch(`${API_BASE}/schedule/by-year?${params.toString()}`, {
+      const res = await authFetch(`${API_BASE}/schedule/by-year?${params.toString()}`, {
         method: 'DELETE',
       });
       return await res.json();
@@ -491,7 +548,7 @@ export const apiService = {
   async getRetakes(maSV?: string): Promise<{ success: boolean; data: ThiLaiHocLai[] }> {
     try {
       const query = maSV ? `?maSV=${maSV}` : '';
-      const res = await fetch(`${API_BASE}/retakes${query}`);
+      const res = await authFetch(`${API_BASE}/retakes${query}`);
       return await res.json();
     } catch {
       return { success: false, data: [] };
@@ -499,7 +556,7 @@ export const apiService = {
   },
   async registerRetake(data: { maSV: string; maMH: string; loaiDangKy: 'THI_LAI' | 'HOC_LAI'; hocKy: string; namHoc: string; phiDiem?: number }): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/retakes/register`, {
+      const res = await authFetch(`${API_BASE}/retakes/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -511,7 +568,7 @@ export const apiService = {
   },
   async approveRetake(id: string, status: string, phiDiem?: number): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/retakes/${id}/approve`, {
+      const res = await authFetch(`${API_BASE}/retakes/${id}/approve`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ trangThai: status, phiDiem }),
@@ -524,7 +581,7 @@ export const apiService = {
   async getAttendance(params?: { maSV?: string; maMH?: string; lop?: string }): Promise<{ success: boolean; data: DiemDanh[] }> {
     try {
       const query = new URLSearchParams(params as Record<string, string>).toString();
-      const res = await fetch(`${API_BASE}/attendance?${query}`);
+      const res = await authFetch(`${API_BASE}/attendance?${query}`);
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
         if (!params || Object.keys(params).length === 0) {
@@ -548,7 +605,7 @@ export const apiService = {
   },
   async saveAttendance(data: Partial<DiemDanh>): Promise<{ success: boolean; message: string; data?: DiemDanh; trainingPoint?: any }> {
     try {
-      const res = await fetch(`${API_BASE}/attendance`, {
+      const res = await authFetch(`${API_BASE}/attendance`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -571,7 +628,7 @@ export const apiService = {
   },
   async deleteAttendance(id: string): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/attendance/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`${API_BASE}/attendance/${id}`, { method: 'DELETE' });
       const result = await res.json();
       try {
         const cached = localStorage.getItem('cached_attendance_list');
@@ -590,7 +647,7 @@ export const apiService = {
   },
   async syncAttendanceTrainingPoints(): Promise<{ success: boolean; message: string; count?: number; data?: any[] }> {
     try {
-      const res = await fetch(`${API_BASE}/attendance/sync-training-points`, { method: 'POST' });
+      const res = await authFetch(`${API_BASE}/attendance/sync-training-points`, { method: 'POST' });
       const result = await res.json();
       window.dispatchEvent(new CustomEvent('app-data-updated'));
       return result;
@@ -601,7 +658,7 @@ export const apiService = {
   async getExamNotices(maMH?: string): Promise<{ success: boolean; data: ThongBaoKiemTra[] }> {
     try {
       const query = maMH ? `?maMH=${encodeURIComponent(maMH)}` : '';
-      const res = await fetch(`${API_BASE}/exam-notices${query}`);
+      const res = await authFetch(`${API_BASE}/exam-notices${query}`);
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
         if (!maMH) {
@@ -624,7 +681,7 @@ export const apiService = {
   },
   async saveExamNotice(notice: Partial<ThongBaoKiemTra>): Promise<{ success: boolean; message: string; data?: ThongBaoKiemTra }> {
     try {
-      const res = await fetch(`${API_BASE}/exam-notices`, {
+      const res = await authFetch(`${API_BASE}/exam-notices`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(notice),
@@ -647,7 +704,7 @@ export const apiService = {
   },
   async deleteExamNotice(id: string): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/exam-notices/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`${API_BASE}/exam-notices/${id}`, { method: 'DELETE' });
       const result = await res.json();
       try {
         const cached = localStorage.getItem('cached_exam_notices');
@@ -666,7 +723,7 @@ export const apiService = {
   },
   async getSummaryReport(): Promise<{ success: boolean; summary: any }> {
     try {
-      const res = await fetch(`${API_BASE}/reports/summary`);
+      const res = await authFetch(`${API_BASE}/reports/summary`);
       return await res.json();
     } catch {
       return { success: false, summary: null };
@@ -674,7 +731,7 @@ export const apiService = {
   },
   async getSubjects(): Promise<{ success: boolean; data: MonHoc[] }> {
     try {
-      const res = await fetch(`${API_BASE}/subjects`);
+      const res = await authFetch(`${API_BASE}/subjects`);
       return await res.json();
     } catch {
       return { success: false, data: [] };
@@ -682,7 +739,7 @@ export const apiService = {
   },
   async addSubject(subject: Partial<MonHoc>): Promise<{ success: boolean; message: string; data?: MonHoc }> {
     try {
-      const res = await fetch(`${API_BASE}/subjects`, {
+      const res = await authFetch(`${API_BASE}/subjects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(subject),
@@ -694,7 +751,7 @@ export const apiService = {
   },
   async updateSubject(maMH: string, subject: Partial<MonHoc>): Promise<{ success: boolean; message: string; data?: MonHoc }> {
     try {
-      const res = await fetch(`${API_BASE}/subjects/${encodeURIComponent(maMH)}`, {
+      const res = await authFetch(`${API_BASE}/subjects/${encodeURIComponent(maMH)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(subject),
@@ -711,7 +768,7 @@ export const apiService = {
       if (id) params.append('id', id);
       if (lop) params.append('lop', lop);
       if (params.toString()) url += `?${params.toString()}`;
-      const res = await fetch(url, { method: 'DELETE' });
+      const res = await authFetch(url, { method: 'DELETE' });
       return await res.json();
     } catch {
       return { success: false, message: 'Xóa môn học thất bại' };
@@ -719,7 +776,7 @@ export const apiService = {
   },
   async importSubjects(subjects: Partial<MonHoc>[]): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/subjects/import`, {
+      const res = await authFetch(`${API_BASE}/subjects/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subjects }),
@@ -731,7 +788,7 @@ export const apiService = {
   },
   async deleteRetake(id: string): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/retakes/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`${API_BASE}/retakes/${id}`, { method: 'DELETE' });
       return await res.json();
     } catch {
       return { success: false, message: 'Xóa đơn thi lại thất bại' };
@@ -739,7 +796,7 @@ export const apiService = {
   },
   async deleteClass(id: string): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/classes/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`${API_BASE}/classes/${id}`, { method: 'DELETE' });
       return await res.json();
     } catch {
       return { success: false, message: 'Xóa lớp học thất bại' };
@@ -747,7 +804,7 @@ export const apiService = {
   },
   async getHolidays(): Promise<{ success: boolean; data: NghiLe[] }> {
     try {
-      const res = await fetch(`${API_BASE}/holidays`);
+      const res = await authFetch(`${API_BASE}/holidays`);
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
         try {
@@ -772,7 +829,7 @@ export const apiService = {
   },
   async createHoliday(data: Partial<NghiLe>): Promise<{ success: boolean; message: string; data?: NghiLe }> {
     try {
-      const res = await fetch(`${API_BASE}/holidays`, {
+      const res = await authFetch(`${API_BASE}/holidays`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -805,7 +862,7 @@ export const apiService = {
   },
   async updateHoliday(id: string, data: Partial<NghiLe>): Promise<{ success: boolean; message: string; data?: NghiLe }> {
     try {
-      const res = await fetch(`${API_BASE}/holidays/${id}`, {
+      const res = await authFetch(`${API_BASE}/holidays/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -827,7 +884,7 @@ export const apiService = {
   },
   async deleteHoliday(id: string): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/holidays/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`${API_BASE}/holidays/${id}`, { method: 'DELETE' });
       return await res.json();
     } catch {
       try {
@@ -845,7 +902,7 @@ export const apiService = {
   },
   async clearAllData(): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/admin/clear-all-data`, {
+      const res = await authFetch(`${API_BASE}/admin/clear-all-data`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -856,7 +913,7 @@ export const apiService = {
   },
   async getAuditLogs(limit: number = 300): Promise<{ success: boolean; data: any[] }> {
     try {
-      const res = await fetch(`${API_BASE}/audit-logs?limit=${limit}`);
+      const res = await authFetch(`${API_BASE}/audit-logs?limit=${limit}`);
       return await res.json();
     } catch {
       return { success: false, data: [] };
@@ -864,7 +921,7 @@ export const apiService = {
   },
   async createAuditLog(log: any): Promise<{ success: boolean; data?: any }> {
     try {
-      const res = await fetch(`${API_BASE}/audit-logs`, {
+      const res = await authFetch(`${API_BASE}/audit-logs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(log),
@@ -876,10 +933,38 @@ export const apiService = {
   },
   async clearAuditLogs(): Promise<{ success: boolean; message: string }> {
     try {
-      const res = await fetch(`${API_BASE}/audit-logs`, { method: 'DELETE' });
+      const res = await authFetch(`${API_BASE}/audit-logs`, { method: 'DELETE' });
       return await res.json();
     } catch {
       return { success: false, message: 'Lỗi khi xóa nhật ký hệ thống' };
+    }
+  },
+  async getIdMappings(): Promise<{ success: boolean; data: any[]; count: number }> {
+    try {
+      const res = await authFetch(`${API_BASE}/migration/id-mappings`);
+      return await res.json();
+    } catch {
+      return { success: false, data: [], count: 0 };
+    }
+  },
+  async getMigrationConflicts(): Promise<{ success: boolean; data: any[]; count: number }> {
+    try {
+      const res = await authFetch(`${API_BASE}/migration/conflicts`);
+      return await res.json();
+    } catch {
+      return { success: false, data: [], count: 0 };
+    }
+  },
+  async runDataBackfill(batchTag?: string): Promise<{ success: boolean; data?: any; message?: string }> {
+    try {
+      const res = await authFetch(`${API_BASE}/migration/backfill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batchTag }),
+      });
+      return await res.json();
+    } catch {
+      return { success: false, message: 'Lỗi khi chạy migration backfill' };
     }
   },
 };

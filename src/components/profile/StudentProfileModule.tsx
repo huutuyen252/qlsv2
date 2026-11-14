@@ -1,22 +1,35 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useId } from 'react';
 import * as XLSX from 'xlsx';
-import { SinhVien, UserRole, HoSoFile, User } from '../../types';
+import { SinhVien, UserRole, HoSoFile, User, Diem, RenLuyen, ThiLaiHocLai } from '../../types';
 import { apiService } from '../../services/apiService';
+import { StudentDetailDrawer } from './StudentDetailDrawer';
+import {
+  PageHeader,
+  MetricStrip,
+  DataToolbar,
+  StatusBadge,
+  PaginationBar,
+  ConfirmDialog,
+  LoadingState,
+  EmptyState,
+  FilteredEmptyState,
+  ErrorBanner,
+  ErrorState,
+} from '../common';
 import {
   normalizeClassName,
   normalizeFacultyName,
   getFacultyForClass as getFacultyFromHelper,
+  getMajorForClass,
+  getCohortForClass,
   isSameClass,
-  getUniqueClassesFromStudents,
   CANONICAL_CLASS_CO_KHI,
   CANONICAL_CLASS_O_TO,
-  CANONICAL_CLASSES,
   FACULTY_CO_KHI,
   FACULTY_O_TO,
 } from '../../utils/classHelper';
 import {
   Users,
-  Search,
   Plus,
   FileText,
   Upload,
@@ -24,15 +37,15 @@ import {
   Trash2,
   ExternalLink,
   X,
-  CheckCircle,
   Eye,
-  Filter,
   GraduationCap,
   Folder,
+  FolderTree,
+  Building2,
+  BookOpen,
   ChevronRight,
+  ChevronDown,
   ArrowLeft,
-  Layers,
-  Tag,
   Paperclip,
   Download,
   FileSpreadsheet,
@@ -41,29 +54,45 @@ import {
   Check,
   Lock,
   ShieldCheck,
-  Printer,
   Phone,
-  Mail,
-  MapPin,
   Calendar,
   User as UserIcon,
-  Copy,
   Camera,
-  Image as ImageIcon,
+  Award,
+  RotateCcw,
 } from 'lucide-react';
 
 export const getStudentAvatarUrl = (student: Partial<SinhVien>): string => {
   if (student.avatar && student.avatar.trim()) {
     return student.avatar.trim();
   }
-  const cleanName = encodeURIComponent(student.hoTen || student.maSV || 'Sinh Vien');
+  const cleanName = encodeURIComponent(student.hoTen || student.maSV || 'SV');
   const isFemale = student.gioiTinh === 'Nữ';
-  // Standard high-quality deterministic avatar
-  return `https://ui-avatars.com/api/?name=${cleanName}&background=${isFemale ? 'e11d48' : '2563eb'}&color=fff&size=200&bold=true&font-size=0.38`;
+  return `https://ui-avatars.com/api/?name=${cleanName}&background=${isFemale ? 'e11d48' : '1d4ed8'}&color=fff&size=200&bold=true&font-size=0.38`;
 };
+
+const isImageFile = (fileUrl: string, fileName: string): boolean => {
+  const lowerUrl = (fileUrl || '').toLowerCase();
+  const lowerName = (fileName || '').toLowerCase();
+  if (lowerUrl.startsWith('data:image/')) return true;
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(lowerName) || /\.(png|jpe?g|gif|webp)$/i.test(lowerUrl);
+};
+
+interface PreviewDocState {
+  fileUrl: string;
+  customName: string;
+  fileName: string;
+  studentName: string;
+  maSV: string;
+  lop?: string;
+}
 
 interface StudentProfileModuleProps {
   students: SinhVien[];
+  grades?: Diem[];
+  trainingPoints?: RenLuyen[];
+  retakes?: ThiLaiHocLai[];
+  activeSemester?: string;
   userRole: UserRole;
   currentStudentCode?: string;
   currentUser?: User | null;
@@ -73,10 +102,18 @@ interface StudentProfileModuleProps {
   onDeleteClassStudents?: (lop: string) => Promise<void> | void;
   onUploadHoSo: (maSV: string, fileName: string, fileData?: string) => void;
   onImportStudents?: (students: Partial<SinhVien>[]) => void;
+  onSwitchView?: (view: string) => void;
+  isLoading?: boolean;
+  loadError?: string | null;
+  onRetryLoad?: () => void;
 }
 
 export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
   students,
+  grades = [],
+  trainingPoints = [],
+  retakes = [],
+  activeSemester = '',
   userRole,
   currentStudentCode,
   currentUser,
@@ -86,51 +123,69 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
   onDeleteClassStudents,
   onUploadHoSo,
   onImportStudents,
+  onSwitchView,
+  isLoading = false,
+  loadError = null,
+  onRetryLoad,
 }) => {
+  const formIdPrefix = useId();
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'HIERARCHICAL' | 'FLAT'>('HIERARCHICAL');
+  const [viewMode, setViewMode] = useState<'HIERARCHY' | 'CLASSES' | 'STUDENTS'>('HIERARCHY');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedKhoa, setSelectedKhoa] = useState('');
   const [selectedLop, setSelectedLop] = useState('');
+  const [selectedCohortFilter, setSelectedCohortFilter] = useState('');
+  const [expandedFaculties, setExpandedFaculties] = useState<Record<string, boolean>>({});
 
-  // Class & Faculty map state
-  const [classMap, setClassMap] = useState<Record<string, string>>(() => {
-    const defaultMap: Record<string, string> = {
-      [CANONICAL_CLASS_CO_KHI]: FACULTY_CO_KHI,
-      [CANONICAL_CLASS_O_TO]: FACULTY_O_TO,
-    };
+  // Pagination state
+  const [classesPage, setClassesPage] = useState(1);
+  const [classesPageSize, setClassesPageSize] = useState(10);
+  const [studentsPage, setStudentsPage] = useState(1);
+  const [studentsPageSize, setStudentsPageSize] = useState(20);
+
+  // User-created/edited class map (seeded strictly from real students, never fabricated)
+  const [customClassMap, setCustomClassMap] = useState<Record<string, string>>({});
+
+  const classMap = useMemo(() => {
+    const merged: Record<string, string> = { ...customClassMap };
     students.forEach((s) => {
       if (s.lop) {
         const normLop = normalizeClassName(s.lop);
-        defaultMap[normLop] = normalizeFacultyName(s.khoa, normLop);
+        if (normLop && !merged[normLop]) {
+          merged[normLop] = normalizeFacultyName(s.khoa, normLop);
+        }
       }
     });
-    return defaultMap;
-  });
+    return merged;
+  }, [students, customClassMap]);
 
   // Edit / Add Class Modals State
   const [editingClassModal, setEditingClassModal] = useState<{
     oldLopName: string;
     lopName: string;
     khoa: string;
+    nganh?: string;
+    khoaHoc?: string;
   } | null>(null);
 
   const [isAddClassModalOpen, setIsAddClassModalOpen] = useState(false);
-  const [newClassFormData, setNewClassFormData] = useState({ lopName: '', khoa: '' });
+  const [newClassFormData, setNewClassFormData] = useState({
+    lopName: '',
+    khoa: '',
+    nganh: '',
+    khoaHoc: '',
+  });
 
-  // Helper to determine faculty for a given class
   const getFacultyForClass = (lopName: string | undefined | null): string => {
-    if (!lopName) return 'Khoa Đào tạo';
+    if (!lopName) return '';
     const norm = normalizeClassName(lopName);
     if (classMap[norm]) return classMap[norm];
     if (classMap[lopName]) return classMap[lopName];
     return getFacultyFromHelper(norm);
   };
 
-  // Available classes: canonical, unique, no duplicates - always preserves registered classes even when student count is 0
   const availableClasses: string[] = useMemo(() => {
     const set = new Set<string>();
-    CANONICAL_CLASSES.forEach((c) => set.add(c));
     Object.keys(classMap).forEach((c) => {
       const norm = normalizeClassName(c);
       if (norm) set.add(norm);
@@ -144,19 +199,41 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     return Array.from(set).sort();
   }, [students, classMap]);
 
-  // Unique faculties
   const uniqueFaculties: string[] = useMemo(() => {
     const set = new Set<string>();
-    set.add(FACULTY_CO_KHI);
-    set.add(FACULTY_O_TO);
     students.forEach((s) => {
       const k = normalizeFacultyName(s.khoa, s.lop);
       if (k) set.add(k);
     });
+    Object.values(classMap).forEach((k) => {
+      if (k) set.add(k);
+    });
     return Array.from(set).sort();
-  }, [students]);
+  }, [students, classMap]);
 
-  // Handlers for class and faculty selection
+  const uniqueMajors: string[] = useMemo(() => {
+    const set = new Set<string>();
+    availableClasses.forEach((lop) => {
+      set.add(getMajorForClass(lop));
+    });
+    return Array.from(set).sort();
+  }, [availableClasses]);
+
+  const uniqueCohorts: string[] = useMemo(() => {
+    const set = new Set<string>();
+    availableClasses.forEach((lop) => {
+      set.add(getCohortForClass(lop));
+    });
+    return Array.from(set).sort();
+  }, [availableClasses]);
+
+  const toggleFacultyExpand = (faculty: string) => {
+    setExpandedFaculties((prev) => ({
+      ...prev,
+      [faculty]: prev[faculty] === undefined ? false : !prev[faculty],
+    }));
+  };
+
   const handleSelectClass = (lopName: string | null) => {
     if (!lopName) {
       setSelectedClass(null);
@@ -174,7 +251,6 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     if (!newLop) {
       setSelectedLop('');
       setSelectedClass(null);
-      setSelectedKhoa('');
       return;
     }
     const norm = normalizeClassName(newLop);
@@ -187,7 +263,6 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     setSelectedKhoa(newKhoa);
     if (!newKhoa) return;
 
-    // If currently selected class does not belong to this faculty, reset class selection
     const activeClass = selectedLop || selectedClass;
     if (activeClass) {
       const classFaculty = getFacultyForClass(activeClass);
@@ -198,20 +273,105 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     }
   };
 
+  // In-app Toast & Confirmation Dialog state
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
+  const showToast = (text: string, type: 'success' | 'info' | 'error' = 'success') => {
+    setToastMessage({ text, type });
+    setTimeout(() => {
+      setToastMessage((cur) => (cur?.text === text ? null : cur));
+    }, 4000);
+  };
+
+  const [classToDeleteConfirm, setClassToDeleteConfirm] = useState<{
+    lopName: string;
+    faculty: string;
+    count: number;
+  } | null>(null);
+  const [isDeletingClass, setIsDeletingClass] = useState(false);
+
+  // In-app Document Preview modal state (replaces window.open)
+  const [previewDoc, setPreviewDoc] = useState<PreviewDocState | null>(null);
+
+  // Modals state
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [editingStudent, setEditingStudent] = useState<SinhVien | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [isCustomClassInput, setIsCustomClassInput] = useState(false);
+  const [viewingDocumentStudent, setViewingDocumentStudent] = useState<SinhVien | null>(null);
+  const [viewingDetailStudent, setViewingDetailStudent] = useState<SinhVien | null>(null);
+
+  // Excel Import state
+  const [isExcelImportModalOpen, setIsExcelImportModalOpen] = useState(false);
+  const [previewExcelStudents, setPreviewExcelStudents] = useState<Partial<SinhVien>[]>([]);
+  const [excelFileName, setExcelFileName] = useState('');
+
+  // Keep viewingDetailStudent / viewingDocumentStudent synchronized when students prop updates
+  useEffect(() => {
+    if (viewingDetailStudent) {
+      const fresh = students.find((s) => s.maSV.toLowerCase() === viewingDetailStudent.maSV.toLowerCase());
+      if (fresh && fresh !== viewingDetailStudent) {
+        setViewingDetailStudent(fresh);
+      }
+    }
+    if (viewingDocumentStudent) {
+      const fresh = students.find((s) => s.maSV.toLowerCase() === viewingDocumentStudent.maSV.toLowerCase());
+      if (fresh && fresh !== viewingDocumentStudent) {
+        setViewingDocumentStudent(fresh);
+      }
+    }
+  }, [students]);
+
+  // Global Esc handler for open dialogs/modals in this module
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (previewDoc) {
+        setPreviewDoc(null);
+      } else if (editingClassModal) {
+        setEditingClassModal(null);
+      } else if (isAddClassModalOpen) {
+        setIsAddClassModalOpen(false);
+      } else if (isExcelImportModalOpen) {
+        setIsExcelImportModalOpen(false);
+        setPreviewExcelStudents([]);
+        setExcelFileName('');
+      } else if (viewingDocumentStudent) {
+        setViewingDocumentStudent(null);
+      } else if (isAddModalOpen) {
+        setIsAddModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    previewDoc,
+    editingClassModal,
+    isAddClassModalOpen,
+    isExcelImportModalOpen,
+    viewingDocumentStudent,
+    isAddModalOpen,
+  ]);
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setClassesPage(1);
+    setStudentsPage(1);
+  }, [searchTerm, selectedKhoa, selectedLop, selectedClass, selectedCohortFilter]);
+
   const handleSaveNewClass = (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmedLop = newClassFormData.lopName.trim();
-    const trimmedKhoa = newClassFormData.khoa.trim() || 'Khoa Đào tạo';
-    if (!trimmedLop) return;
+    const trimmedLop = normalizeClassName(newClassFormData.lopName.trim());
+    const trimmedKhoa = newClassFormData.khoa.trim();
+    if (!trimmedLop || !trimmedKhoa) return;
 
-    setClassMap((prev) => ({
+    setCustomClassMap((prev) => ({
       ...prev,
       [trimmedLop]: trimmedKhoa,
     }));
 
     setIsAddClassModalOpen(false);
-    setNewClassFormData({ lopName: '', khoa: '' });
-    alert(`Đã thêm lớp học mới: "${trimmedLop}" thuộc Khoa "${trimmedKhoa}"!`);
+    setNewClassFormData({ lopName: '', khoa: '', nganh: '', khoaHoc: '' });
+    showToast(`Đã tạo lớp "${trimmedLop}" thuộc ${trimmedKhoa}.`, 'success');
   };
 
   const handleSaveEditClass = (e: React.FormEvent) => {
@@ -219,13 +379,11 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     if (!editingClassModal) return;
 
     const { oldLopName, lopName, khoa } = editingClassModal;
-    const newLopName = lopName.trim();
-    const newKhoa = khoa.trim() || 'Khoa Đào tạo';
+    const newLopName = normalizeClassName(lopName.trim());
+    const newKhoa = khoa.trim();
+    if (!newLopName || !newKhoa) return;
 
-    if (!newLopName) return;
-
-    // Update classMap
-    setClassMap((prev) => {
+    setCustomClassMap((prev) => {
       const next = { ...prev };
       if (oldLopName !== newLopName) {
         delete next[oldLopName];
@@ -234,79 +392,63 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
       return next;
     });
 
-    // Update all students in this class
-    const studentsInOldClass = students.filter((s) => s.lop === oldLopName);
+    const studentsInOldClass = students.filter((s) => isSameClass(s.lop, oldLopName));
     studentsInOldClass.forEach((s) => {
-      onUpdateStudent(s.maSV, {
-        lop: newLopName,
-        khoa: newKhoa,
-      });
+      onUpdateStudent(s.maSV, { lop: newLopName, khoa: newKhoa });
     });
 
-    if (selectedClass === oldLopName) {
+    if (selectedClass && isSameClass(selectedClass, oldLopName)) {
       setSelectedClass(newLopName);
+      setSelectedLop(newLopName);
     }
 
     setEditingClassModal(null);
-    alert(
-      `Đã cập nhật thành công thông tin Lớp "${newLopName}" và Khoa "${newKhoa}" cho ${studentsInOldClass.length} sinh viên!`
-    );
+    showToast(`Đã cập nhật lớp "${newLopName}" (${studentsInOldClass.length} sinh viên).`, 'success');
   };
 
-  const handleDeleteClass = async (lopName: string, e?: React.MouseEvent) => {
+  const handleDeleteClass = (lopName: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    const studentsInLop = students.filter((s) => s.lop === lopName);
+    const studentsInLop = students.filter((s) => isSameClass(s.lop, lopName));
     const faculty = getFacultyForClass(lopName);
 
     if (studentsInLop.length === 0) {
-      alert(`Lớp "${lopName}" hiện không có sinh viên nào để xóa. Lớp học vẫn được giữ lại.`);
+      setCustomClassMap((prev) => {
+        const next = { ...prev };
+        delete next[lopName];
+        return next;
+      });
+      showToast(`Đã xóa lớp trống "${lopName}" khỏi danh mục.`, 'info');
       return;
     }
 
-    const confirmMsg = `⚠️ XÁC NHẬN XÓA SINH VIÊN TRONG LỚP:\n\nLớp: ${lopName}\nKhoa: ${faculty}\nSĩ số hiện tại: ${studentsInLop.length} sinh viên\n\nBạn có chắc chắn muốn XÓA TOÀN BỘ ${studentsInLop.length} sinh viên thuộc lớp "${lopName}" không?\n\n(Lưu ý: Chỉ xóa các sinh viên trong lớp, lớp học "${lopName}" vẫn được giữ lại trong hệ thống với sĩ số 0 sinh viên).`;
+    setClassToDeleteConfirm({ lopName, faculty, count: studentsInLop.length });
+  };
 
-    if (window.confirm(confirmMsg)) {
+  const handleExecuteDeleteClass = async () => {
+    if (!classToDeleteConfirm) return;
+    const { lopName, faculty, count } = classToDeleteConfirm;
+    setIsDeletingClass(true);
+    try {
       if (onDeleteClassStudents) {
         await onDeleteClassStudents(lopName);
       } else {
+        const studentsInLop = students.filter((s) => isSameClass(s.lop, lopName));
         studentsInLop.forEach((s) => {
           onDeleteStudent(s.maSV);
         });
       }
 
-      // Đảm bảo lớp học vẫn được lưu trong classMap (lớp không bị xóa)
-      setClassMap((prev) => ({
+      setCustomClassMap((prev) => ({
         ...prev,
         [lopName]: faculty,
       }));
-
-      alert(`Đã xóa thành công ${studentsInLop.length} sinh viên trong lớp "${lopName}". Lớp học vẫn được giữ lại trong hệ thống!`);
+      setClassToDeleteConfirm(null);
+      showToast(`Đã xóa ${count} sinh viên trong lớp "${lopName}".`, 'success');
+    } finally {
+      setIsDeletingClass(false);
     }
   };
 
-  // Modals state
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [editingStudent, setEditingStudent] = useState<SinhVien | null>(null);
-  const [viewingDocumentStudent, setViewingDocumentStudent] = useState<SinhVien | null>(null);
-  const [viewingDetailStudent, setViewingDetailStudent] = useState<SinhVien | null>(null);
-  const [copiedMaSV, setCopiedMaSV] = useState(false);
-
-  // Keep viewingDetailStudent synchronized when students prop updates
-  useEffect(() => {
-    if (viewingDetailStudent) {
-      const fresh = students.find((s) => s.maSV.toLowerCase() === viewingDetailStudent.maSV.toLowerCase());
-      if (fresh && (fresh.avatar !== viewingDetailStudent.avatar || fresh.hoTen !== viewingDetailStudent.hoTen)) {
-        setViewingDetailStudent(fresh);
-      }
-    }
-  }, [students]);
-
-  // Excel Import state
-  const [isExcelImportModalOpen, setIsExcelImportModalOpen] = useState(false);
-  const [previewExcelStudents, setPreviewExcelStudents] = useState<Partial<SinhVien>[]>([]);
-  const [excelFileName, setExcelFileName] = useState('');
-
-  // Sample Excel Template Generator
   const handleDownloadSampleExcel = () => {
     const sampleData = [
       {
@@ -320,20 +462,6 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
         'Số điện thoại': '0987654321',
         'Email': 'minh.nv25@tdnu.edu.vn',
         'Địa chỉ': 'TP. Hồ Chí Minh',
-        'Ngày nhập học': '2025-09-05',
-        'Trạng thái': 'Đang học',
-      },
-      {
-        'Mã SV': '25DDS0904189',
-        'Họ và tên': 'Trần Thị Thu Hà',
-        'Lớp': CANONICAL_CLASS_CO_KHI,
-        'Mã Lớp': '25DDS09041',
-        'Khoa / Viện': FACULTY_CO_KHI,
-        'Ngày sinh': '2007-08-20',
-        'Giới tính': 'Nữ',
-        'Số điện thoại': '0912345678',
-        'Email': 'ha.ttt25@tdnu.edu.vn',
-        'Địa chỉ': 'Bình Dương',
         'Ngày nhập học': '2025-09-05',
         'Trạng thái': 'Đang học',
       },
@@ -359,7 +487,6 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     XLSX.writeFile(workbook, 'Mau_Import_DanhSach_SinhVien.xlsx');
   };
 
-  // Parse Uploaded Excel File
   const handleExcelFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -371,7 +498,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
         const wb = XLSX.read(bstr, { type: 'binary' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json<any>(ws);
+        const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws);
 
         const parsed: Partial<SinhVien>[] = data
           .map((row) => {
@@ -389,15 +516,15 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
               rawLop = lopVal;
             }
 
-            const lop = normalizeClassName(rawLop) || CANONICAL_CLASS_CO_KHI;
+            const lop = normalizeClassName(rawLop);
             const rawKhoa = String(row['Khoa / Viện'] || row['Khoa'] || row['KhoaViên'] || row['khoa'] || '').trim();
-            const khoa = normalizeFacultyName(rawKhoa, lop);
-            const ngaySinh = String(row['Ngày sinh'] || row['NgaySinh'] || row['ngaySinh'] || '2007-01-01').trim();
+            const khoa = rawKhoa ? normalizeFacultyName(rawKhoa, lop) : (lop ? getFacultyFromHelper(lop) : '');
+            const ngaySinh = String(row['Ngày sinh'] || row['NgaySinh'] || row['ngaySinh'] || '').trim();
             const gioiTinh = String(row['Giới tính'] || row['GioiTinh'] || row['gioiTinh'] || 'Nam').trim();
             const soDienThoai = String(row['Số điện thoại'] || row['SoDienThoai'] || row['SĐT'] || row['soDienThoai'] || '').trim();
-            const email = String(row['Email'] || row['email'] || (maSV ? `${maSV.toLowerCase()}@tdnu.edu.vn` : '')).trim();
-            const diaChi = String(row['Địa chỉ'] || row['DiaChi'] || row['diaChi'] || 'TP. Hồ Chí Minh').trim();
-            const ngayNhapHoc = String(row['Ngày nhập học'] || row['NgayNhapHoc'] || row['ngayNhapHoc'] || '2025-09-05').trim();
+            const email = String(row['Email'] || row['email'] || '').trim();
+            const diaChi = String(row['Địa chỉ'] || row['DiaChi'] || row['diaChi'] || '').trim();
+            const ngayNhapHoc = String(row['Ngày nhập học'] || row['NgayNhapHoc'] || row['ngayNhapHoc'] || '').trim();
             const trangThai = String(row['Trạng thái'] || row['TrangThai'] || row['trangThai'] || 'Đang học').trim();
 
             return {
@@ -411,8 +538,8 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
               email,
               diaChi,
               ngayNhapHoc,
-              trangThai: (trangThai as any) || 'Đang học',
-              hoSoFiles: [], // Hồ sơ số hóa có thể bổ sung sau
+              trangThai: (trangThai as SinhVien['trangThai']) || 'Đang học',
+              hoSoFiles: [],
             };
           })
           .filter((s) => s.maSV && s.hoTen)
@@ -422,7 +549,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
         setExcelFileName(file.name);
       } catch (error) {
         console.error(error);
-        alert('Không thể đọc file Excel. Vui lòng kiểm tra lại định dạng file!');
+        showToast('Không thể đọc tệp Excel. Vui lòng kiểm tra lại định dạng tệp.', 'error');
       }
     };
     reader.readAsBinaryString(file);
@@ -436,7 +563,6 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     if (onImportStudents) {
       onImportStudents(sortedStudents);
     } else {
-      // Fallback batch addition
       sortedStudents.forEach((st) => onAddStudent(st as SinhVien));
     }
     setIsExcelImportModalOpen(false);
@@ -444,23 +570,21 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     setExcelFileName('');
   };
 
-  // Form State
   const [formData, setFormData] = useState<Partial<SinhVien>>({
     maSV: '',
     hoTen: '',
-    ngaySinh: '2007-01-01',
+    ngaySinh: '',
     gioiTinh: 'Nam',
-    lop: CANONICAL_CLASS_CO_KHI,
-    khoa: FACULTY_CO_KHI,
+    lop: '',
+    khoa: '',
     soDienThoai: '',
     email: '',
     diaChi: '',
-    ngayNhapHoc: '2025-09-05',
+    ngayNhapHoc: '',
     trangThai: 'Đang học',
     hoSoFiles: [],
   });
 
-  // Helper to extract file list from student
   const getStudentFiles = (student: SinhVien): HoSoFile[] => {
     if (student.hoSoFiles && student.hoSoFiles.length > 0) {
       return student.hoSoFiles;
@@ -469,17 +593,16 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
       return [
         {
           id: `legacy-${student.maSV}`,
-          customName: 'Giấy báo nhập học & Bằng THPT',
-          fileName: student.hoSoFileName || `HoSo_${student.maSV}_Scan.pdf`,
+          customName: student.hoSoFileName || 'Hồ sơ đính kèm',
+          fileName: student.hoSoFileName || `HoSo_${student.maSV}.pdf`,
           fileUrl: student.hoSoFile,
-          uploadedAt: '2025-09-05',
+          uploadedAt: student.ngayNhapHoc || '',
         },
       ];
     }
     return [];
   };
 
-  // Permissions check
   const isStudentRole = userRole === 'STUDENT';
   const canEditProfile =
     userRole === 'ADMIN' ||
@@ -489,65 +612,81 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
 
   const studentCodeLower = (currentStudentCode || currentUser?.studentCode || currentUser?.username || '').toLowerCase();
 
-  // If student role, filter to only the student's own profile
-  const studentSelfList = students.filter(
-    (s) =>
-      s.maSV.toLowerCase() === studentCodeLower ||
-      (s.email && currentUser?.email && s.email.toLowerCase() === currentUser.email.toLowerCase())
-  );
+  const studentSelfList = useMemo(() => {
+    return students.filter(
+      (s) =>
+        (studentCodeLower && s.maSV.toLowerCase() === studentCodeLower) ||
+        (s.email && currentUser?.email && s.email.toLowerCase() === currentUser.email.toLowerCase())
+    );
+  }, [students, studentCodeLower, currentUser?.email]);
 
-  const baseStudentsList = isStudentRole
-    ? studentSelfList.length > 0
-      ? studentSelfList
-      : students.length > 0
-      ? [students[0]]
-      : []
-    : students;
+  const baseStudentsList = isStudentRole ? studentSelfList : students;
+  const myProfile = isStudentRole ? studentSelfList[0] || null : null;
 
-  const myProfile = isStudentRole
-    ? (studentSelfList[0] || (students.length > 0 ? students[0] : null))
-    : null;
+  const filteredStudents = useMemo(() => {
+    return baseStudentsList
+      .filter((s) => {
+        const activeClass = selectedLop || selectedClass;
+        const matchesClass = !activeClass || isSameClass(s.lop, activeClass);
+        const q = searchTerm.trim().toLowerCase();
+        const matchesSearch =
+          !q ||
+          s.maSV.toLowerCase().includes(q) ||
+          s.hoTen.toLowerCase().includes(q) ||
+          (s.email || '').toLowerCase().includes(q) ||
+          (s.lop || '').toLowerCase().includes(q) ||
+          (s.khoa || '').toLowerCase().includes(q);
+        const sKhoa = normalizeFacultyName(s.khoa, s.lop);
+        const matchesKhoa = !selectedKhoa || sKhoa.toLowerCase().trim() === selectedKhoa.toLowerCase().trim();
+        const matchesCohort = !selectedCohortFilter || (s.lop ? getCohortForClass(s.lop) === selectedCohortFilter : false);
+        return matchesClass && matchesSearch && matchesKhoa && matchesCohort;
+      })
+      .sort((a, b) => a.maSV.localeCompare(b.maSV, undefined, { numeric: true, sensitivity: 'base' }));
+  }, [baseStudentsList, selectedLop, selectedClass, searchTerm, selectedKhoa, selectedCohortFilter]);
 
-  // Filter & sort students by MSSV ascending from smallest to largest
-  const filteredStudents = baseStudentsList
-    .filter((s) => {
-      const activeClass = selectedLop || selectedClass;
-      const matchesClass = !activeClass || isSameClass(s.lop, activeClass);
-      const matchesSearch =
-        s.maSV.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        s.hoTen.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        s.email.toLowerCase().includes(searchTerm.toLowerCase());
-      const sKhoa = normalizeFacultyName(s.khoa, s.lop);
-      const matchesKhoa = !selectedKhoa || sKhoa.toLowerCase().trim() === selectedKhoa.toLowerCase().trim();
-      return matchesClass && matchesSearch && matchesKhoa;
-    })
-    .sort((a, b) => a.maSV.localeCompare(b.maSV, undefined, { numeric: true, sensitivity: 'base' }));
+  const filteredClasses = useMemo(() => {
+    return availableClasses.filter((lopName) => {
+      const fac = getFacultyForClass(lopName);
+      const matchFac = !selectedKhoa || fac === selectedKhoa;
+      const matchCoh = !selectedCohortFilter || getCohortForClass(lopName) === selectedCohortFilter;
+      const q = searchTerm.trim().toLowerCase();
+      const matchSearch =
+        !q ||
+        lopName.toLowerCase().includes(q) ||
+        getMajorForClass(lopName).toLowerCase().includes(q) ||
+        fac.toLowerCase().includes(q);
+      return matchFac && matchCoh && matchSearch;
+    });
+  }, [availableClasses, selectedKhoa, selectedCohortFilter, searchTerm, classMap]);
+
+  const paginatedClasses = useMemo(() => {
+    const start = (classesPage - 1) * classesPageSize;
+    return filteredClasses.slice(start, start + classesPageSize);
+  }, [filteredClasses, classesPage, classesPageSize]);
+
+  const paginatedStudents = useMemo(() => {
+    const start = (studentsPage - 1) * studentsPageSize;
+    return filteredStudents.slice(start, start + studentsPageSize);
+  }, [filteredStudents, studentsPage, studentsPageSize]);
 
   const handleOpenAdd = () => {
-    const defaultMaSV = `25DDS0904${Math.floor(100 + Math.random() * 900)}`;
-    const initialClass = selectedClass || CANONICAL_CLASS_CO_KHI;
+    const initialClass = selectedClass || availableClasses[0] || '';
     setFormData({
-      maSV: defaultMaSV,
+      maSV: '',
       hoTen: '',
-      ngaySinh: '2007-06-15',
+      ngaySinh: '',
       gioiTinh: 'Nam',
       lop: initialClass,
-      khoa: getFacultyForClass(initialClass),
-      soDienThoai: '0912345678',
+      khoa: initialClass ? getFacultyForClass(initialClass) : '',
+      soDienThoai: '',
       email: '',
-      diaChi: 'TP. Hồ Chí Minh',
-      ngayNhapHoc: '2025-09-05',
+      diaChi: '',
+      ngayNhapHoc: '',
       trangThai: 'Đang học',
-      hoSoFiles: [
-        {
-          id: `hs-1-${Date.now()}`,
-          customName: 'Giấy báo nhập học & Bằng THPT',
-          fileName: `GiayBaoNhapHoc_${defaultMaSV}.pdf`,
-          fileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-          uploadedAt: new Date().toISOString().split('T')[0],
-        },
-      ],
+      hoSoFiles: [],
     });
+    setFormError(null);
+    setIsCustomClassInput(availableClasses.length === 0);
     setEditingStudent(null);
     setIsAddModalOpen(true);
   };
@@ -555,24 +694,43 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
   const handleOpenEdit = (student: SinhVien) => {
     setEditingStudent(student);
     const files = getStudentFiles(student);
+    const normLop = normalizeClassName(student.lop);
     setFormData({
       ...student,
-      lop: normalizeClassName(student.lop),
+      lop: normLop,
       khoa: normalizeFacultyName(student.khoa, student.lop),
       hoSoFiles: files,
     });
+    setFormError(null);
+    setIsCustomClassInput(Boolean(normLop && !availableClasses.includes(normLop)));
     setIsAddModalOpen(true);
   };
 
   const handleSubmitForm = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.maSV || !formData.hoTen) return;
+    const maSVTrim = (formData.maSV || '').trim();
+    const hoTenTrim = (formData.hoTen || '').trim();
+    const lopTrim = normalizeClassName((formData.lop || '').trim());
 
-    const normLop = normalizeClassName(formData.lop) || CANONICAL_CLASS_CO_KHI;
-    const normKhoa = normalizeFacultyName(formData.khoa, normLop);
-    const payload = {
+    if (!maSVTrim) {
+      setFormError('Vui lòng nhập Mã sinh viên.');
+      return;
+    }
+    if (!hoTenTrim) {
+      setFormError('Vui lòng nhập Họ và tên sinh viên.');
+      return;
+    }
+    if (!lopTrim) {
+      setFormError('Vui lòng chọn hoặc nhập Lớp sinh hoạt.');
+      return;
+    }
+
+    const normKhoa = (formData.khoa || '').trim() || getFacultyFromHelper(lopTrim);
+    const payload: Partial<SinhVien> = {
       ...formData,
-      lop: normLop,
+      maSV: maSVTrim,
+      hoTen: hoTenTrim,
+      lop: lopTrim,
       khoa: normKhoa,
     };
 
@@ -581,15 +739,14 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     } else {
       onAddStudent(payload as SinhVien);
     }
+    setFormError(null);
     setIsAddModalOpen(false);
   };
 
   const handleUpdateCustomName = (fileId: string, newName: string) => {
     setFormData((prev) => {
       const currentFiles = prev.hoSoFiles || [];
-      const updated = currentFiles.map((f) =>
-        f.id === fileId ? { ...f, customName: newName } : f
-      );
+      const updated = currentFiles.map((f) => (f.id === fileId ? { ...f, customName: newName } : f));
       return { ...prev, hoSoFiles: updated };
     });
   };
@@ -618,17 +775,17 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     filesArray.forEach((file: File, index: number) => {
       const reader = new FileReader();
       reader.onload = () => {
-        let defaultName = 'Tài liệu scan';
+        let defaultName = file.name.replace(/\.[^/.]+$/, '');
         const fname = file.name.toLowerCase();
-        if (fname.includes('cccd') || fname.includes('cmnd')) defaultName = 'Căn cước công dân (2 mặt)';
+        if (fname.includes('cccd') || fname.includes('cmnd')) defaultName = 'Căn cước công dân';
         else if (fname.includes('thpt') || fname.includes('bang')) defaultName = 'Bằng tốt nghiệp THPT';
-        else if (fname.includes('khai sinh')) defaultName = 'Giấy khai sinh (Bản sao)';
+        else if (fname.includes('khai sinh')) defaultName = 'Giấy khai sinh';
         else if (fname.includes('nhap hoc') || fname.includes('giay bao')) defaultName = 'Giấy báo nhập học';
-        else if (fname.includes('ly lich') || fname.includes('so yeu')) defaultName = 'Sơ yếu lý lịch sinh viên';
-        else defaultName = file.name.replace(/\.[^/.]+$/, '');
+        else if (fname.includes('ly lich') || fname.includes('so yeu')) defaultName = 'Sơ yếu lý lịch';
 
         const localData = reader.result as string;
-        apiService.uploadHoSoFile(formData.maSV || 'temp', file.name, localData)
+        apiService
+          .uploadHoSoFile(formData.maSV || 'temp', file.name, localData)
           .then((res) => {
             const finalUrl = res.success && res.fileUrl ? res.fileUrl : localData;
             existingFiles.push({
@@ -683,15 +840,16 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     filesArr.forEach((file: File, index: number) => {
       const reader = new FileReader();
       reader.onload = () => {
-        let defaultName = file.name.replace(/\.[^/.]+$/, '');
+        const defaultName = file.name.replace(/\.[^/.]+$/, '') || 'Tài liệu đính kèm';
         const localData = reader.result as string;
 
-        apiService.uploadHoSoFile(student.maSV, file.name, localData)
+        apiService
+          .uploadHoSoFile(student.maSV, file.name, localData)
           .then((res) => {
             const finalUrl = res.success && res.fileUrl ? res.fileUrl : localData;
             newFiles.push({
               id: `hs-${Date.now()}-${index}`,
-              customName: defaultName || 'Tài liệu đính kèm mới',
+              customName: defaultName,
               fileName: file.name,
               fileUrl: finalUrl,
               uploadedAt: new Date().toISOString().split('T')[0],
@@ -703,12 +861,13 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                 hoSoFile: newFiles[0]?.fileUrl,
                 hoSoFileName: newFiles[0]?.fileName,
               });
+              onUploadHoSo(student.maSV, file.name, finalUrl);
             }
           })
           .catch(() => {
             newFiles.push({
               id: `hs-${Date.now()}-${index}`,
-              customName: defaultName || 'Tài liệu đính kèm mới',
+              customName: defaultName,
               fileName: file.name,
               fileUrl: localData,
               uploadedAt: new Date().toISOString().split('T')[0],
@@ -733,243 +892,349 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     fileName: string,
     student: { hoTen: string; maSV: string; lop?: string }
   ) => {
-    const displayTitle = `${customName} - ${student.hoTen} (${student.maSV})`;
-    if (fileUrl.startsWith('data:')) {
-      const newWin = window.open('', '_blank');
-      if (newWin) {
-        newWin.document.write(`
-          <!DOCTYPE html>
-          <html lang="vi">
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>${displayTitle}</title>
-            <style>
-              body { margin: 0; padding: 0; background: #0f172a; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #f8fafc; height: 100vh; display: flex; flex-direction: column; }
-              header { background: #1e293b; padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; }
-              .student-info h1 { margin: 0; font-size: 16px; font-weight: 700; color: #38bdf8; }
-              .student-info p { margin: 4px 0 0 0; font-size: 12px; color: #94a3b8; }
-              .actions { display: flex; gap: 12px; align-items: center; }
-              .btn { background: #0284c7; color: white; padding: 8px 16px; text-decoration: none; border-radius: 8px; font-size: 12px; font-weight: 600; }
-              .btn:hover { background: #0369a1; }
-              main { flex: 1; position: relative; background: #0f172a; }
-              iframe { width: 100%; height: 100%; border: none; }
-            </style>
-          </head>
-          <body>
-            <header>
-              <div class="student-info">
-                <h1>📄 ${customName} — ${student.hoTen} (${student.maSV})</h1>
-                <p>Lớp: ${student.lop || 'N/A'} • File gốc: ${fileName}</p>
-              </div>
-              <div class="actions">
-                <a href="${fileUrl}" download="${fileName}" class="btn">Tải file về</a>
-              </div>
-            </header>
-            <main>
-              <iframe src="${fileUrl}"></iframe>
-            </main>
-          </body>
-          </html>
-        `);
-        newWin.document.close();
-      }
-    } else {
-      window.open(fileUrl, '_blank', 'noopener,noreferrer');
-    }
+    setPreviewDoc({
+      fileUrl,
+      customName,
+      fileName,
+      studentName: student.hoTen,
+      maSV: student.maSV,
+      lop: student.lop,
+    });
   };
 
+  const getStatusVariant = (trangThai?: string) => {
+    if (trangThai === 'Đang học') return 'success';
+    if (trangThai === 'Bảo lưu') return 'warning';
+    if (trangThai === 'Tốt nghiệp') return 'info';
+    return 'danger';
+  };
+
+  const hasActiveFilters = Boolean(searchTerm || selectedKhoa || selectedCohortFilter || selectedLop || selectedClass);
+  const clearAllFilters = () => {
+    setSearchTerm('');
+    setSelectedKhoa('');
+    setSelectedCohortFilter('');
+    setSelectedLop('');
+    setSelectedClass(null);
+  };
+
+  // Loading & error gates when data is not loaded yet
+  if (isLoading && students.length === 0) {
+    return (
+      <div className="space-y-4">
+        <PageHeader
+          title={isStudentRole ? 'Hồ sơ & Lý lịch Sinh viên' : 'Khoa, Ngành, Khóa & Lớp Học'}
+          icon={isStudentRole ? GraduationCap : Building2}
+        />
+        <LoadingState rows={6} />
+      </div>
+    );
+  }
+
+  if (loadError && students.length === 0) {
+    return (
+      <div className="space-y-4">
+        <PageHeader
+          title={isStudentRole ? 'Hồ sơ & Lý lịch Sinh viên' : 'Khoa, Ngành, Khóa & Lớp Học'}
+          icon={isStudentRole ? GraduationCap : Building2}
+        />
+        <ErrorState type="error" message={loadError} onRetry={onRetryLoad} />
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      {loadError && students.length > 0 && (
+        <ErrorBanner message={loadError} onRetry={onRetryLoad} />
+      )}
+
+      {toastMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`p-3 rounded border text-xs font-medium flex items-center justify-between gap-3 ${
+            toastMessage.type === 'error'
+              ? 'bg-rose-50 dark:bg-rose-950/50 border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-200'
+              : toastMessage.type === 'info'
+              ? 'bg-blue-50 dark:bg-blue-950/50 border-blue-300 dark:border-blue-800 text-blue-800 dark:text-blue-200'
+              : 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {toastMessage.type === 'error' ? (
+              <X className="w-4 h-4 text-rose-600 shrink-0" />
+            ) : toastMessage.type === 'info' ? (
+              <Info className="w-4 h-4 text-blue-600 shrink-0" />
+            ) : (
+              <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+            )}
+            <span>{toastMessage.text}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setToastMessage(null)}
+            className="p-1 hover:opacity-70 rounded cursor-pointer"
+            aria-label="Đóng thông báo"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* ========================================================================= */}
-      {/* STUDENT ROLE VIEW: DEDICATED PERSONAL STUDENT PROFILE & DIGITAL DOCUMENTS */}
+      {/* STUDENT ROLE VIEW                                                         */}
       {/* ========================================================================= */}
       {isStudentRole ? (
         myProfile ? (
-          <div className="space-y-6">
-            {/* Student Module Title */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-zinc-900 p-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-blue-100 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 shadow-inner">
-                  <GraduationCap className="w-6 h-6" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Hồ Sơ & Lý Lịch Sinh Viên</h2>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                    Thông tin định danh sinh viên, lớp sinh hoạt và danh mục tài liệu hồ sơ số hóa đã lưu trữ
-                  </p>
-                </div>
-              </div>
+          <div className="space-y-4">
+            <PageHeader
+              title="Hồ sơ & Lý lịch Sinh viên"
+              icon={GraduationCap}
+              actions={
+                canEditProfile ? (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenEdit(myProfile)}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded bg-blue-700 hover:bg-blue-800 text-white transition-colors cursor-pointer"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>Cập nhật lý lịch</span>
+                  </button>
+                ) : undefined
+              }
+            />
 
-              {canEditProfile && (
-                <button
-                  onClick={() => handleOpenEdit(myProfile)}
-                  className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-4 py-2.5 rounded-xl shadow-md shadow-blue-500/20 transition-all cursor-pointer self-start sm:self-auto"
-                >
-                  <Edit3 className="w-4 h-4" />
-                  <span>Cập nhật lý lịch</span>
-                </button>
-              )}
+            {/* Portal Shortcuts */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <a
+                href="/grades"
+                onClick={(e) => {
+                  e.preventDefault();
+                  onSwitchView?.('grades');
+                }}
+                className="p-2.5 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-500 transition-colors flex items-center gap-2.5 cursor-pointer group no-underline"
+              >
+                <div className="p-1.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">
+                  <Award className="w-4 h-4" />
+                </div>
+                <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 group-hover:text-blue-700 dark:group-hover:text-blue-400">
+                  Bảng Điểm & GPA
+                </span>
+              </a>
+
+              <a
+                href="/schedule"
+                onClick={(e) => {
+                  e.preventDefault();
+                  onSwitchView?.('schedule');
+                }}
+                className="p-2.5 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-emerald-500 transition-colors flex items-center gap-2.5 cursor-pointer group no-underline"
+              >
+                <div className="p-1.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400">
+                  <Calendar className="w-4 h-4" />
+                </div>
+                <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 group-hover:text-emerald-700 dark:group-hover:text-emerald-400">
+                  Thời Khóa Biểu
+                </span>
+              </a>
+
+              <a
+                href="/retakes"
+                onClick={(e) => {
+                  e.preventDefault();
+                  onSwitchView?.('retakes');
+                }}
+                className="p-2.5 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-amber-500 transition-colors flex items-center gap-2.5 cursor-pointer group no-underline"
+              >
+                <div className="p-1.5 rounded bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400">
+                  <RotateCcw className="w-4 h-4" />
+                </div>
+                <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 group-hover:text-amber-700 dark:group-hover:text-amber-400">
+                  Thi Lại / Học Lại
+                </span>
+              </a>
+
+              <a
+                href="/training"
+                onClick={(e) => {
+                  e.preventDefault();
+                  onSwitchView?.('training');
+                }}
+                className="p-2.5 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-indigo-500 transition-colors flex items-center gap-2.5 cursor-pointer group no-underline"
+              >
+                <div className="p-1.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 group-hover:text-indigo-700 dark:group-hover:text-indigo-400">
+                  Điểm Rèn Luyện
+                </span>
+              </a>
             </div>
 
-            {/* Main Content Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Personal Details Card */}
-              <div className="lg:col-span-2 bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm p-6 space-y-6">
-                {/* Identity Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center gap-4 pb-6 border-b border-zinc-100 dark:border-zinc-800">
-                  <div className="w-16 h-16 rounded-2xl bg-linear-to-br from-blue-600 to-indigo-700 text-white font-black text-xl flex items-center justify-center shadow-md shadow-blue-600/20 shrink-0">
-                    {myProfile.hoTen ? myProfile.hoTen.split(' ').slice(-1)[0]?.charAt(0) : 'SV'}
-                  </div>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* Personal Details */}
+              <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
+                  <img
+                    src={getStudentAvatarUrl(myProfile)}
+                    alt={myProfile.hoTen}
+                    className="w-14 h-14 rounded object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(myProfile.hoTen || 'SV')}&background=1d4ed8&color=fff&size=120`;
+                    }}
+                  />
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-lg font-black text-zinc-900 dark:text-white">{myProfile.hoTen}</h3>
-                      <span className="font-mono text-xs font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/80 px-2.5 py-0.5 rounded-lg border border-blue-200 dark:border-blue-800">
+                      <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{myProfile.hoTen}</h2>
+                      <span className="font-mono text-xs font-medium text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-900 tabular-nums">
                         {myProfile.maSV}
                       </span>
-                      <span
-                        className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                          myProfile.trangThai === 'Đang học'
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300'
-                            : myProfile.trangThai === 'Bảo lưu'
-                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300'
-                            : 'bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300'
-                        }`}
-                      >
-                        {myProfile.trangThai || 'Đang học'}
-                      </span>
+                      <StatusBadge
+                        label={myProfile.trangThai || 'Đang học'}
+                        variant={getStatusVariant(myProfile.trangThai)}
+                        dot
+                      />
                     </div>
-                    <p className="text-xs text-zinc-500 font-medium">
-                      Lớp: <strong className="text-zinc-800 dark:text-zinc-200">{myProfile.lop || 'Chưa phân lớp'}</strong> • Khoa: <strong className="text-zinc-800 dark:text-zinc-200">{myProfile.khoa || 'Khoa Đào tạo'}</strong>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                      Lớp: <strong className="text-slate-800 dark:text-slate-200">{myProfile.lop || 'Chưa cập nhật'}</strong>
+                      {myProfile.khoa ? (
+                        <>
+                          {' · Khoa: '}
+                          <strong className="text-slate-800 dark:text-slate-200">{myProfile.khoa}</strong>
+                        </>
+                      ) : null}
                     </p>
                   </div>
                 </div>
 
-                {/* Details Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                  <div className="bg-zinc-50 dark:bg-zinc-800/50 p-3.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800">
-                    <span className="text-[11px] font-bold text-zinc-400 block mb-0.5">Mã sinh viên</span>
-                    <span className="font-mono font-bold text-zinc-900 dark:text-white text-sm">{myProfile.maSV}</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded border border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-0.5">Mã sinh viên</span>
+                    <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">{myProfile.maSV}</span>
                   </div>
 
-                  <div className="bg-zinc-50 dark:bg-zinc-800/50 p-3.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800">
-                    <span className="text-[11px] font-bold text-zinc-400 block mb-0.5">Họ và tên</span>
-                    <span className="font-bold text-zinc-900 dark:text-white text-sm">{myProfile.hoTen}</span>
+                  <div className="bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded border border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-0.5">Họ và tên</span>
+                    <span className="font-semibold text-slate-900 dark:text-slate-100">{myProfile.hoTen}</span>
                   </div>
 
-                  <div className="bg-zinc-50 dark:bg-zinc-800/50 p-3.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800">
-                    <span className="text-[11px] font-bold text-zinc-400 block mb-0.5">Lớp sinh hoạt</span>
-                    <span className="font-bold text-blue-600 dark:text-blue-400 text-sm">{myProfile.lop}</span>
+                  <div className="bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded border border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-0.5">Lớp sinh hoạt</span>
+                    <span className="font-semibold text-blue-700 dark:text-blue-400">{myProfile.lop || 'Chưa cập nhật'}</span>
                   </div>
 
-                  <div className="bg-zinc-50 dark:bg-zinc-800/50 p-3.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800">
-                    <span className="text-[11px] font-bold text-zinc-400 block mb-0.5">Khoa / Viện đào tạo</span>
-                    <span className="font-bold text-zinc-800 dark:text-zinc-200">{myProfile.khoa}</span>
+                  <div className="bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded border border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-0.5">Khoa / Viện</span>
+                    <span className="font-medium text-slate-800 dark:text-slate-200">{myProfile.khoa || 'Chưa cập nhật'}</span>
                   </div>
 
-                  <div className="bg-zinc-50 dark:bg-zinc-800/50 p-3.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800">
-                    <span className="text-[11px] font-bold text-zinc-400 block mb-0.5">Ngày sinh & Giới tính</span>
-                    <span className="font-medium text-zinc-900 dark:text-white">{myProfile.ngaySinh} ({myProfile.gioiTinh})</span>
+                  <div className="bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded border border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-0.5">Ngày sinh & Giới tính</span>
+                    <span className="font-medium text-slate-900 dark:text-slate-100 font-mono tabular-nums">
+                      {myProfile.ngaySinh || 'Chưa cập nhật'} <span className="font-sans">({myProfile.gioiTinh})</span>
+                    </span>
                   </div>
 
-                  <div className="bg-zinc-50 dark:bg-zinc-800/50 p-3.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800">
-                    <span className="text-[11px] font-bold text-zinc-400 block mb-0.5">Số điện thoại liên hệ</span>
-                    <span className="font-mono font-medium text-zinc-900 dark:text-white">{myProfile.soDienThoai || 'Chưa cập nhật'}</span>
+                  <div className="bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded border border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-0.5">Số điện thoại</span>
+                    <span className="font-mono font-medium text-slate-900 dark:text-slate-100 tabular-nums">
+                      {myProfile.soDienThoai || 'Chưa cập nhật'}
+                    </span>
                   </div>
 
-                  <div className="bg-zinc-50 dark:bg-zinc-800/50 p-3.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800">
-                    <span className="text-[11px] font-bold text-zinc-400 block mb-0.5">Email sinh viên</span>
-                    <span className="font-medium text-zinc-900 dark:text-white truncate block">{myProfile.email || `${myProfile.maSV.toLowerCase()}@tdnu.edu.vn`}</span>
+                  <div className="bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded border border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-0.5">Email sinh viên</span>
+                    <span className="font-medium text-slate-900 dark:text-slate-100 truncate block">
+                      {myProfile.email || 'Chưa cập nhật'}
+                    </span>
                   </div>
 
-                  <div className="bg-zinc-50 dark:bg-zinc-800/50 p-3.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800">
-                    <span className="text-[11px] font-bold text-zinc-400 block mb-0.5">Ngày nhập học</span>
-                    <span className="font-medium text-zinc-900 dark:text-white">{myProfile.ngayNhapHoc || '2025-09-05'}</span>
+                  <div className="bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded border border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-0.5">Ngày nhập học</span>
+                    <span className="font-medium text-slate-900 dark:text-slate-100 font-mono tabular-nums">
+                      {myProfile.ngayNhapHoc || 'Chưa cập nhật'}
+                    </span>
                   </div>
 
-                  <div className="sm:col-span-2 bg-zinc-50 dark:bg-zinc-800/50 p-3.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800">
-                    <span className="text-[11px] font-bold text-zinc-400 block mb-0.5">Địa chỉ thường trú</span>
-                    <span className="font-medium text-zinc-900 dark:text-white">{myProfile.diaChi || 'Chưa cập nhật'}</span>
+                  <div className="sm:col-span-2 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded border border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block mb-0.5">Địa chỉ thường trú</span>
+                    <span className="font-medium text-slate-900 dark:text-slate-100">{myProfile.diaChi || 'Chưa cập nhật'}</span>
                   </div>
                 </div>
               </div>
 
-              {/* Digital Documents Card */}
-              <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm p-6 flex flex-col justify-between space-y-4">
+              {/* Digital Documents */}
+              <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-4 flex flex-col justify-between space-y-3">
                 <div>
-                  <div className="flex items-center justify-between pb-3 border-b border-zinc-100 dark:border-zinc-800">
-                    <div className="flex items-center gap-2">
-                      <Paperclip className="w-5 h-5 text-blue-600" />
-                      <h4 className="font-bold text-sm text-zinc-900 dark:text-white">Hồ Sơ Số Hóa Đã Nộp</h4>
+                  <div className="flex items-center justify-between pb-2.5 border-b border-slate-200 dark:border-slate-800">
+                    <div className="flex items-center gap-1.5">
+                      <Paperclip className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                      <h3 className="font-semibold text-xs text-slate-900 dark:text-slate-100 uppercase tracking-wider">
+                        Hồ sơ số hóa
+                      </h3>
                     </div>
-                    <span className="text-xs font-mono font-bold bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 px-2.5 py-1 rounded-lg border border-blue-200 dark:border-blue-800">
-                      {getStudentFiles(myProfile).length} file
-                    </span>
+                    <StatusBadge label={`${getStudentFiles(myProfile).length} tệp`} variant="info" />
                   </div>
 
-                  {/* List of files */}
-                  <div className="mt-4 space-y-3">
+                  <div className="mt-3 space-y-2">
                     {getStudentFiles(myProfile).length > 0 ? (
                       getStudentFiles(myProfile).map((file, idx) => (
                         <div
                           key={file.id || idx}
-                          className="p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/80 hover:border-blue-400 transition-all space-y-2"
+                          className="p-2.5 rounded bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-1.5"
                         >
                           <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-center gap-2 overflow-hidden">
-                              <FileText className="w-4 h-4 text-blue-600 shrink-0" />
-                              <span className="font-bold text-xs text-zinc-900 dark:text-white truncate">
+                            <div className="flex items-center gap-1.5 overflow-hidden">
+                              <FileText className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400 shrink-0" />
+                              <span className="font-medium text-xs text-slate-900 dark:text-slate-100 truncate">
                                 {file.customName || file.fileName}
                               </span>
                             </div>
-                            <span className="text-[10px] font-mono text-zinc-400 shrink-0">
-                              {file.uploadedAt || 'Mới nộp'}
-                            </span>
+                            {file.uploadedAt && (
+                              <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 shrink-0 tabular-nums">
+                                {file.uploadedAt}
+                              </span>
+                            )}
                           </div>
 
-                          <div className="text-[10px] text-zinc-400 font-mono truncate">
-                            File: {file.fileName}
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono truncate">
+                            {file.fileName}
                           </div>
 
-                          <div className="pt-1.5 border-t border-zinc-200/60 dark:border-zinc-700/60 flex items-center justify-end gap-2">
+                          <div className="pt-1.5 border-t border-slate-200 dark:border-slate-700 flex items-center justify-end gap-3">
                             <button
                               type="button"
                               onClick={() =>
                                 handleOpenSinglePdf(file.fileUrl, file.customName || 'Hồ sơ', file.fileName, myProfile)
                               }
-                              className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                              className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 dark:text-blue-400 hover:underline cursor-pointer"
                             >
-                              <Eye className="w-3.5 h-3.5" />
-                              <span>Xem PDF</span>
+                              <Eye className="w-3 h-3" />
+                              <span>Xem</span>
                             </button>
                             <a
                               href={file.fileUrl}
                               download={file.fileName}
-                              className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline"
+                              className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-400 hover:underline"
                             >
-                              <Download className="w-3.5 h-3.5" />
+                              <Download className="w-3 h-3" />
                               <span>Tải về</span>
                             </a>
                           </div>
                         </div>
                       ))
                     ) : (
-                      <div className="text-center py-6 px-4 bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-dashed border-zinc-200 dark:border-zinc-700 space-y-2">
-                        <FileText className="w-8 h-8 text-zinc-400 mx-auto" />
-                        <p className="text-xs text-zinc-500 font-medium">Chưa có file scan hồ sơ nào được lưu</p>
-                      </div>
+                      <EmptyState message="Chưa có dữ liệu." />
                     )}
                   </div>
                 </div>
 
                 {canEditProfile && (
-                  <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl hover:border-blue-500 dark:hover:border-blue-500 cursor-pointer bg-zinc-50 dark:bg-zinc-800/40 hover:bg-blue-50/50 transition-all text-center">
-                    <Upload className="w-5 h-5 text-blue-500 mb-1" />
-                    <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
-                      + Bổ sung thêm File Scan (PDF/Ảnh)
-                    </span>
-                    <span className="text-[10px] text-zinc-400 mt-0.5">
-                      Bằng THPT, CCCD, Giấy báo nhập học...
+                  <label className="flex flex-col items-center justify-center p-3 border border-dashed border-slate-300 dark:border-slate-700 rounded hover:border-blue-600 dark:hover:border-blue-500 cursor-pointer bg-slate-50 dark:bg-slate-800/60 transition-colors text-center">
+                    <Upload className="w-4 h-4 text-blue-700 dark:text-blue-400 mb-1" />
+                    <span className="text-xs font-medium text-slate-800 dark:text-slate-200">
+                      Tải lên tệp hồ sơ
                     </span>
                     <input
                       type="file"
@@ -984,382 +1249,765 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
             </div>
           </div>
         ) : (
-          <div className="bg-white dark:bg-zinc-900 p-8 rounded-2xl border border-zinc-200 dark:border-zinc-800 text-center space-y-3">
-            <div className="w-12 h-12 rounded-2xl bg-amber-100 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto">
-              <Info className="w-6 h-6" />
-            </div>
-            <h3 className="font-bold text-sm text-zinc-900 dark:text-white">Không tìm thấy thông tin hồ sơ</h3>
-            <p className="text-xs text-zinc-500 max-w-md mx-auto">
-              Hệ thống chưa tìm thấy dữ liệu hồ sơ cá nhân tương ứng với tài khoản sinh viên đang đăng nhập. Vui lòng liên hệ Cố vấn học tập hoặc Quản trị viên.
-            </p>
+          <div className="space-y-4">
+            <PageHeader title="Hồ sơ & Lý lịch Sinh viên" icon={GraduationCap} />
+            <EmptyState message="Chưa có dữ liệu." />
           </div>
         )
       ) : (
         /* ========================================================================= */
-        /* ADMIN & LECTURER ROLE VIEW: CLASS NAVIGATOR, CARDS GRID & STUDENTS TABLE  */
+        /* ADMIN & LECTURER ROLE VIEW                                                */
         /* ========================================================================= */
         <>
-          {/* Module Title & Stats */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-zinc-900 p-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm">
-            <div>
-              <div className="flex items-center gap-2">
-                <Users className="w-6 h-6 text-blue-600 dark:text-blue-400" />
-                <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Quản lý Hồ sơ Sinh viên</h2>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              {/* Mode switch button */}
-              <button
-                onClick={() => {
-                  if (viewMode === 'HIERARCHICAL') {
-                    setViewMode('FLAT');
-                  } else {
-                    setViewMode('HIERARCHICAL');
-                    setSelectedClass(null);
-                  }
-                }}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 hover:bg-zinc-200 transition-all"
-              >
-                <Layers className="w-4 h-4 text-blue-500" />
-                <span>{viewMode === 'HIERARCHICAL' ? 'Xem Tất Cả (Dạng Danh Sách)' : 'Phân Cấp Theo Lớp'}</span>
-              </button>
-
-              {userRole === 'ADMIN' && (
-                <div className="flex items-center gap-2">
+          <PageHeader
+            title="Khoa, Ngành, Khóa & Lớp Học"
+            icon={Building2}
+            actions={
+              <div className="flex flex-wrap items-center gap-2">
+                <div
+                  role="tablist"
+                  aria-label="Chế độ hiển thị"
+                  className="inline-flex items-center p-0.5 rounded border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-xs font-medium"
+                >
                   <button
-                    id="btn-import-students-excel"
-                    onClick={() => setIsExcelImportModalOpen(true)}
-                    className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs px-3.5 py-2.5 rounded-xl shadow-md shadow-emerald-500/20 transition-all cursor-pointer"
+                    type="button"
+                    role="tab"
+                    aria-selected={viewMode === 'HIERARCHY' && selectedClass === null}
+                    onClick={() => {
+                      setViewMode('HIERARCHY');
+                      setSelectedClass(null);
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer ${
+                      viewMode === 'HIERARCHY' && selectedClass === null
+                        ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 font-semibold'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100'
+                    }`}
                   >
-                    <FileSpreadsheet className="w-4 h-4" />
-                    <span>Import từ File Excel mẫu</span>
+                    <FolderTree className="w-3.5 h-3.5" />
+                    <span>Cơ cấu tổ chức</span>
                   </button>
 
                   <button
-                    id="btn-add-student"
-                    onClick={handleOpenAdd}
-                    className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-3.5 py-2.5 rounded-xl shadow-md shadow-blue-500/20 transition-all cursor-pointer"
+                    type="button"
+                    role="tab"
+                    aria-selected={viewMode === 'CLASSES' && selectedClass === null}
+                    onClick={() => {
+                      setViewMode('CLASSES');
+                      setSelectedClass(null);
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer ${
+                      viewMode === 'CLASSES' && selectedClass === null
+                        ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 font-semibold'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100'
+                    }`}
                   >
-                    <Plus className="w-4 h-4" />
-                    <span>Thêm Sinh viên</span>
+                    <Folder className="w-3.5 h-3.5" />
+                    <span>Danh mục Lớp</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={viewMode === 'STUDENTS' || selectedClass !== null}
+                    onClick={() => {
+                      setViewMode('STUDENTS');
+                      setSelectedClass(null);
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded transition-colors cursor-pointer ${
+                      viewMode === 'STUDENTS' && selectedClass === null
+                        ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 font-semibold'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100'
+                    }`}
+                  >
+                    <Users className="w-3.5 h-3.5" />
+                    <span>Danh sách Sinh viên</span>
                   </button>
                 </div>
-              )}
-            </div>
-          </div>
 
-          {/* BREADCRUMB & CLASS NAVIGATOR */}
-          {viewMode === 'HIERARCHICAL' && (
-            <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm space-y-3">
-              <div className="flex items-center flex-wrap gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                <button
-                  onClick={() => handleSelectClass(null)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
-                    selectedClass === null
-                      ? 'bg-blue-600 text-white font-bold shadow-sm'
-                      : 'bg-zinc-100 dark:bg-zinc-800 hover:bg-blue-50 dark:hover:bg-blue-950 hover:text-blue-600'
-                  }`}
-                >
-                  <Folder className="w-4 h-4" />
-                  <span>Tất cả Lớp học</span>
-                </button>
-
-                {selectedClass && (
-                  <>
-                    <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />
-                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-700 text-white font-bold shadow-sm">
-                      <Users className="w-4 h-4" />
-                      <span>Lớp: {selectedClass} ({getFacultyForClass(selectedClass)})</span>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* LEVEL 1: CLASS CARDS GRID */}
-          {viewMode === 'HIERARCHICAL' && selectedClass === null && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-bold text-sm text-zinc-900 dark:text-white flex items-center gap-2">
-                  <GraduationCap className="w-5 h-5 text-blue-600" />
-                </h3>
-                <span className="text-xs text-zinc-500 font-mono">
-                  {availableClasses.length} lớp học
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {availableClasses.map((lopName) => {
-                  const studentsInLop = students.filter((s) => isSameClass(s.lop, lopName));
-                  const activeCount = studentsInLop.filter((s) => s.trangThai === 'Đang học').length;
-                  const hasScanCount = studentsInLop.reduce((acc, s) => acc + getStudentFiles(s).length, 0);
-                  const faculty = getFacultyForClass(lopName);
-
-                  return (
-                    <div
-                      key={lopName}
-                      onClick={() => handleSelectClass(lopName)}
-                      className="group bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-lg transition-all cursor-pointer flex flex-col justify-between"
+                {userRole === 'ADMIN' && (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      id="btn-add-class-academic"
+                      type="button"
+                      onClick={() => {
+                        setNewClassFormData({
+                          lopName: '',
+                          khoa: uniqueFaculties[0] || '',
+                          nganh: '',
+                          khoaHoc: '',
+                        });
+                        setIsAddClassModalOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded border border-blue-600/40 bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors cursor-pointer"
                     >
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] uppercase tracking-wider font-bold px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 truncate max-w-[170px]">
-                            {faculty}
-                          </span>
-
-                          {userRole === 'ADMIN' && (
-                            <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setEditingClassModal({
-                                    oldLopName: lopName,
-                                    lopName: lopName,
-                                    khoa: faculty,
-                                  });
-                                }}
-                                className="p-1.5 text-zinc-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950 rounded-lg transition-colors cursor-pointer"
-                                title="Chỉnh sửa Tên Lớp hoặc Khoa"
-                              >
-                                <Edit3 className="w-4 h-4" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => handleDeleteClass(lopName, e)}
-                                className="p-1.5 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950 rounded-lg transition-colors cursor-pointer"
-                                title="Xóa toàn bộ sinh viên trong lớp (giữ lại lớp)"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-
-                        <h4 className="text-base font-black text-zinc-900 dark:text-white group-hover:text-blue-600 transition-colors">
-                          {lopName}
-                        </h4>
-
-                        <div className="grid grid-cols-2 gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400 pt-2 border-t border-zinc-100 dark:border-zinc-800">
-                          <div className="flex items-center gap-1.5">
-                            <Users className="w-4 h-4 text-blue-500" />
-                            <span>Sĩ số: {studentsInLop.length} SV</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <CheckCircle className="w-4 h-4 text-emerald-500" />
-                            <span>Đang học: {activeCount}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5 col-span-2 text-zinc-500">
-                            <FileText className="w-4 h-4 text-indigo-500" />
-                            <span>Hồ sơ số hóa: {hasScanCount} file trong lớp</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 pt-3 text-xs font-bold text-blue-600 dark:text-blue-400 flex items-center justify-between">
-                        <span>Xem danh sách sinh viên lớp</span>
-                        <span className="font-mono text-sm group-hover:translate-x-1 transition-transform">➔</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* LEVEL 2 OR FLAT MODE: STUDENT LIST TABLE */}
-          {(viewMode === 'FLAT' || selectedClass !== null) && (
-            <div className="space-y-4">
-              {viewMode === 'HIERARCHICAL' && selectedClass && (
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-blue-50/70 dark:bg-blue-950/40 p-4 rounded-2xl border border-blue-200 dark:border-blue-800/60">
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 border border-blue-200 dark:border-blue-700">
-                        {getFacultyForClass(selectedClass)}
-                      </span>
-                    </div>
-                    <h3 className="font-bold text-sm text-blue-950 dark:text-blue-200 flex items-center gap-2">
-                      <Users className="w-5 h-5 text-blue-600" />
-                      <span>Danh Sách Sinh Viên Lớp: {selectedClass}</span>
-                    </h3>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    {userRole === 'ADMIN' && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setEditingClassModal({
-                              oldLopName: selectedClass,
-                              lopName: selectedClass,
-                              khoa: getFacultyForClass(selectedClass),
-                            })
-                          }
-                          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 hover:bg-blue-50 transition-all cursor-pointer"
-                          title="Chỉnh sửa Tên Lớp hoặc Khoa này"
-                        >
-                          <Edit3 className="w-4 h-4" />
-                          <span>Sửa Lớp / Khoa</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={(e) => handleDeleteClass(selectedClass, e)}
-                          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl bg-white dark:bg-zinc-800 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 hover:bg-rose-50 transition-all cursor-pointer"
-                          title="Xóa toàn bộ sinh viên trong lớp này (giữ lại lớp)"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                          <span>Xóa Sinh Viên Lớp</span>
-                        </button>
-                      </>
-                    )}
+                      <Plus className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
+                      <span>Tạo Lớp mới</span>
+                    </button>
 
                     <button
+                      id="btn-import-students-excel"
                       type="button"
-                      onClick={() => handleSelectClass(null)}
-                      className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 transition-all cursor-pointer"
+                      onClick={() => setIsExcelImportModalOpen(true)}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded border border-emerald-600/40 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors cursor-pointer"
                     >
-                      <ArrowLeft className="w-4 h-4" />
-                      <span>Đổi Lớp Khác</span>
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                      <span>Import Excel</span>
+                    </button>
+
+                    <button
+                      id="btn-add-student"
+                      type="button"
+                      onClick={handleOpenAdd}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded bg-blue-700 hover:bg-blue-800 text-white transition-colors cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Thêm sinh viên</span>
                     </button>
                   </div>
+                )}
+              </div>
+            }
+          />
+
+          <MetricStrip
+            metrics={[
+              { label: 'Khoa / Viện', value: uniqueFaculties.length, dotColor: 'blue' },
+              { label: 'Ngành đào tạo', value: uniqueMajors.length },
+              { label: 'Khóa tuyển sinh', value: uniqueCohorts.length },
+              { label: 'Lớp học', value: availableClasses.length },
+              { label: 'Tổng sinh viên', value: students.length },
+              {
+                label: 'Đang học',
+                value: students.filter((s) => s.trangThai === 'Đang học').length,
+                dotColor: 'emerald',
+              },
+              {
+                label: 'Sĩ số TB',
+                value:
+                  availableClasses.length > 0
+                    ? `${(students.length / availableClasses.length).toFixed(1)} SV/lớp`
+                    : '—',
+              },
+            ]}
+          />
+
+          <DataToolbar
+            searchValue={searchTerm}
+            onSearchChange={setSearchTerm}
+            searchPlaceholder="Tìm theo Mã SV, họ tên, lớp, khoa hoặc ngành..."
+            hasActiveFilters={hasActiveFilters}
+            onClearFilters={clearAllFilters}
+            filters={
+              <>
+                <select
+                  id="filter-khoa-select"
+                  value={selectedKhoa}
+                  onChange={(e) => handleSelectKhoaFilter(e.target.value)}
+                  aria-label="Lọc theo Khoa hoặc Viện"
+                  className="px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 cursor-pointer"
+                >
+                  <option value="">Tất cả Khoa / Viện ({uniqueFaculties.length})</option>
+                  {uniqueFaculties.map((kh) => (
+                    <option key={kh} value={kh}>
+                      {kh}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  id="filter-khoa-hoc-select"
+                  value={selectedCohortFilter}
+                  onChange={(e) => setSelectedCohortFilter(e.target.value)}
+                  aria-label="Lọc theo Khóa tuyển sinh"
+                  className="px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 cursor-pointer"
+                >
+                  <option value="">Tất cả Khóa ({uniqueCohorts.length})</option>
+                  {uniqueCohorts.map((kh) => (
+                    <option key={kh} value={kh}>
+                      {kh}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  id="filter-lop-select"
+                  value={selectedLop || selectedClass || ''}
+                  onChange={(e) => handleSelectLopFilter(e.target.value)}
+                  aria-label="Lọc theo Lớp học"
+                  className="px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 cursor-pointer"
+                >
+                  <option value="">Tất cả Lớp ({availableClasses.length})</option>
+                  {availableClasses.map((lop) => (
+                    <option key={lop} value={lop}>
+                      {lop}
+                    </option>
+                  ))}
+                </select>
+              </>
+            }
+          />
+
+          {/* ========================================================================= */}
+          {/* LEVEL 1A: 4-TIER HIERARCHY TREE                                           */}
+          {/* ========================================================================= */}
+          {viewMode === 'HIERARCHY' && selectedClass === null && (
+            <div className="space-y-4">
+              {uniqueFaculties.length === 0 ? (
+                <EmptyState message="Chưa có dữ liệu." />
+              ) : uniqueFaculties.filter((f) => !selectedKhoa || f === selectedKhoa).every((faculty) => {
+                  const facClasses = availableClasses.filter((lop) => {
+                    const matchFaculty = getFacultyForClass(lop) === faculty;
+                    const matchCohort = !selectedCohortFilter || getCohortForClass(lop) === selectedCohortFilter;
+                    const q = searchTerm.trim().toLowerCase();
+                    const matchSearch =
+                      !q ||
+                      lop.toLowerCase().includes(q) ||
+                      getMajorForClass(lop).toLowerCase().includes(q) ||
+                      faculty.toLowerCase().includes(q);
+                    return matchFaculty && matchCohort && matchSearch;
+                  });
+                  return facClasses.length === 0;
+                }) ? (
+                <FilteredEmptyState onClearFilters={clearAllFilters} />
+              ) : (
+                uniqueFaculties
+                  .filter((faculty) => !selectedKhoa || faculty === selectedKhoa)
+                  .map((faculty) => {
+                    const facultyClasses = availableClasses.filter((lop) => {
+                      const matchFaculty = getFacultyForClass(lop) === faculty;
+                      const matchCohort = !selectedCohortFilter || getCohortForClass(lop) === selectedCohortFilter;
+                      const q = searchTerm.trim().toLowerCase();
+                      const matchSearch =
+                        !q ||
+                        lop.toLowerCase().includes(q) ||
+                        getMajorForClass(lop).toLowerCase().includes(q) ||
+                        faculty.toLowerCase().includes(q);
+                      return matchFaculty && matchCohort && matchSearch;
+                    });
+
+                    if (facultyClasses.length === 0 && (searchTerm || selectedCohortFilter || selectedKhoa)) {
+                      return null;
+                    }
+
+                    const facultyStudents = students.filter(
+                      (s) => normalizeFacultyName(s.khoa, s.lop) === faculty
+                    );
+                    const isExpanded = expandedFaculties[faculty] !== false;
+                    const majorsInFaculty = Array.from(
+                      new Set(facultyClasses.map((lop) => getMajorForClass(lop)))
+                    ).sort();
+
+                    return (
+                      <div
+                        key={faculty}
+                        className="border border-slate-200 dark:border-slate-800 rounded-md bg-white dark:bg-slate-900 overflow-hidden"
+                      >
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          aria-expanded={isExpanded}
+                          onClick={() => toggleFacultyExpand(faculty)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              toggleFacultyExpand(faculty);
+                            }
+                          }}
+                          className="px-4 py-3 bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between cursor-pointer select-none hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-600"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span className="p-0.5 text-slate-500 dark:text-slate-300">
+                              {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                            </span>
+                            <Building2 className="w-4 h-4 text-blue-700 dark:text-blue-400 shrink-0" />
+                            <div className="flex items-center gap-2 min-w-0">
+                              <h2 className="text-xs font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wide truncate">
+                                {faculty}
+                              </h2>
+                              <StatusBadge label={`${facultyClasses.length} lớp`} variant="neutral" />
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3 text-xs text-slate-600 dark:text-slate-400 shrink-0">
+                            <span className="hidden sm:inline font-mono tabular-nums">
+                              <strong className="text-slate-900 dark:text-slate-100 font-semibold">
+                                {facultyStudents.length}
+                              </strong>{' '}
+                              SV
+                            </span>
+                            <span className="hidden md:inline text-slate-300 dark:text-slate-700">|</span>
+                            <span className="hidden md:inline font-mono tabular-nums text-emerald-700 dark:text-emerald-400">
+                              {facultyStudents.filter((s) => s.trangThai === 'Đang học').length} đang học
+                            </span>
+                          </div>
+                        </div>
+
+                        {isExpanded && (
+                          <div className="p-3.5 space-y-4">
+                            {majorsInFaculty.length === 0 ? (
+                              <EmptyState message="Chưa có dữ liệu." />
+                            ) : (
+                              majorsInFaculty.map((major) => {
+                                const classesInMajor = facultyClasses.filter((c) => getMajorForClass(c) === major);
+                                const cohortsInMajor = Array.from(
+                                  new Set(classesInMajor.map((c) => getCohortForClass(c)))
+                                ).sort();
+
+                                return (
+                                  <div
+                                    key={major}
+                                    className="border border-slate-200 dark:border-slate-800 rounded bg-slate-50/50 dark:bg-slate-800/30 p-3 space-y-3"
+                                  >
+                                    <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+                                      <div className="flex items-center gap-2">
+                                        <BookOpen className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                                        <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                                          {major}
+                                        </h3>
+                                        <StatusBadge label={`${classesInMajor.length} lớp`} variant="info" />
+                                      </div>
+                                      <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 tabular-nums">
+                                        {classesInMajor.reduce(
+                                          (sum, c) => sum + students.filter((s) => isSameClass(s.lop, c)).length,
+                                          0
+                                        )}{' '}
+                                        SV
+                                      </span>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                      {cohortsInMajor.map((cohort) => {
+                                        const classesInCohort = classesInMajor.filter(
+                                          (c) => getCohortForClass(c) === cohort
+                                        );
+
+                                        return (
+                                          <div key={cohort} className="space-y-2">
+                                            <div className="flex items-center gap-2">
+                                              <GraduationCap className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                                              <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                                                {cohort}
+                                              </span>
+                                              <span className="text-[10px] text-slate-400 font-mono">
+                                                ({classesInCohort.length})
+                                              </span>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
+                                              {classesInCohort.map((lopName) => {
+                                                const studentsInLop = students.filter((s) => isSameClass(s.lop, lopName));
+                                                const activeCount = studentsInLop.filter(
+                                                  (s) => s.trangThai === 'Đang học'
+                                                ).length;
+                                                const docCount = studentsInLop.reduce(
+                                                  (acc, s) => acc + getStudentFiles(s).length,
+                                                  0
+                                                );
+
+                                                return (
+                                                  <div
+                                                    key={lopName}
+                                                    className="p-3 bg-white dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-800 hover:border-blue-500 transition-colors space-y-2"
+                                                  >
+                                                    <div className="flex items-start justify-between gap-2">
+                                                      <div className="min-w-0">
+                                                        <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                                                          {lopName}
+                                                        </h4>
+                                                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                                                          {faculty} · {major}
+                                                        </p>
+                                                      </div>
+                                                      <StatusBadge label={cohort.split(' ')[0]} variant="info" />
+                                                    </div>
+
+                                                    <div className="grid grid-cols-3 gap-1.5 py-1.5 px-2 bg-slate-50 dark:bg-slate-800/60 rounded border border-slate-200 dark:border-slate-800 text-[11px]">
+                                                      <div>
+                                                        <span className="block text-[10px] text-slate-500 dark:text-slate-400">
+                                                          Sĩ số
+                                                        </span>
+                                                        <span className="font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
+                                                          {studentsInLop.length}
+                                                        </span>
+                                                      </div>
+                                                      <div>
+                                                        <span className="block text-[10px] text-slate-500 dark:text-slate-400">
+                                                          Đang học
+                                                        </span>
+                                                        <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400 tabular-nums">
+                                                          {activeCount}
+                                                        </span>
+                                                      </div>
+                                                      <div>
+                                                        <span className="block text-[10px] text-slate-500 dark:text-slate-400">
+                                                          Số hóa
+                                                        </span>
+                                                        <span className="font-mono text-slate-700 dark:text-slate-300 tabular-nums">
+                                                          {docCount} tệp
+                                                        </span>
+                                                      </div>
+                                                    </div>
+
+                                                    <div className="flex items-center justify-between pt-1 border-t border-slate-200 dark:border-slate-800">
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => handleSelectClass(lopName)}
+                                                        className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 dark:text-blue-400 hover:underline cursor-pointer"
+                                                      >
+                                                        <span>Danh sách SV</span>
+                                                        <ChevronRight className="w-3 h-3" />
+                                                      </button>
+
+                                                      {userRole === 'ADMIN' && (
+                                                        <div className="flex items-center gap-1">
+                                                          <button
+                                                            type="button"
+                                                            onClick={() =>
+                                                              setEditingClassModal({
+                                                                oldLopName: lopName,
+                                                                lopName,
+                                                                khoa: faculty,
+                                                                nganh: major,
+                                                                khoaHoc: cohort,
+                                                              })
+                                                            }
+                                                            className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded transition-colors cursor-pointer"
+                                                            title="Chỉnh sửa lớp"
+                                                            aria-label={`Chỉnh sửa lớp ${lopName}`}
+                                                          >
+                                                            <Edit3 className="w-3.5 h-3.5" />
+                                                          </button>
+                                                          <button
+                                                            type="button"
+                                                            onClick={(e) => handleDeleteClass(lopName, e)}
+                                                            className="p-1 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded transition-colors cursor-pointer"
+                                                            title="Xóa danh sách sinh viên lớp"
+                                                            aria-label={`Xóa lớp ${lopName}`}
+                                                          >
+                                                            <Trash2 className="w-3.5 h-3.5" />
+                                                          </button>
+                                                        </div>
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* LEVEL 1B: TABULAR CLASS DIRECTORY                                         */}
+          {/* ========================================================================= */}
+          {viewMode === 'CLASSES' && selectedClass === null && (
+            availableClasses.length === 0 ? (
+              <EmptyState message="Chưa có dữ liệu." />
+            ) : filteredClasses.length === 0 ? (
+              <FilteredEmptyState onClearFilters={clearAllFilters} />
+            ) : (
+              <div className="border border-slate-200 dark:border-slate-800 rounded-md bg-white dark:bg-slate-900 overflow-hidden">
+                <div className="px-4 py-2 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <Folder className="w-4 h-4 text-slate-500" />
+                    <span>Danh mục Lớp học ({filteredClasses.length})</span>
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 uppercase text-[11px] tracking-wider border-b border-slate-200 dark:border-slate-800 font-semibold">
+                      <tr>
+                        <th className="py-2.5 px-3 w-12 text-center">STT</th>
+                        <th className="py-2.5 px-3">Tên Lớp</th>
+                        <th className="py-2.5 px-3">Khoa / Viện</th>
+                        <th className="py-2.5 px-3">Ngành</th>
+                        <th className="py-2.5 px-3">Khóa</th>
+                        <th className="py-2.5 px-3 text-right">Sĩ Số</th>
+                        <th className="py-2.5 px-3 text-right">Đang Học</th>
+                        <th className="py-2.5 px-3 text-right">Hồ Sơ</th>
+                        <th className="py-2.5 px-3 text-right">Thao Tác</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
+                      {paginatedClasses.map((lopName, idx) => {
+                        const studentsInLop = students.filter((s) => isSameClass(s.lop, lopName));
+                        const activeCount = studentsInLop.filter((s) => s.trangThai === 'Đang học').length;
+                        const hasScanCount = studentsInLop.reduce((acc, s) => acc + getStudentFiles(s).length, 0);
+                        const faculty = getFacultyForClass(lopName);
+                        const major = getMajorForClass(lopName);
+                        const cohort = getCohortForClass(lopName);
+                        const rowNumber = (classesPage - 1) * classesPageSize + idx + 1;
+
+                        return (
+                          <tr
+                            key={lopName}
+                            tabIndex={0}
+                            onClick={() => handleSelectClass(lopName)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                handleSelectClass(lopName);
+                              }
+                            }}
+                            className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 cursor-pointer transition-colors focus:outline-none focus:bg-blue-50/50 dark:focus:bg-blue-950/30"
+                          >
+                            <td className="py-2.5 px-3 text-center font-mono text-slate-500 dark:text-slate-400 tabular-nums">
+                              {rowNumber}
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-slate-100">
+                              {lopName}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-700 dark:text-slate-300">{faculty}</td>
+                            <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400 text-[11px]">{major}</td>
+                            <td className="py-2.5 px-3 font-mono text-[11px]">{cohort}</td>
+                            <td className="py-2.5 px-3 text-right font-mono font-medium tabular-nums">
+                              {studentsInLop.length}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono text-emerald-700 dark:text-emerald-400 tabular-nums">
+                              {activeCount}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono text-slate-600 dark:text-slate-400 tabular-nums">
+                              {hasScanCount}
+                            </td>
+                            <td className="py-2.5 px-3 text-right space-x-1" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                onClick={() => handleSelectClass(lopName)}
+                                className="px-2 py-1 text-[11px] font-medium text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 rounded border border-blue-200 dark:border-blue-900 transition-colors cursor-pointer"
+                              >
+                                Xem lớp
+                              </button>
+                              {userRole === 'ADMIN' && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingClassModal({
+                                        oldLopName: lopName,
+                                        lopName,
+                                        khoa: faculty,
+                                        nganh: major,
+                                        khoaHoc: cohort,
+                                      });
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded transition-colors cursor-pointer"
+                                    title="Chỉnh sửa lớp"
+                                    aria-label={`Chỉnh sửa lớp ${lopName}`}
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleDeleteClass(lopName, e)}
+                                    className="p-1 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded transition-colors cursor-pointer"
+                                    title="Xóa danh sách sinh viên lớp"
+                                    aria-label={`Xóa lớp ${lopName}`}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <PaginationBar
+                  currentPage={classesPage}
+                  pageSize={classesPageSize}
+                  totalItems={filteredClasses.length}
+                  onPageChange={setClassesPage}
+                  onPageSizeChange={setClassesPageSize}
+                />
+              </div>
+            )
+          )}
+
+          {/* ========================================================================= */}
+          {/* LEVEL 2: STUDENT ROSTER TABLE                                             */}
+          {/* ========================================================================= */}
+          {(viewMode === 'STUDENTS' || selectedClass !== null) && (
+            <div className="space-y-3">
+              {selectedClass && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-2 px-3 bg-slate-100/70 dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-800">
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleSelectClass(null);
+                        setViewMode('HIERARCHY');
+                      }}
+                      className="inline-flex items-center gap-1 font-medium text-blue-700 dark:text-blue-400 hover:underline cursor-pointer"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                      <span>Cơ cấu tổ chức</span>
+                    </button>
+                    <span className="text-slate-400 dark:text-slate-600">/</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedKhoa(getFacultyForClass(selectedClass));
+                        handleSelectClass(null);
+                        setViewMode('CLASSES');
+                      }}
+                      className="text-slate-600 dark:text-slate-300 hover:underline cursor-pointer"
+                    >
+                      {getFacultyForClass(selectedClass)}
+                    </button>
+                    <span className="text-slate-400 dark:text-slate-600">/</span>
+                    <span className="text-slate-600 dark:text-slate-400">{getMajorForClass(selectedClass)}</span>
+                    <span className="text-slate-400 dark:text-slate-600">/</span>
+                    <span className="font-bold text-slate-900 dark:text-slate-100">Lớp {selectedClass}</span>
+                    <span className="text-[11px] text-slate-500 font-mono">({getCohortForClass(selectedClass)})</span>
+                  </div>
+
+                  {userRole === 'ADMIN' && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditingClassModal({
+                            oldLopName: selectedClass,
+                            lopName: selectedClass,
+                            khoa: getFacultyForClass(selectedClass),
+                            nganh: getMajorForClass(selectedClass),
+                            khoaHoc: getCohortForClass(selectedClass),
+                          })
+                        }
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-700 dark:text-slate-200 hover:text-blue-700 px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 transition-colors cursor-pointer"
+                      >
+                        <Edit3 className="w-3 h-3" />
+                        <span>Sửa Lớp / Khoa</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleDeleteClass(selectedClass, e)}
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-2 py-1 rounded border border-rose-200 dark:border-rose-900 transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Xóa SV lớp</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Filter & Search Bar */}
-              <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 grid grid-cols-1 md:grid-cols-4 gap-3">
-                <div className="md:col-span-2 relative">
-                  <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-3" />
-                  <input
-                    id="search-student-input"
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Tìm theo Mã SV, Họ tên, Email..."
-                    className="w-full pl-9 pr-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <select
-                    id="filter-khoa-select"
-                    value={selectedKhoa}
-                    onChange={(e) => handleSelectKhoaFilter(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Tất cả Khoa / Viện</option>
-                    {uniqueFaculties.map((kh) => (
-                      <option key={kh} value={kh}>{kh}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <select
-                    id="filter-lop-select"
-                    value={selectedLop || selectedClass || ''}
-                    onChange={(e) => handleSelectLopFilter(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Tất cả Lớp học</option>
-                    {availableClasses.map((lop) => (
-                      <option key={lop} value={lop}>{lop}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Student List Table */}
-              <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-sm">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-zinc-50 dark:bg-zinc-800/80 text-zinc-500 dark:text-zinc-400 uppercase font-semibold border-b border-zinc-200 dark:border-zinc-700">
-                      <tr>
-                        <th className="p-3.5 text-center w-12">STT</th>
-                        <th className="p-3.5">Mã SV & Họ tên</th>
-                        <th className="p-3.5">Lớp / Khoa</th>
-                        <th className="p-3.5">Ngày sinh & GT</th>
-                        <th className="p-3.5">Liên hệ</th>
-                        <th className="p-3.5">Hồ sơ Số hóa ({students.reduce((a, b) => a + getStudentFiles(b).length, 0)} file)</th>
-                        <th className="p-3.5">Trạng thái</th>
-                        <th className="p-3.5 text-right">Thao tác</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800 text-zinc-700 dark:text-zinc-300">
-                      {filteredStudents.length > 0 ? (
-                        filteredStudents.map((s, index) => {
+              {students.length === 0 ? (
+                <EmptyState message="Chưa có dữ liệu." />
+              ) : filteredStudents.length === 0 ? (
+                <FilteredEmptyState onClearFilters={clearAllFilters} />
+              ) : (
+                <div className="border border-slate-200 dark:border-slate-800 rounded-md bg-white dark:bg-slate-900 overflow-hidden">
+                  <div className="overflow-x-auto max-h-[calc(100vh-270px)]">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 uppercase text-[11px] tracking-wider border-b border-slate-200 dark:border-slate-800 font-semibold">
+                        <tr>
+                          <th className="py-2.5 px-3 text-center w-12">STT</th>
+                          <th className="py-2.5 px-3">Mã SV & Họ Tên</th>
+                          <th className="py-2.5 px-3">Lớp / Khoa</th>
+                          <th className="py-2.5 px-3">Ngày Sinh / GT</th>
+                          <th className="py-2.5 px-3">Liên Hệ</th>
+                          <th className="py-2.5 px-3">Hồ Sơ</th>
+                          <th className="py-2.5 px-3">Trạng Thái</th>
+                          <th className="py-2.5 px-3 text-right">Thao Tác</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
+                        {paginatedStudents.map((s, index) => {
                           const files = getStudentFiles(s);
+                          const rowNumber = (studentsPage - 1) * studentsPageSize + index + 1;
                           return (
-                            <tr key={s.maSV} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors">
-                              <td className="p-3.5 text-center font-mono font-bold text-zinc-400 dark:text-zinc-500">
-                                {index + 1}
+                            <tr
+                              key={s.maSV}
+                              tabIndex={0}
+                              onClick={() => setViewingDetailStudent(s)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  if (e.target !== e.currentTarget) return;
+                                  e.preventDefault();
+                                  setViewingDetailStudent(s);
+                                }
+                              }}
+                              className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors cursor-pointer group focus:outline-none focus:bg-blue-50/50 dark:focus:bg-blue-950/30"
+                            >
+                              <td className="py-2.5 px-3 text-center font-mono text-slate-500 dark:text-slate-400 tabular-nums">
+                                {rowNumber}
                               </td>
-                              <td className="p-3.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setViewingDetailStudent(s)}
-                                  className="text-left group cursor-pointer flex items-center gap-3"
-                                  title="Bấm để xem chi tiết hồ sơ & thông tin sinh viên"
-                                >
-                                  <div className="relative shrink-0">
-                                    <img
-                                      src={getStudentAvatarUrl(s)}
-                                      alt={s.hoTen}
-                                      className="w-10 h-10 rounded-xl object-cover border border-zinc-200 dark:border-zinc-700 group-hover:ring-2 group-hover:ring-blue-500 transition-all bg-zinc-100 dark:bg-zinc-800"
-                                      onError={(e) => {
-                                        const clean = encodeURIComponent(s.hoTen || 'SV');
-                                        (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${clean}&background=2563eb&color=fff&size=120&bold=true`;
-                                      }}
-                                    />
-                                    <span
-                                      className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white dark:border-zinc-900 ${
-                                        s.trangThai === 'Đang học'
-                                          ? 'bg-emerald-500'
-                                          : s.trangThai === 'Bảo lưu'
-                                          ? 'bg-amber-500'
-                                          : 'bg-rose-500'
-                                      }`}
-                                    />
-                                  </div>
+                              <td className="py-2.5 px-3">
+                                <div className="flex items-center gap-2.5">
+                                  <img
+                                    src={getStudentAvatarUrl(s)}
+                                    alt={s.hoTen}
+                                    className="w-7 h-7 rounded object-cover border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 shrink-0"
+                                    onError={(e) => {
+                                      const clean = encodeURIComponent(s.hoTen || 'SV');
+                                      (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${clean}&background=1d4ed8&color=fff&size=100&bold=true`;
+                                    }}
+                                  />
                                   <div className="min-w-0">
-                                    <div className="font-bold text-zinc-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors flex items-center gap-1.5">
-                                      <span className="truncate">{s.hoTen}</span>
-                                      <Eye className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 text-blue-500 transition-opacity shrink-0" />
+                                    <div className="font-semibold text-slate-900 dark:text-slate-100 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors truncate">
+                                      {s.hoTen}
                                     </div>
-                                    <div className="text-[11px] font-mono text-blue-600 dark:text-blue-400 font-semibold">{s.maSV}</div>
+                                    <div className="font-mono text-[11px] text-slate-500 dark:text-slate-400 font-medium tabular-nums">
+                                      {s.maSV}
+                                    </div>
                                   </div>
-                                </button>
+                                </div>
                               </td>
-                              <td className="p-3.5">
-                                <div className="font-semibold text-zinc-800 dark:text-zinc-200">{s.lop}</div>
-                                <div className="text-[11px] text-zinc-500">{s.khoa}</div>
+                              <td className="py-2.5 px-3">
+                                <div className="font-medium text-slate-800 dark:text-slate-200">{s.lop}</div>
+                                <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[160px]">
+                                  {s.khoa}
+                                </div>
                               </td>
-                              <td className="p-3.5">
-                                <div>{s.ngaySinh}</div>
-                                <div className="text-[11px] text-zinc-500">{s.gioiTinh}</div>
+                              <td className="py-2.5 px-3 font-mono tabular-nums">
+                                <div>{s.ngaySinh || '—'}</div>
+                                <div className="text-[11px] text-slate-500 dark:text-slate-400 font-sans">{s.gioiTinh}</div>
                               </td>
-                              <td className="p-3.5">
-                                <div>{s.email}</div>
-                                <div className="text-[11px] text-zinc-500">{s.soDienThoai}</div>
+                              <td className="py-2.5 px-3">
+                                <div className="truncate max-w-[170px] text-slate-800 dark:text-slate-200">
+                                  {s.email || '—'}
+                                </div>
+                                <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+                                  {s.soDienThoai || '—'}
+                                </div>
                               </td>
-                              <td className="p-3.5">
+                              <td className="py-2.5 px-3" onClick={(e) => e.stopPropagation()}>
                                 {files.length > 0 ? (
-                                  <div className="flex flex-wrap items-center gap-1.5">
+                                  <div className="flex items-center gap-1.5">
                                     <button
+                                      type="button"
                                       onClick={() => setViewingDocumentStudent(s)}
-                                      className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 font-bold bg-blue-50 dark:bg-blue-950/60 px-2.5 py-1.5 rounded-xl border border-blue-200 dark:border-blue-800/60 hover:shadow-sm transition-all cursor-pointer"
-                                      title="Xem danh sách file scan hồ sơ"
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900 hover:bg-blue-100 dark:hover:bg-blue-950 transition-colors cursor-pointer"
+                                      title="Xem hồ sơ số hóa"
                                     >
-                                      <Paperclip className="w-3.5 h-3.5" />
-                                      <span>{files.length} Hồ sơ số hóa</span>
+                                      <Paperclip className="w-3 h-3" />
+                                      <span>{files.length} tệp</span>
                                     </button>
                                     {canEditProfile && (
-                                      <label className="inline-flex items-center gap-1 text-[11px] text-zinc-600 dark:text-zinc-400 hover:text-blue-600 cursor-pointer bg-zinc-100 dark:bg-zinc-800 hover:bg-blue-50 dark:hover:bg-blue-950/40 px-2 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 transition-all" title="Bổ sung thêm file scan">
-                                        <Upload className="w-3 h-3 text-blue-500" />
-                                        <span>+ Thêm</span>
+                                      <label
+                                        className="inline-flex items-center gap-0.5 text-[11px] text-slate-500 hover:text-blue-700 dark:hover:text-blue-400 cursor-pointer px-1.5 py-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                                        title="Bổ sung tệp"
+                                      >
+                                        <Upload className="w-3 h-3" />
+                                        <span>+</span>
                                         <input
                                           type="file"
                                           multiple
@@ -1370,332 +2018,501 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                                       </label>
                                     )}
                                   </div>
+                                ) : canEditProfile ? (
+                                  <label className="inline-flex items-center gap-1 text-[11px] text-slate-600 dark:text-slate-400 hover:text-blue-700 dark:hover:text-blue-400 cursor-pointer px-2 py-0.5 rounded border border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500 transition-colors">
+                                    <Upload className="w-3 h-3 text-slate-400" />
+                                    <span>Tải file</span>
+                                    <input
+                                      type="file"
+                                      multiple
+                                      accept=".pdf,.jpg,.jpeg,.png"
+                                      className="hidden"
+                                      onChange={(e) => handleDirectUploadSim(s, e)}
+                                    />
+                                  </label>
                                 ) : (
-                                  canEditProfile ? (
-                                    <label className="inline-flex items-center gap-1.5 text-xs text-amber-800 dark:text-amber-300 hover:text-amber-900 font-semibold cursor-pointer bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 px-2.5 py-1.5 rounded-xl border border-amber-200 dark:border-amber-800/80 transition-all shadow-sm">
-                                      <Upload className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                                      <span>+ Bổ sung file scan</span>
-                                      <input
-                                        type="file"
-                                        multiple
-                                        accept=".pdf,.jpg,.jpeg,.png"
-                                        className="hidden"
-                                        onChange={(e) => handleDirectUploadSim(s, e)}
-                                      />
-                                    </label>
-                                  ) : (
-                                    <span className="text-xs text-zinc-400 italic">Chưa có file scan</span>
-                                  )
+                                  <span className="text-[11px] text-slate-400">Chưa có</span>
                                 )}
                               </td>
-                              <td className="p-3.5">
+                              <td className="py-2.5 px-3" onClick={(e) => e.stopPropagation()}>
                                 {userRole === 'ADMIN' ? (
                                   <select
                                     value={s.trangThai || 'Đang học'}
+                                    aria-label={`Trạng thái sinh viên ${s.hoTen}`}
                                     onChange={(e) => {
-                                      const newStatus = e.target.value as 'Đang học' | 'Bảo lưu' | 'Thôi học';
+                                      const newStatus = e.target.value as SinhVien['trangThai'];
                                       onUpdateStudent(s.maSV, { trangThai: newStatus });
                                     }}
-                                    className={`text-[11px] font-bold px-2.5 py-1 rounded-full cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 border border-transparent shadow-xs transition-all ${
+                                    className={`text-[11px] font-medium px-2 py-0.5 rounded border cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-600 transition-colors ${
                                       s.trangThai === 'Đang học'
-                                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 hover:bg-emerald-200'
+                                        ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300'
                                         : s.trangThai === 'Bảo lưu'
-                                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 hover:bg-amber-200'
-                                        : 'bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 hover:bg-rose-200'
+                                        ? 'border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'
+                                        : s.trangThai === 'Tốt nghiệp'
+                                        ? 'border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300'
+                                        : 'border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300'
                                     }`}
-                                    title="Chỉnh sửa trực tiếp trạng thái sinh viên"
                                   >
-                                    <option value="Đang học" className="bg-white dark:bg-zinc-900 text-emerald-800 dark:text-emerald-300 font-bold">
-                                      Đang học
-                                    </option>
-                                    <option value="Bảo lưu" className="bg-white dark:bg-zinc-900 text-amber-800 dark:text-amber-300 font-bold">
-                                      Bảo lưu
-                                    </option>
-                                    <option value="Thôi học" className="bg-white dark:bg-zinc-900 text-rose-800 dark:text-rose-300 font-bold">
-                                      Thôi học
-                                    </option>
+                                    <option value="Đang học">Đang học</option>
+                                    <option value="Bảo lưu">Bảo lưu</option>
+                                    <option value="Tốt nghiệp">Tốt nghiệp</option>
+                                    <option value="Thôi học">Thôi học</option>
                                   </select>
                                 ) : (
-                                  <span
-                                    className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                                      s.trangThai === 'Đang học'
-                                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300'
-                                        : s.trangThai === 'Bảo lưu'
-                                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300'
-                                        : 'bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300'
-                                    }`}
-                                  >
-                                    {s.trangThai}
-                                  </span>
+                                  <StatusBadge
+                                    label={s.trangThai || 'Đang học'}
+                                    variant={getStatusVariant(s.trangThai)}
+                                    dot
+                                  />
                                 )}
                               </td>
-                              <td className="p-3.5 text-right space-x-1 whitespace-nowrap">
-                                <button
-                                  type="button"
-                                  onClick={() => setViewingDetailStudent(s)}
-                                  className="p-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/60 rounded-lg cursor-pointer transition-colors inline-flex items-center"
-                                  title="Xem chi tiết lý lịch & hồ sơ sinh viên"
-                                >
-                                  <Eye className="w-4 h-4" />
-                                </button>
-                                {canEditProfile && (
+                              <td className="py-2.5 px-3 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                                <div className="inline-flex items-center gap-1">
                                   <button
                                     type="button"
-                                    onClick={() => handleOpenEdit(s)}
-                                    className="p-1.5 text-zinc-500 hover:text-amber-600 dark:hover:text-amber-400 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/50 cursor-pointer transition-colors inline-flex items-center"
-                                    title="Chỉnh sửa hồ sơ"
+                                    onClick={() => setViewingDetailStudent(s)}
+                                    className="p-1 text-slate-500 hover:text-blue-700 dark:text-slate-400 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer"
+                                    title="Xem chi tiết"
+                                    aria-label={`Xem chi tiết ${s.hoTen}`}
                                   >
-                                    <Edit3 className="w-4 h-4" />
+                                    <Eye className="w-3.5 h-3.5" />
                                   </button>
-                                )}
-                                {userRole === 'ADMIN' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => onDeleteStudent(s.maSV)}
-                                    className="p-1.5 text-zinc-500 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/50 cursor-pointer transition-colors inline-flex items-center"
-                                    title="Xóa hồ sơ"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                )}
+                                  {canEditProfile && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenEdit(s)}
+                                      className="p-1 text-slate-500 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer"
+                                      title="Chỉnh sửa"
+                                      aria-label={`Chỉnh sửa ${s.hoTen}`}
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                  {userRole === 'ADMIN' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => onDeleteStudent(s.maSV)}
+                                      className="p-1 text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer"
+                                      title="Xóa sinh viên"
+                                      aria-label={`Xóa ${s.hoTen}`}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           );
-                        })
-                      ) : (
-                        <tr>
-                          <td colSpan={8} className="p-8 text-center text-zinc-500 dark:text-zinc-400">
-                            Không tìm thấy dữ liệu sinh viên phù hợp
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <PaginationBar
+                    currentPage={studentsPage}
+                    pageSize={studentsPageSize}
+                    totalItems={filteredStudents.length}
+                    onPageChange={setStudentsPage}
+                    onPageSizeChange={setStudentsPageSize}
+                    pageSizeOptions={[10, 20, 50]}
+                  />
                 </div>
-              </div>
+              )}
             </div>
           )}
         </>
       )}
 
-      {/* Add / Edit Student Modal */}
+      {/* ========================================================================= */}
+      {/* ADD / EDIT STUDENT MODAL                                                  */}
+      {/* ========================================================================= */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 sm:p-6 overflow-y-auto">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl max-w-xl w-full p-6 shadow-2xl relative my-auto max-h-[88vh] overflow-y-auto">
-            <button
-              onClick={() => setIsAddModalOpen(false)}
-              className="absolute top-4 right-4 p-2 text-zinc-400 hover:text-zinc-600 rounded-full"
-            >
-              <X className="w-5 h-5" />
-            </button>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 sm:p-6 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={`${formIdPrefix}-student-modal-title`}
+          onClick={() => setIsAddModalOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md max-w-2xl w-full p-5 shadow-xl relative my-auto max-h-[90vh] overflow-y-auto space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <Users className="w-5 h-5 text-blue-700 dark:text-blue-400" />
+                <h3
+                  id={`${formIdPrefix}-student-modal-title`}
+                  className="text-sm font-bold text-slate-900 dark:text-slate-100"
+                >
+                  {editingStudent ? 'Cập nhật Hồ sơ Sinh viên' : 'Thêm Hồ sơ Sinh viên'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddModalOpen(false)}
+                className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                aria-label="Đóng biểu mẫu"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-            <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-4 flex items-center gap-2">
-              <Users className="w-5 h-5 text-blue-600" />
-              <span>{editingStudent ? 'Cập nhật Hồ sơ Sinh viên' : 'Thêm Hồ sơ Sinh viên mới'}</span>
-            </h3>
+            {formError && <ErrorBanner message={formError} />}
 
-            <form onSubmit={handleSubmitForm} className="space-y-3 text-xs">
-              {/* Avatar Selector */}
-              <div className="flex items-center gap-4 p-3 bg-zinc-50 dark:bg-zinc-800/60 rounded-2xl border border-zinc-200 dark:border-zinc-700">
-                <div className="relative shrink-0">
-                  <img
-                    src={getStudentAvatarUrl(formData)}
-                    alt={formData.hoTen || 'Avatar'}
-                    className="w-14 h-14 rounded-2xl object-cover border border-zinc-200 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-700"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(formData.hoTen || 'SV')}&background=2563eb&color=fff&size=120`;
-                    }}
-                  />
-                  <label
-                    className="absolute -bottom-1 -right-1 p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg cursor-pointer transition-all shadow-sm"
-                    title="Tải ảnh đại diện"
-                  >
-                    <Camera className="w-3 h-3" />
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                          const localData = reader.result as string;
-                          setFormData((prev) => ({ ...prev, avatar: localData }));
-                          const targetMaSV = formData.maSV || editingStudent?.maSV;
-                          if (targetMaSV) {
-                            if (editingStudent) {
-                              onUpdateStudent(targetMaSV, { avatar: localData });
-                            }
-                            apiService.uploadAvatar(targetMaSV, localData).then((res) => {
-                              if (res.success && res.avatarUrl) {
-                                setFormData((prev) => ({ ...prev, avatar: res.avatarUrl }));
-                                if (editingStudent) {
-                                  onUpdateStudent(targetMaSV, { avatar: res.avatarUrl });
-                                }
-                              }
-                            });
-                          }
-                        };
-                        reader.readAsDataURL(file);
+            <form onSubmit={handleSubmitForm} className="space-y-4 text-xs">
+              {/* Section 1 */}
+              <div className="space-y-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800 pb-1 flex items-center gap-1.5">
+                  <UserIcon className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
+                  <span>1. Thông tin định danh & Ảnh hồ sơ</span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-3 bg-slate-50 dark:bg-slate-800/60 rounded border border-slate-200 dark:border-slate-800">
+                  <div className="relative shrink-0">
+                    <img
+                      src={getStudentAvatarUrl(formData)}
+                      alt={formData.hoTen || 'Avatar'}
+                      className="w-14 h-14 rounded object-cover border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(formData.hoTen || 'SV')}&background=1d4ed8&color=fff&size=120`;
                       }}
                     />
-                  </label>
+                    <label
+                      className="absolute -bottom-1 -right-1 p-1 bg-blue-700 hover:bg-blue-800 text-white rounded cursor-pointer transition-colors"
+                      title="Tải ảnh thẻ"
+                    >
+                      <Camera className="w-3 h-3" />
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            const localData = reader.result as string;
+                            setFormData((prev) => ({ ...prev, avatar: localData }));
+                            const targetMaSV = formData.maSV || editingStudent?.maSV;
+                            if (targetMaSV) {
+                              if (editingStudent) {
+                                onUpdateStudent(targetMaSV, { avatar: localData });
+                              }
+                              apiService.uploadAvatar(targetMaSV, localData).then((res) => {
+                                if (res.success && res.avatarUrl) {
+                                  setFormData((prev) => ({ ...prev, avatar: res.avatarUrl }));
+                                  if (editingStudent) {
+                                    onUpdateStudent(targetMaSV, { avatar: res.avatarUrl });
+                                  }
+                                }
+                              });
+                            }
+                          };
+                          reader.readAsDataURL(file);
+                        }}
+                      />
+                    </label>
+                  </div>
+                  <div className="space-y-0.5 flex-1 min-w-0">
+                    <span className="font-semibold text-slate-900 dark:text-slate-100 block text-xs">
+                      Ảnh thẻ sinh viên
+                    </span>
+                  </div>
                 </div>
-                <div className="space-y-1 flex-1 min-w-0">
-                  <label className="font-bold text-xs text-zinc-900 dark:text-white block">
-                    Ảnh Đại Diện Cá Nhân
-                  </label>
-                  <p className="text-[11px] text-zinc-500">
-                    Bấm vào biểu tượng máy ảnh để tải ảnh chân dung từ máy tính (.jpg, .png)
-                  </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label
+                      htmlFor={`${formIdPrefix}-masv`}
+                      className="font-medium text-slate-700 dark:text-slate-300 block mb-1"
+                    >
+                      Mã Sinh viên (MSSV) <span className="text-rose-600">*</span>
+                    </label>
+                    <input
+                      id={`${formIdPrefix}-masv`}
+                      type="text"
+                      disabled={!!editingStudent}
+                      value={formData.maSV || ''}
+                      onChange={(e) => setFormData({ ...formData, maSV: e.target.value })}
+                      placeholder="Ví dụ: 25DDS0904188"
+                      className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded font-mono text-slate-900 dark:text-slate-100 disabled:bg-slate-100 dark:disabled:bg-slate-800 disabled:text-slate-500 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor={`${formIdPrefix}-hoten`}
+                      className="font-medium text-slate-700 dark:text-slate-300 block mb-1"
+                    >
+                      Họ và tên <span className="text-rose-600">*</span>
+                    </label>
+                    <input
+                      id={`${formIdPrefix}-hoten`}
+                      type="text"
+                      value={formData.hoTen || ''}
+                      onChange={(e) => setFormData({ ...formData, hoTen: e.target.value })}
+                      placeholder="Nhập họ và tên"
+                      className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                      required
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold block mb-1">Mã Sinh viên *</label>
-                  <input
-                    type="text"
-                    disabled={!!editingStudent}
-                    value={formData.maSV}
-                    onChange={(e) => setFormData({ ...formData, maSV: e.target.value })}
-                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
-                    required
-                  />
+              {/* Section 2 */}
+              <div className="space-y-3 pt-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800 pb-1 flex items-center gap-1.5">
+                  <GraduationCap className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
+                  <span>2. Thông tin đào tạo & Lớp sinh hoạt</span>
                 </div>
-                <div>
-                  <label className="font-semibold block mb-1">Họ và tên *</label>
-                  <input
-                    type="text"
-                    value={formData.hoTen}
-                    onChange={(e) => setFormData({ ...formData, hoTen: e.target.value })}
-                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
-                    required
-                  />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label
+                        htmlFor={`${formIdPrefix}-lop`}
+                        className="font-medium text-slate-700 dark:text-slate-300"
+                      >
+                        Lớp sinh hoạt <span className="text-rose-600">*</span>
+                      </label>
+                      {availableClasses.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setIsCustomClassInput((prev) => !prev)}
+                          className="text-[11px] text-blue-700 dark:text-blue-400 hover:underline cursor-pointer"
+                        >
+                          {isCustomClassInput ? 'Chọn từ danh mục' : 'Nhập lớp khác'}
+                        </button>
+                      )}
+                    </div>
+                    {availableClasses.length > 0 && !isCustomClassInput ? (
+                      <select
+                        id={`${formIdPrefix}-lop`}
+                        value={formData.lop || ''}
+                        onChange={(e) => {
+                          const newLop = e.target.value;
+                          setFormData({
+                            ...formData,
+                            lop: newLop,
+                            khoa: newLop ? getFacultyForClass(newLop) : '',
+                          });
+                        }}
+                        className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 font-medium focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 cursor-pointer"
+                        required
+                      >
+                        <option value="" disabled>
+                          -- Chọn lớp --
+                        </option>
+                        {availableClasses.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        id={`${formIdPrefix}-lop`}
+                        type="text"
+                        value={formData.lop || ''}
+                        onChange={(e) => {
+                          const newLop = e.target.value;
+                          setFormData({
+                            ...formData,
+                            lop: newLop,
+                            khoa: formData.khoa || (newLop ? getFacultyFromHelper(newLop) : ''),
+                          });
+                        }}
+                        placeholder="Nhập tên lớp sinh hoạt"
+                        className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 font-medium focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                        required
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <label
+                      htmlFor={`${formIdPrefix}-khoa`}
+                      className="font-medium text-slate-700 dark:text-slate-300 block mb-1"
+                    >
+                      Khoa / Viện
+                    </label>
+                    <input
+                      id={`${formIdPrefix}-khoa`}
+                      type="text"
+                      value={formData.khoa || ''}
+                      onChange={(e) => setFormData({ ...formData, khoa: e.target.value })}
+                      placeholder="Nhập Khoa / Viện"
+                      className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label
+                      htmlFor={`${formIdPrefix}-trangthai`}
+                      className="font-medium text-slate-700 dark:text-slate-300 block mb-1"
+                    >
+                      Trạng thái
+                    </label>
+                    <select
+                      id={`${formIdPrefix}-trangthai`}
+                      value={formData.trangThai || 'Đang học'}
+                      onChange={(e) => setFormData({ ...formData, trangThai: e.target.value as SinhVien['trangThai'] })}
+                      className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 cursor-pointer"
+                    >
+                      <option value="Đang học">Đang học</option>
+                      <option value="Bảo lưu">Bảo lưu</option>
+                      <option value="Tốt nghiệp">Tốt nghiệp</option>
+                      <option value="Thôi học">Thôi học</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label
+                      htmlFor={`${formIdPrefix}-ngaynhaphoc`}
+                      className="font-medium text-slate-700 dark:text-slate-300 block mb-1"
+                    >
+                      Ngày nhập học
+                    </label>
+                    <input
+                      id={`${formIdPrefix}-ngaynhaphoc`}
+                      type="date"
+                      value={formData.ngayNhapHoc || ''}
+                      onChange={(e) => setFormData({ ...formData, ngayNhapHoc: e.target.value })}
+                      className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* Section 3 */}
+              <div className="space-y-3 pt-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800 pb-1 flex items-center gap-1.5">
+                  <Phone className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
+                  <span>3. Thông tin cá nhân & Liên lạc</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label
+                      htmlFor={`${formIdPrefix}-ngaysinh`}
+                      className="font-medium text-slate-700 dark:text-slate-300 block mb-1"
+                    >
+                      Ngày sinh
+                    </label>
+                    <input
+                      id={`${formIdPrefix}-ngaysinh`}
+                      type="date"
+                      value={formData.ngaySinh || ''}
+                      onChange={(e) => setFormData({ ...formData, ngaySinh: e.target.value })}
+                      className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor={`${formIdPrefix}-gioitinh`}
+                      className="font-medium text-slate-700 dark:text-slate-300 block mb-1"
+                    >
+                      Giới tính
+                    </label>
+                    <select
+                      id={`${formIdPrefix}-gioitinh`}
+                      value={formData.gioiTinh || 'Nam'}
+                      onChange={(e) => setFormData({ ...formData, gioiTinh: e.target.value as 'Nam' | 'Nữ' })}
+                      className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 cursor-pointer"
+                    >
+                      <option value="Nam">Nam</option>
+                      <option value="Nữ">Nữ</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label
+                      htmlFor={`${formIdPrefix}-sdt`}
+                      className="font-medium text-slate-700 dark:text-slate-300 block mb-1"
+                    >
+                      Số điện thoại
+                    </label>
+                    <input
+                      id={`${formIdPrefix}-sdt`}
+                      type="text"
+                      value={formData.soDienThoai || ''}
+                      onChange={(e) => setFormData({ ...formData, soDienThoai: e.target.value })}
+                      placeholder="09xxxxxxxx"
+                      className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor={`${formIdPrefix}-email`}
+                      className="font-medium text-slate-700 dark:text-slate-300 block mb-1"
+                    >
+                      Email trường
+                    </label>
+                    <input
+                      id={`${formIdPrefix}-email`}
+                      type="email"
+                      value={formData.email || ''}
+                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      placeholder="tensv@tdnu.edu.vn"
+                      className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                    />
+                  </div>
+                </div>
+
                 <div>
-                  <label className="font-semibold block mb-1">Lớp sinh hoạt *</label>
-                  <select
-                    value={formData.lop}
-                    onChange={(e) => {
-                      const newLop = e.target.value;
-                      setFormData({
-                        ...formData,
-                        lop: newLop,
-                        khoa: getFacultyForClass(newLop),
-                      });
-                    }}
-                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl font-medium"
+                  <label
+                    htmlFor={`${formIdPrefix}-diachi`}
+                    className="font-medium text-slate-700 dark:text-slate-300 block mb-1"
                   >
-                    {availableClasses.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="font-semibold block mb-1">Khoa / Viện</label>
-                  <input
-                    type="text"
-                    value={formData.khoa}
-                    onChange={(e) => setFormData({ ...formData, khoa: e.target.value })}
-                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold block mb-1">Ngày sinh</label>
-                  <input
-                    type="date"
-                    value={formData.ngaySinh}
-                    onChange={(e) => setFormData({ ...formData, ngaySinh: e.target.value })}
-                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
-                  />
-                </div>
-                <div>
-                  <label className="font-semibold block mb-1">Giới tính</label>
-                  <select
-                    value={formData.gioiTinh}
-                    onChange={(e) => setFormData({ ...formData, gioiTinh: e.target.value as 'Nam' | 'Nữ' })}
-                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
-                  >
-                    <option value="Nam">Nam</option>
-                    <option value="Nữ">Nữ</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold block mb-1">Số điện thoại</label>
-                  <input
-                    type="text"
-                    value={formData.soDienThoai}
-                    onChange={(e) => setFormData({ ...formData, soDienThoai: e.target.value })}
-                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
-                  />
-                </div>
-                <div>
-                  <label className="font-semibold block mb-1">Email trường</label>
-                  <input
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="font-semibold block mb-1">Địa chỉ thường trú</label>
-                <input
-                  type="text"
-                  value={formData.diaChi}
-                  onChange={(e) => setFormData({ ...formData, diaChi: e.target.value })}
-                  className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
-                />
-              </div>
-
-              {/* Hồ sơ Số hóa MULTI-FILE UPLOAD AREA inside modal */}
-              <div className="pt-3 border-t border-zinc-200 dark:border-zinc-800 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <label className="font-bold text-xs text-zinc-900 dark:text-white flex items-center gap-1.5">
-                    <FileText className="w-4 h-4 text-blue-600" />
-                    <span>Danh sách Hồ sơ Số hóa đính kèm ({formData.hoSoFiles?.length || 0} file)</span>
+                    Địa chỉ thường trú
                   </label>
-                  <span className="text-[10px] text-blue-600 dark:text-blue-400 font-normal">
-                    Tải nhiều file & đặt tên phân loại
+                  <input
+                    id={`${formIdPrefix}-diachi`}
+                    type="text"
+                    value={formData.diaChi || ''}
+                    onChange={(e) => setFormData({ ...formData, diaChi: e.target.value })}
+                    placeholder="Số nhà, đường, phường/xã, tỉnh/thành phố"
+                    className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
+                  />
+                </div>
+              </div>
+
+              {/* Section 4 */}
+              <div className="space-y-3 pt-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800 pb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
+                    <span>4. Hồ sơ số hóa ({formData.hoSoFiles?.length || 0} tệp)</span>
                   </span>
+                  <span className="text-[10px] text-slate-400 font-normal normal-case">PDF, JPG, PNG</span>
                 </div>
 
-                {/* Uploaded Files List with Editable Custom Names */}
                 {formData.hoSoFiles && formData.hoSoFiles.length > 0 && (
-                  <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                     {formData.hoSoFiles.map((file, idx) => (
                       <div
                         key={file.id || idx}
-                        className="p-3 bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/80 rounded-2xl space-y-2"
+                        className="p-2.5 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 rounded space-y-1.5"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-2 flex-1">
-                            <FileText className="w-4 h-4 text-blue-600 shrink-0" />
+                            <FileText className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400 shrink-0" />
                             <div className="flex-1">
-                              <label className="text-[10px] text-zinc-400 font-medium block mb-0.5">
-                                Đặt tên hiển thị / Phân loại file #{idx + 1}:
+                              <label
+                                htmlFor={`${formIdPrefix}-doc-${file.id}`}
+                                className="text-[10px] text-slate-500 dark:text-slate-400 font-medium block mb-0.5"
+                              >
+                                Tên tài liệu #{idx + 1}
                               </label>
                               <input
+                                id={`${formIdPrefix}-doc-${file.id}`}
                                 type="text"
                                 value={file.customName}
                                 onChange={(e) => handleUpdateCustomName(file.id, e.target.value)}
-                                placeholder="Ví dụ: Bằng THPT, CCCD 2 mặt, Sơ yếu lý lịch..."
-                                className="w-full text-xs font-bold bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg px-2.5 py-1.5 text-zinc-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                className="w-full text-xs font-medium bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-2 py-1 text-slate-900 dark:text-slate-100 focus:border-blue-600 focus:outline-none"
                               />
                             </div>
                           </div>
@@ -1704,19 +2521,15 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                             <button
                               type="button"
                               onClick={() =>
-                                handleOpenSinglePdf(
-                                  file.fileUrl,
-                                  file.customName || 'Hồ sơ',
-                                  file.fileName,
-                                  {
-                                    hoTen: formData.hoTen || 'Sinh viên',
-                                    maSV: formData.maSV || '',
-                                    lop: formData.lop || '',
-                                  }
-                                )
+                                handleOpenSinglePdf(file.fileUrl, file.customName || 'Hồ sơ', file.fileName, {
+                                  hoTen: formData.hoTen || 'Sinh viên',
+                                  maSV: formData.maSV || '',
+                                  lop: formData.lop || '',
+                                })
                               }
-                              className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 dark:hover:bg-blue-950 rounded-lg transition-colors"
-                              title="Xem thử file trong tab mới"
+                              className="p-1 text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 rounded transition-colors cursor-pointer"
+                              title="Xem tài liệu"
+                              aria-label="Xem tài liệu"
                             >
                               <ExternalLink className="w-3.5 h-3.5" />
                             </button>
@@ -1724,53 +2537,28 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                             <button
                               type="button"
                               onClick={() => handleRemoveFile(file.id)}
-                              className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950 rounded-lg transition-colors"
-                              title="Xóa file này"
+                              className="p-1 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950 rounded transition-colors cursor-pointer"
+                              title="Xóa tệp"
+                              aria-label="Xóa tệp"
                             >
                               <X className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         </div>
 
-                        {/* Preset Name Suggestions */}
-                        <div className="flex flex-wrap items-center gap-1 text-[10px] pt-1">
-                          <span className="text-zinc-400 font-medium mr-1">Tên gợi ý:</span>
-                          {[
-                            'Giấy báo nhập học',
-                            'Bằng THPT',
-                            'CCCD (2 mặt)',
-                            'Sơ yếu lý lịch',
-                            'Giấy khai sinh',
-                            'Giấy khám sức khỏe',
-                          ].map((preset) => (
-                            <button
-                              key={preset}
-                              type="button"
-                              onClick={() => handleUpdateCustomName(file.id, preset)}
-                              className="px-2 py-0.5 rounded-md bg-white dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-950 transition-colors"
-                            >
-                              + {preset}
-                            </button>
-                          ))}
-                        </div>
-
-                        <div className="text-[10px] text-zinc-400 flex items-center justify-between font-mono pt-1 border-t border-zinc-200/50 dark:border-zinc-700/50">
-                          <span className="truncate">Tên file gốc: {file.fileName}</span>
-                          <span className="shrink-0">{file.uploadedAt || 'Mới đính kèm'}</span>
+                        <div className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center justify-between font-mono pt-1 border-t border-slate-200 dark:border-slate-800">
+                          <span className="truncate">{file.fileName}</span>
+                          {file.uploadedAt && <span className="shrink-0 tabular-nums">{file.uploadedAt}</span>}
                         </div>
                       </div>
                     ))}
                   </div>
                 )}
 
-                {/* Dropzone for adding multi-files */}
-                <label className="flex flex-col items-center justify-center p-3.5 border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl hover:border-blue-500 dark:hover:border-blue-500 cursor-pointer bg-zinc-50 dark:bg-zinc-800/40 hover:bg-blue-50/50 transition-all text-center">
-                  <Upload className="w-5 h-5 text-blue-500 mb-1" />
-                  <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
-                    Bấm chọn hoặc kéo thả để tải lên thêm nhiều File Scan (PDF, PNG, JPG)
-                  </span>
-                  <span className="text-[10px] text-zinc-400 mt-0.5">
-                    Hỗ trợ chọn nhiều file cùng lúc (Giấy báo nhập học, CCCD, Bằng THPT, Sơ yếu lý lịch...)
+                <label className="flex flex-col items-center justify-center p-3 border border-dashed border-slate-300 dark:border-slate-700 rounded hover:border-blue-600 dark:hover:border-blue-500 cursor-pointer bg-slate-50 dark:bg-slate-800/60 transition-colors text-center">
+                  <Upload className="w-4 h-4 text-blue-700 dark:text-blue-400 mb-1" />
+                  <span className="text-xs font-medium text-slate-800 dark:text-slate-200">
+                    Chọn tệp hồ sơ (PDF, JPG, PNG)
                   </span>
                   <input
                     type="file"
@@ -1782,17 +2570,17 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                 </label>
               </div>
 
-              <div className="pt-3 flex justify-end gap-2">
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setIsAddModalOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium"
+                  className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors cursor-pointer text-xs font-medium"
                 >
                   Hủy
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-md shadow-blue-500/20"
+                  className="px-3.5 py-1.5 rounded bg-blue-700 hover:bg-blue-800 text-white transition-colors cursor-pointer text-xs font-medium"
                 >
                   {editingStudent ? 'Lưu cập nhật' : 'Tạo hồ sơ'}
                 </button>
@@ -1802,85 +2590,95 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
         </div>
       )}
 
-      {/* Document Viewer Modal - Shows All Categorized Files */}
+      {/* ========================================================================= */}
+      {/* DOCUMENT LIST MODAL FOR A STUDENT                                         */}
+      {/* ========================================================================= */}
       {viewingDocumentStudent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 sm:p-6 overflow-y-auto">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl max-w-2xl w-full p-6 shadow-2xl relative my-auto max-h-[88vh] overflow-y-auto">
-            <button
-              onClick={() => setViewingDocumentStudent(null)}
-              className="absolute top-4 right-4 p-2 text-zinc-400 hover:text-zinc-600 rounded-full"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-2xl bg-blue-100 dark:bg-blue-950 text-blue-600 flex items-center justify-center shrink-0">
-                <Paperclip className="w-6 h-6" />
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 sm:p-6 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setViewingDocumentStudent(null)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md max-w-2xl w-full p-5 shadow-xl relative my-auto max-h-[88vh] overflow-y-auto space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-400 flex items-center justify-center shrink-0 border border-blue-200 dark:border-blue-900">
+                  <Paperclip className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Hồ sơ số hóa sinh viên</h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    <strong className="text-slate-800 dark:text-slate-200">{viewingDocumentStudent.hoTen}</strong> (
+                    <span className="font-mono">{viewingDocumentStudent.maSV}</span>) · {viewingDocumentStudent.lop}
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-base font-bold text-zinc-900 dark:text-white">
-                  Danh Mục Hồ Sơ Số Hóa Đã Xác Thực
-                </h3>
-                <p className="text-xs text-zinc-500">
-                  Sinh viên: <strong className="text-zinc-800 dark:text-zinc-200">{viewingDocumentStudent.hoTen}</strong> ({viewingDocumentStudent.maSV}) — Lớp: {viewingDocumentStudent.lop}
-                </p>
-              </div>
+              <button
+                type="button"
+                onClick={() => setViewingDocumentStudent(null)}
+                className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                aria-label="Đóng danh mục hồ sơ"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
-            {/* List of Files */}
             {(() => {
               const studentFiles = getStudentFiles(viewingDocumentStudent);
               return (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between text-xs font-semibold text-zinc-600 dark:text-zinc-400 pb-2 border-b border-zinc-200 dark:border-zinc-800">
-                    <span>Tổng số file: {studentFiles.length} tài liệu số hóa</span>
+                  <div className="flex items-center justify-between text-xs font-medium text-slate-600 dark:text-slate-400 pb-1.5 border-b border-slate-200 dark:border-slate-800">
+                    <span>
+                      Tổng: <strong className="font-mono text-slate-900 dark:text-slate-100">{studentFiles.length}</strong> tệp
+                    </span>
                     {canEditProfile ? (
-                      <label className="inline-flex items-center gap-1 text-blue-600 hover:underline cursor-pointer">
+                      <label className="inline-flex items-center gap-1 text-xs text-blue-700 dark:text-blue-400 hover:underline cursor-pointer font-medium">
                         <Plus className="w-3.5 h-3.5" />
-                        <span>Thêm file mới</span>
+                        <span>Thêm tệp</span>
                         <input
                           type="file"
                           multiple
                           accept=".pdf,.jpg,.jpeg,.png"
                           className="hidden"
-                          onChange={(e) => {
-                            handleDirectUploadSim(viewingDocumentStudent, e);
-                            // Refresh student files in modal
-                            setTimeout(() => {
-                              const updated = students.find((st) => st.maSV === viewingDocumentStudent.maSV);
-                              if (updated) setViewingDocumentStudent(updated);
-                            }, 300);
-                          }}
+                          onChange={(e) => handleDirectUploadSim(viewingDocumentStudent, e)}
                         />
                       </label>
                     ) : (
-                      <span className="text-[11px] text-amber-700 dark:text-amber-300 font-medium flex items-center gap-1 bg-amber-50 dark:bg-amber-950/60 px-2 py-1 rounded-lg border border-amber-200 dark:border-amber-800">
-                        <Lock className="w-3.5 h-3.5 text-amber-600" />
-                        <span>Chỉ xem & Tải file scan</span>
+                      <span className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
+                        <Lock className="w-3 h-3 text-slate-400" />
+                        <span>Chỉ xem</span>
                       </span>
                     )}
                   </div>
 
                   {studentFiles.length > 0 ? (
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                       {studentFiles.map((file, idx) => (
                         <div
                           key={file.id || idx}
-                          className="bg-zinc-50 dark:bg-zinc-800/80 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-700/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-blue-400 transition-all"
+                          className="bg-slate-50 dark:bg-slate-800/60 p-3 rounded border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
                         >
                           <div className="space-y-1 overflow-hidden">
                             <div className="flex items-center gap-2">
-                              <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
+                              <span className="w-5 h-5 rounded bg-blue-700 text-white text-[10px] font-mono font-medium flex items-center justify-center shrink-0">
                                 {idx + 1}
                               </span>
-                              <h4 className="font-bold text-sm text-blue-950 dark:text-blue-200 truncate">
+                              <h4 className="font-semibold text-xs text-slate-900 dark:text-slate-100 truncate">
                                 {file.customName || file.fileName}
                               </h4>
                             </div>
-                            <div className="text-[11px] text-zinc-500 font-mono pl-7 flex items-center gap-3">
-                              <span>File gốc: {file.fileName}</span>
-                              <span>•</span>
-                              <span>Ngày tải: {file.uploadedAt || 'N/A'}</span>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono pl-7 flex items-center gap-2.5">
+                              <span className="truncate">{file.fileName}</span>
+                              {file.uploadedAt && (
+                                <>
+                                  <span>·</span>
+                                  <span className="tabular-nums">{file.uploadedAt}</span>
+                                </>
+                              )}
                             </div>
                           </div>
 
@@ -1895,422 +2693,189 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                                   viewingDocumentStudent
                                 )
                               }
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all"
+                              className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-700 hover:bg-blue-800 text-white rounded text-xs font-medium transition-colors cursor-pointer"
                             >
-                              <ExternalLink className="w-3.5 h-3.5" />
-                              <span>Mở Scan (Tab mới)</span>
+                              <ExternalLink className="w-3 h-3" />
+                              <span>Xem</span>
                             </button>
 
                             <a
                               href={file.fileUrl}
                               download={file.fileName}
-                              className="p-1.5 text-zinc-600 hover:text-blue-600 dark:text-zinc-400 bg-white dark:bg-zinc-700 rounded-xl border border-zinc-200 dark:border-zinc-600 transition-colors"
-                              title="Tải về máy"
+                              className="p-1.5 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white bg-white dark:bg-slate-800 rounded border border-slate-300 dark:border-slate-700 transition-colors cursor-pointer"
+                              title="Tải về"
+                              aria-label={`Tải về ${file.fileName}`}
                             >
-                              <Download className="w-4 h-4" />
+                              <Download className="w-3.5 h-3.5" />
                             </a>
                           </div>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <div className="text-center p-8 bg-zinc-50 dark:bg-zinc-800/40 rounded-2xl border border-dashed text-zinc-500 text-xs">
-                      Chưa có file hồ sơ số hóa nào được tải lên cho sinh viên này
-                    </div>
+                    <EmptyState message="Chưa có dữ liệu." />
                   )}
                 </div>
               );
             })()}
+
+            <div className="pt-2 flex justify-end border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setViewingDocumentStudent(null)}
+                className="px-3.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors text-xs font-medium cursor-pointer"
+              >
+                Đóng
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* MODAL: VIEW FULL STUDENT PROFILE & DETAILS */}
-      {viewingDetailStudent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 sm:p-6 overflow-y-auto">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl max-w-3xl w-full p-6 sm:p-7 shadow-2xl relative my-auto max-h-[90vh] overflow-y-auto space-y-6">
-            <button
-              type="button"
-              onClick={() => {
-                setViewingDetailStudent(null);
-                setCopiedMaSV(false);
-              }}
-              className="absolute top-4 right-4 p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 rounded-full cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            {/* Profile Header */}
-            <div className="flex flex-col sm:flex-row sm:items-center gap-5 pb-5 border-b border-zinc-200 dark:border-zinc-800">
-              <div className="relative group shrink-0 self-start sm:self-center">
-                <img
-                  src={getStudentAvatarUrl(viewingDetailStudent)}
-                  alt={viewingDetailStudent.hoTen}
-                  className="w-20 h-20 sm:w-24 sm:h-24 rounded-3xl object-cover border-2 border-white dark:border-zinc-700 shadow-xl shadow-blue-500/10 bg-zinc-100 dark:bg-zinc-800"
-                  onError={(e) => {
-                    const clean = encodeURIComponent(viewingDetailStudent.hoTen || 'SV');
-                    (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${clean}&background=2563eb&color=fff&size=200&bold=true`;
-                  }}
-                />
-                {canEditProfile && (
-                  <label
-                    className="absolute -bottom-1.5 -right-1.5 p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md cursor-pointer transition-all hover:scale-105"
-                    title="Đổi ảnh đại diện sinh viên"
-                  >
-                    <Camera className="w-3.5 h-3.5" />
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                          const newAvatar = reader.result as string;
-                          onUpdateStudent(viewingDetailStudent.maSV, { avatar: newAvatar });
-                          setViewingDetailStudent({
-                            ...viewingDetailStudent,
-                            avatar: newAvatar,
-                          });
-                          apiService.uploadAvatar(viewingDetailStudent.maSV, newAvatar).then((res) => {
-                            if (res.success && res.avatarUrl) {
-                              onUpdateStudent(viewingDetailStudent.maSV, { avatar: res.avatarUrl });
-                              setViewingDetailStudent((prev: any) =>
-                                prev ? { ...prev, avatar: res.avatarUrl } : null
-                              );
-                            }
-                          });
-                        };
-                        reader.readAsDataURL(file);
-                      }}
-                    />
-                  </label>
-                )}
-              </div>
-              <div className="space-y-2 flex-1 min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-xl sm:text-2xl font-black text-zinc-900 dark:text-white truncate">
-                    {viewingDetailStudent.hoTen}
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(viewingDetailStudent.maSV);
-                      setCopiedMaSV(true);
-                      setTimeout(() => setCopiedMaSV(false), 2000);
-                    }}
-                    className="inline-flex items-center gap-1 font-mono text-xs font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/80 hover:bg-blue-100 px-2.5 py-1 rounded-lg border border-blue-200 dark:border-blue-800 transition-colors cursor-pointer"
-                    title="Bấm để sao chép Mã sinh viên"
-                  >
-                    <span>{viewingDetailStudent.maSV}</span>
-                    {copiedMaSV ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-blue-500" />}
-                  </button>
-                  <span
-                    className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
-                      viewingDetailStudent.trangThai === 'Đang học'
-                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300'
-                        : viewingDetailStudent.trangThai === 'Bảo lưu'
-                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300'
-                        : 'bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300'
-                    }`}
-                  >
-                    {viewingDetailStudent.trangThai || 'Đang học'}
-                  </span>
-                </div>
-                <p className="text-xs text-zinc-500 font-medium flex items-center flex-wrap gap-2">
-                  <span>Lớp: <strong className="text-zinc-800 dark:text-zinc-200">{viewingDetailStudent.lop}</strong></span>
-                  <span>•</span>
-                  <span>Khoa: <strong className="text-zinc-800 dark:text-zinc-200">{viewingDetailStudent.khoa}</strong></span>
+      {/* ========================================================================= */}
+      {/* IN-APP DOCUMENT PREVIEW MODAL (Replaces window.open)                      */}
+      {/* ========================================================================= */}
+      {previewDoc && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setPreviewDoc(null)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md max-w-4xl w-full flex flex-col max-h-[92vh] overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 bg-slate-50 dark:bg-slate-900 shrink-0">
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
+                  {previewDoc.customName}
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono truncate">
+                  {previewDoc.studentName} ({previewDoc.maSV}) · {previewDoc.fileName}
                 </p>
               </div>
-            </div>
-
-            {/* Information Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Box 1: Thông tin học vụ */}
-              <div className="bg-zinc-50 dark:bg-zinc-800/50 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-700/70 space-y-3">
-                <h4 className="text-xs font-bold text-blue-900 dark:text-blue-300 flex items-center gap-1.5 border-b border-zinc-200 dark:border-zinc-700/60 pb-2">
-                  <GraduationCap className="w-4 h-4 text-blue-600" />
-                  <span>Thông Tin Học Vụ & Đào Tạo</span>
-                </h4>
-                <div className="space-y-2 text-xs">
-                  <div className="flex justify-between items-center">
-                    <span className="text-zinc-500">Mã sinh viên:</span>
-                    <span className="font-mono font-bold text-zinc-900 dark:text-white">{viewingDetailStudent.maSV}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-zinc-500">Lớp học phần/sinh hoạt:</span>
-                    <span className="font-semibold text-blue-600 dark:text-blue-400">{viewingDetailStudent.lop}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-zinc-500">Khoa / Viện quản lý:</span>
-                    <span className="font-semibold text-zinc-800 dark:text-zinc-200">{viewingDetailStudent.khoa}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-zinc-500">Khóa đào tạo:</span>
-                    <span className="font-semibold text-zinc-800 dark:text-zinc-200">Khóa 2025 (2025 - 2029)</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-zinc-500">Ngày nhập học:</span>
-                    <span className="font-medium text-zinc-800 dark:text-zinc-200">{viewingDetailStudent.ngayNhapHoc || '05/09/2025'}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-zinc-500">Tình trạng học tập:</span>
-                    <span className="font-bold text-emerald-600 dark:text-emerald-400">{viewingDetailStudent.trangThai || 'Đang học'}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Box 2: Thông tin nhân thân & liên hệ */}
-              <div className="bg-zinc-50 dark:bg-zinc-800/50 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-700/70 space-y-3">
-                <h4 className="text-xs font-bold text-indigo-900 dark:text-indigo-300 flex items-center gap-1.5 border-b border-zinc-200 dark:border-zinc-700/60 pb-2">
-                  <UserIcon className="w-4 h-4 text-indigo-600" />
-                  <span>Thông Tin Cá Nhân & Liên Hệ</span>
-                </h4>
-                <div className="space-y-2 text-xs">
-                  <div className="flex justify-between items-center">
-                    <span className="text-zinc-500">Ngày sinh:</span>
-                    <span className="font-medium text-zinc-900 dark:text-white flex items-center gap-1">
-                      <Calendar className="w-3.5 h-3.5 text-zinc-400" />
-                      {viewingDetailStudent.ngaySinh}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-zinc-500">Giới tính:</span>
-                    <span className="font-semibold text-zinc-800 dark:text-zinc-200">{viewingDetailStudent.gioiTinh}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-zinc-500">Số điện thoại:</span>
-                    {viewingDetailStudent.soDienThoai ? (
-                      <a
-                        href={`tel:${viewingDetailStudent.soDienThoai}`}
-                        className="font-mono font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
-                      >
-                        <Phone className="w-3.5 h-3.5" />
-                        {viewingDetailStudent.soDienThoai}
-                      </a>
-                    ) : (
-                      <span className="text-zinc-400 italic">Chưa cập nhật</span>
-                    )}
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-zinc-500">Email trường:</span>
-                    <a
-                      href={`mailto:${viewingDetailStudent.email || `${viewingDetailStudent.maSV.toLowerCase()}@tdnu.edu.vn`}`}
-                      className="font-medium text-blue-600 dark:text-blue-400 hover:underline truncate max-w-[180px] flex items-center gap-1"
-                    >
-                      <Mail className="w-3.5 h-3.5 shrink-0" />
-                      {viewingDetailStudent.email || `${viewingDetailStudent.maSV.toLowerCase()}@tdnu.edu.vn`}
-                    </a>
-                  </div>
-                  <div className="flex justify-between items-start gap-2">
-                    <span className="text-zinc-500 shrink-0">Địa chỉ:</span>
-                    <span className="font-medium text-zinc-800 dark:text-zinc-200 text-right flex items-center gap-1">
-                      <MapPin className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                      {viewingDetailStudent.diaChi || 'Chưa cập nhật'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Box 3: Hồ sơ số hóa đính kèm */}
-            <div className="bg-zinc-50 dark:bg-zinc-800/50 p-4 rounded-2xl border border-zinc-200 dark:border-zinc-700/70 space-y-3">
-              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-700/60 pb-2">
-                <h4 className="text-xs font-bold text-zinc-900 dark:text-white flex items-center gap-1.5">
-                  <Paperclip className="w-4 h-4 text-blue-600" />
-                  <span>Hồ Sơ Số Hóa Đã Xác Thực ({getStudentFiles(viewingDetailStudent).length} tài liệu)</span>
-                </h4>
-                {canEditProfile && (
-                  <label className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline font-bold cursor-pointer">
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>+ Tải thêm file scan</span>
-                    <input
-                      type="file"
-                      multiple
-                      accept=".pdf,.jpg,.jpeg,.png"
-                      className="hidden"
-                      onChange={(e) => {
-                        handleDirectUploadSim(viewingDetailStudent, e);
-                        setTimeout(() => {
-                          const updated = students.find((st) => st.maSV === viewingDetailStudent.maSV);
-                          if (updated) setViewingDetailStudent(updated);
-                        }, 300);
-                      }}
-                    />
-                  </label>
-                )}
-              </div>
-
-              {getStudentFiles(viewingDetailStudent).length > 0 ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-56 overflow-y-auto pr-1">
-                  {getStudentFiles(viewingDetailStudent).map((file, idx) => (
-                    <div
-                      key={file.id || idx}
-                      className="p-3 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-700 flex items-center justify-between gap-2 hover:border-blue-400 transition-all"
-                    >
-                      <div className="min-w-0 flex-1 space-y-0.5">
-                        <div className="flex items-center gap-1.5">
-                          <FileText className="w-4 h-4 text-blue-600 shrink-0" />
-                          <span className="font-bold text-xs text-zinc-900 dark:text-white truncate">
-                            {file.customName || file.fileName}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-zinc-400 font-mono truncate pl-5">
-                          {file.fileName}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleOpenSinglePdf(
-                              file.fileUrl,
-                              file.customName || 'Hồ sơ',
-                              file.fileName,
-                              viewingDetailStudent
-                            )
-                          }
-                          className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 hover:bg-blue-100 rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
-                          title="Xem file scan"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>Xem</span>
-                        </button>
-                        <a
-                          href={file.fileUrl}
-                          download={file.fileName}
-                          className="p-1 text-zinc-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950 rounded-lg transition-colors"
-                          title="Tải file"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                        </a>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-5 bg-white dark:bg-zinc-900 rounded-xl border border-dashed border-zinc-200 dark:border-zinc-700 text-xs text-zinc-400">
-                  Chưa có tài liệu số hóa nào được lưu trữ cho sinh viên này
-                </div>
-              )}
-            </div>
-
-            {/* Modal Actions */}
-            <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 dark:border-zinc-800">
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 font-semibold text-xs transition-colors cursor-pointer"
-              >
-                <Printer className="w-4 h-4 text-zinc-500" />
-                <span>In Lý Lịch Trích Ngang</span>
-              </button>
-
-              <div className="flex items-center gap-2">
-                {canEditProfile && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const st = viewingDetailStudent;
-                      setViewingDetailStudent(null);
-                      handleOpenEdit(st);
-                    }}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 transition-all cursor-pointer"
-                  >
-                    <Edit3 className="w-4 h-4" />
-                    <span>Chỉnh Sửa Hồ Sơ</span>
-                  </button>
-                )}
+              <div className="flex items-center gap-2 shrink-0">
+                <a
+                  href={previewDoc.fileUrl}
+                  download={previewDoc.fileName}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-700 hover:bg-blue-800 text-white text-xs font-medium"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Tải về</span>
+                </a>
                 <button
                   type="button"
-                  onClick={() => {
-                    setViewingDetailStudent(null);
-                    setCopiedMaSV(false);
-                  }}
-                  className="px-4 py-2 rounded-xl bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-semibold text-xs transition-colors cursor-pointer"
+                  onClick={() => setPreviewDoc(null)}
+                  className="p-1.5 rounded text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-800 cursor-pointer"
+                  aria-label="Đóng trình xem"
                 >
-                  Đóng
+                  <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
+
+            <div className="flex-1 bg-slate-100 dark:bg-slate-950 overflow-auto p-3 flex items-center justify-center min-h-[60vh]">
+              {isImageFile(previewDoc.fileUrl, previewDoc.fileName) ? (
+                <img
+                  src={previewDoc.fileUrl}
+                  alt={previewDoc.customName}
+                  className="max-w-full max-h-[75vh] object-contain rounded border border-slate-200 dark:border-slate-800"
+                />
+              ) : (
+                <iframe
+                  src={previewDoc.fileUrl}
+                  title={previewDoc.customName}
+                  className="w-full h-[75vh] bg-white rounded border border-slate-200 dark:border-slate-800"
+                />
+              )}
+            </div>
           </div>
         </div>
       )}
+
+      {/* SIDE DRAWER */}
+      <StudentDetailDrawer
+        isOpen={Boolean(viewingDetailStudent)}
+        student={viewingDetailStudent}
+        grades={grades}
+        trainingPoints={trainingPoints}
+        retakes={retakes}
+        activeSemester={activeSemester}
+        onPreviewFile={handleOpenSinglePdf}
+        onClose={() => setViewingDetailStudent(null)}
+        onEdit={
+          canEditProfile
+            ? (st) => {
+                setViewingDetailStudent(null);
+                handleOpenEdit(st);
+              }
+            : undefined
+        }
+      />
 
       {/* MODAL IMPORT STUDENTS FROM EXCEL */}
       {isExcelImportModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl max-w-2xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto space-y-4">
-            <button
-              onClick={() => setIsExcelImportModalOpen(false)}
-              className="absolute top-4 right-4 p-2 text-zinc-400 hover:text-zinc-600 rounded-full"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 flex items-center justify-center shrink-0">
-                <FileSpreadsheet className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-zinc-900 dark:text-white">
-                  Import Danh Sách Sinh Viên Từ File Excel Mẫu
-                </h3>
-                <p className="text-xs text-zinc-500">
-                  Tải danh sách nhiều sinh viên cùng lúc bằng file Excel chuẩn (.xlsx, .xls)
-                </p>
-              </div>
-            </div>
-
-            {/* Alert Note */}
-            <div className="p-3.5 bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800/80 rounded-2xl text-xs text-blue-900 dark:text-blue-200 space-y-1">
-              <div className="font-bold flex items-center gap-1.5 text-blue-700 dark:text-blue-300">
-                <Info className="w-4 h-4 shrink-0" />
-                <span>Hồ sơ số hóa (File Scan PDF) có thể bổ sung sau khi thêm sinh viên!</span>
-              </div>
-              <p className="text-[11px] text-blue-800 dark:text-blue-300 pl-5">
-                File Excel chỉ cần chứa các thông tin lý lịch căn bản (Mã SV, Họ tên, Lớp, Khoa...). Sau khi import thành công, Admin hoặc Sinh viên có thể bấm <strong>"Bổ sung file scan"</strong> trực tiếp trong danh sách để đính kèm bằng THPT, CCCD, Giấy khai sinh... bất cứ lúc nào.
-              </p>
-            </div>
-
-            {/* Step 1: Download Sample Excel */}
-            <div className="p-4 bg-zinc-50 dark:bg-zinc-800/60 rounded-2xl border border-zinc-200 dark:border-zinc-700 space-y-2">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-bold text-xs text-zinc-900 dark:text-white">
-                    Bước 1: Tải về File Excel Mẫu Chuẩn
-                  </h4>
-                  <p className="text-[11px] text-zinc-500">
-                    File mẫu chứa đầy đủ các cột tiêu đề tiêu chuẩn: Mã SV, Họ và tên, Lớp, Mã Lớp, Khoa, Ngày sinh, Giới tính, SĐT, Email...
-                  </p>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => {
+            setIsExcelImportModalOpen(false);
+            setPreviewExcelStudents([]);
+            setExcelFileName('');
+          }}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md max-w-2xl w-full p-5 shadow-xl relative max-h-[90vh] overflow-y-auto space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-200 dark:border-emerald-900">
+                  <FileSpreadsheet className="w-4 h-4" />
                 </div>
-                <button
-                  type="button"
-                  onClick={handleDownloadSampleExcel}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all shrink-0"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Tải File Mẫu (.xlsx)</span>
-                </button>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  Import Danh sách Sinh viên từ Excel
+                </h3>
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsExcelImportModalOpen(false);
+                  setPreviewExcelStudents([]);
+                  setExcelFileName('');
+                }}
+                className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                aria-label="Đóng cửa sổ import"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
-            {/* Step 2: Upload Excel File */}
-            <div className="space-y-2">
-              <h4 className="font-bold text-xs text-zinc-900 dark:text-white">
-                Bước 2: Tải Lên File Excel Đã Điền Danh Sách Sinh Viên
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <h4 className="font-semibold text-xs text-slate-900 dark:text-slate-100">
+                Bước 1: Tải tệp Excel mẫu
+              </h4>
+              <button
+                type="button"
+                onClick={handleDownloadSampleExcel}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded text-xs font-medium transition-colors shrink-0 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Tải tệp mẫu (.xlsx)</span>
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <h4 className="font-semibold text-xs text-slate-900 dark:text-slate-100">
+                Bước 2: Chọn tệp danh sách (.xlsx, .xls, .csv)
               </h4>
 
-              <label className="flex flex-col items-center justify-center p-5 border-2 border-dashed border-emerald-300 dark:border-emerald-800/80 rounded-2xl hover:border-emerald-500 cursor-pointer bg-emerald-50/30 dark:bg-emerald-950/20 transition-all text-center">
-                <FileUp className="w-7 h-7 text-emerald-600 mb-1.5" />
-                <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
-                  Bấm để chọn file hoặc kéo thả file Excel (.xlsx, .xls, .csv)
-                </span>
-                <span className="text-[10px] text-zinc-400 mt-0.5">
-                  {excelFileName ? `Đã chọn: ${excelFileName}` : 'Hỗ trợ các địđịnh dạng .xlsx, .xls, .csv'}
+              <label className="flex flex-col items-center justify-center p-4 border border-dashed border-slate-300 dark:border-slate-700 rounded hover:border-emerald-600 cursor-pointer bg-slate-50 dark:bg-slate-800/60 transition-colors text-center">
+                <FileUp className="w-5 h-5 text-emerald-600 mb-1" />
+                <span className="text-xs font-medium text-slate-800 dark:text-slate-200">
+                  {excelFileName ? `Đã chọn: ${excelFileName}` : 'Chọn tệp Excel'}
                 </span>
                 <input
                   type="file"
@@ -2321,38 +2886,39 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
               </label>
             </div>
 
-            {/* Preview Table */}
             {previewExcelStudents.length > 0 && (
-              <div className="space-y-2 pt-2 border-t border-zinc-200 dark:border-zinc-800">
+              <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
                 <div className="flex items-center justify-between">
-                  <h4 className="font-bold text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
-                    <Check className="w-4 h-4" />
-                    <span>Xem Trước Danh Sách Trích Xuất ({previewExcelStudents.length} sinh viên)</span>
+                  <h4 className="font-semibold text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Xem trước ({previewExcelStudents.length} sinh viên)</span>
                   </h4>
-                  <span className="text-[10px] text-zinc-400">Đã đọc từ {excelFileName}</span>
+                  <span className="text-[10px] font-mono text-slate-500">{excelFileName}</span>
                 </div>
 
-                <div className="max-h-52 overflow-y-auto border border-zinc-200 dark:border-zinc-700 rounded-xl">
-                  <table className="w-full text-left text-[11px]">
-                    <thead className="bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-bold sticky top-0">
+                <div className="max-h-48 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded">
+                  <table className="w-full text-left text-[11px] border-collapse">
+                    <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-semibold sticky top-0 border-b border-slate-200 dark:border-slate-700">
                       <tr>
-                        <th className="p-2">STT</th>
-                        <th className="p-2">Mã SV</th>
-                        <th className="p-2">Họ và tên</th>
-                        <th className="p-2">Lớp</th>
-                        <th className="p-2">Khoa / Viện</th>
-                        <th className="p-2">Email</th>
+                        <th className="py-1.5 px-2.5 w-10 text-center">STT</th>
+                        <th className="py-1.5 px-2.5">Mã SV</th>
+                        <th className="py-1.5 px-2.5">Họ và tên</th>
+                        <th className="py-1.5 px-2.5">Lớp</th>
+                        <th className="py-1.5 px-2.5">Khoa / Viện</th>
+                        <th className="py-1.5 px-2.5">Email</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800 text-zinc-700 dark:text-zinc-300">
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
                       {previewExcelStudents.map((st, idx) => (
-                        <tr key={st.maSV || idx} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
-                          <td className="p-2 font-mono text-zinc-400">{idx + 1}</td>
-                          <td className="p-2 font-bold text-blue-600 dark:text-blue-400">{st.maSV}</td>
-                          <td className="p-2 font-semibold">{st.hoTen}</td>
-                          <td className="p-2">{st.lop}</td>
-                          <td className="p-2">{st.khoa}</td>
-                          <td className="p-2 font-mono text-zinc-500">{st.email}</td>
+                        <tr key={st.maSV || idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                          <td className="py-1 px-2.5 text-center font-mono text-slate-500 tabular-nums">{idx + 1}</td>
+                          <td className="py-1 px-2.5 font-mono font-semibold text-blue-700 dark:text-blue-400">
+                            {st.maSV}
+                          </td>
+                          <td className="py-1 px-2.5 font-medium">{st.hoTen}</td>
+                          <td className="py-1 px-2.5">{st.lop}</td>
+                          <td className="py-1 px-2.5 text-slate-500 dark:text-slate-400">{st.khoa}</td>
+                          <td className="py-1 px-2.5 font-mono text-slate-500 dark:text-slate-400">{st.email}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -2361,8 +2927,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
               </div>
             )}
 
-            {/* Action Buttons */}
-            <div className="pt-3 flex justify-end gap-2 border-t border-zinc-200 dark:border-zinc-800">
+            <div className="pt-3 flex justify-end gap-2 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => {
@@ -2370,230 +2935,356 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                   setPreviewExcelStudents([]);
                   setExcelFileName('');
                 }}
-                className="px-4 py-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium text-xs cursor-pointer"
+                className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors text-xs font-medium cursor-pointer"
               >
-                Hủy bỏ
+                Hủy
               </button>
               <button
                 type="button"
                 disabled={previewExcelStudents.length === 0}
                 onClick={handleConfirmImportExcel}
-                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs shadow-md shadow-emerald-500/20 flex items-center gap-1.5 cursor-pointer"
+                className="px-3.5 py-1.5 rounded bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white font-medium text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
               >
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>Xác nhận Import ({previewExcelStudents.length} Sinh viên)</span>
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>Xác nhận Import ({previewExcelStudents.length} SV)</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal: Edit Class & Faculty */}
+      {/* MODAL: EDIT CLASS & FACULTY */}
       {editingClassModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 sm:p-6 overflow-y-auto">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl max-w-md w-full p-6 shadow-2xl relative my-auto max-h-[88vh] overflow-y-auto">
-            <button
-              type="button"
-              onClick={() => setEditingClassModal(null)}
-              className="absolute top-4 right-4 p-2 text-zinc-400 hover:text-zinc-600 rounded-full cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 sm:p-6 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setEditingClassModal(null)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md max-w-md w-full p-5 shadow-xl relative my-auto max-h-[88vh] overflow-y-auto space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  Chỉnh sửa Lớp học & Khoa
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingClassModal(null)}
+                className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                aria-label="Đóng hộp thoại"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-            <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-4 flex items-center gap-2">
-              <Edit3 className="w-5 h-5 text-blue-600" />
-              <span>Chỉnh Sửa Thông Tin Lớp Học & Khoa</span>
-            </h3>
-
-            <form onSubmit={handleSaveEditClass} className="space-y-4 text-xs">
+            <form onSubmit={handleSaveEditClass} className="space-y-3.5 text-xs">
               <div>
-                <label className="font-semibold block mb-1 text-zinc-700 dark:text-zinc-300">Tên Lớp Học *</label>
+                <label
+                  htmlFor={`${formIdPrefix}-edit-lop`}
+                  className="font-medium block mb-1 text-slate-700 dark:text-slate-300"
+                >
+                  Tên Lớp Học <span className="text-rose-600">*</span>
+                </label>
                 <input
+                  id={`${formIdPrefix}-edit-lop`}
                   type="text"
                   value={editingClassModal.lopName}
                   onChange={(e) =>
                     setEditingClassModal({ ...editingClassModal, lopName: e.target.value })
                   }
-                  className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-zinc-900 dark:text-white font-bold"
+                  className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded focus:border-blue-600 focus:outline-none text-slate-900 dark:text-slate-100 font-medium"
                   required
                 />
               </div>
 
               <div>
-                <label className="font-semibold block mb-1 text-zinc-700 dark:text-zinc-300">Khoa / Viện Quản Lý *</label>
-                {Array.from(new Set(students.map((s) => s.khoa).filter(Boolean))).length > 0 ? (
+                <label
+                  htmlFor={`${formIdPrefix}-edit-khoa`}
+                  className="font-medium block mb-1 text-slate-700 dark:text-slate-300"
+                >
+                  Khoa / Viện <span className="text-rose-600">*</span>
+                </label>
+                {uniqueFaculties.length > 0 ? (
                   <div className="flex gap-2">
                     <select
-                      value={Array.from(new Set(students.map((s) => s.khoa).filter(Boolean))).includes(editingClassModal.khoa) ? editingClassModal.khoa : 'OTHER'}
+                      aria-label="Chọn Khoa"
+                      value={uniqueFaculties.includes(editingClassModal.khoa) ? editingClassModal.khoa : 'OTHER'}
                       onChange={(e) => {
                         if (e.target.value !== 'OTHER') {
                           setEditingClassModal({ ...editingClassModal, khoa: e.target.value });
                         }
                       }}
-                      className="w-1/2 p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-zinc-900 dark:text-white font-bold text-xs cursor-pointer"
+                      className="w-1/2 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded focus:border-blue-600 focus:outline-none text-slate-900 dark:text-slate-100 text-xs cursor-pointer"
                     >
-                      <option value="" disabled>-- Chọn Khoa / Viện --</option>
-                      {Array.from(new Set(students.map((s) => s.khoa).filter(Boolean))).map((k) => (
-                        <option key={k} value={k}>{k}</option>
+                      {uniqueFaculties.map((k) => (
+                        <option key={k} value={k}>
+                          {k}
+                        </option>
                       ))}
-                      <option value="OTHER">Tự nhập khác...</option>
+                      <option value="OTHER">Nhập khác...</option>
                     </select>
                     <input
+                      id={`${formIdPrefix}-edit-khoa`}
                       type="text"
                       value={editingClassModal.khoa}
                       onChange={(e) =>
                         setEditingClassModal({ ...editingClassModal, khoa: e.target.value })
                       }
-                      placeholder="Tên Khoa/Viện..."
-                      className="w-1/2 p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-zinc-900 dark:text-white font-bold text-xs"
+                      placeholder="Tên Khoa/Viện"
+                      className="w-1/2 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded focus:border-blue-600 focus:outline-none text-slate-900 dark:text-slate-100 text-xs font-medium"
                       required
                     />
                   </div>
                 ) : (
                   <input
+                    id={`${formIdPrefix}-edit-khoa`}
                     type="text"
                     value={editingClassModal.khoa}
                     onChange={(e) =>
                       setEditingClassModal({ ...editingClassModal, khoa: e.target.value })
                     }
-                    placeholder="Nhập tên Khoa / Viện..."
-                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-zinc-900 dark:text-white font-bold text-xs"
+                    placeholder="Nhập tên Khoa / Viện"
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded focus:border-blue-600 focus:outline-none text-slate-900 dark:text-slate-100 text-xs font-medium"
                     required
                   />
                 )}
               </div>
 
-              <div className="p-3 bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800/80 rounded-xl text-blue-900 dark:text-blue-200 text-[11px] space-y-1">
-                <p className="font-bold flex items-center gap-1">
-                  <Info className="w-3.5 h-3.5 shrink-0 text-blue-600" />
-                  <span>Tự động đồng bộ:</span>
-                </p>
-                <p>
-                  Thay đổi Tên Lớp hoặc Khoa tại đây sẽ tự động cập nhật lý lịch cho tất cả{' '}
-                  <strong className="underline font-black">
-                    {students.filter((s) => s.lop === editingClassModal.oldLopName).length}
-                  </strong>{' '}
-                  sinh viên hiện có trong lớp này!
-                </p>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <span className="font-medium block mb-1 text-slate-700 dark:text-slate-300">Ngành Đào Tạo</span>
+                  <div className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded text-slate-700 dark:text-slate-300 text-xs">
+                    {editingClassModal.nganh || getMajorForClass(editingClassModal.lopName)}
+                  </div>
+                </div>
+                <div>
+                  <span className="font-medium block mb-1 text-slate-700 dark:text-slate-300">Khóa Tuyển Sinh</span>
+                  <div className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded text-slate-700 dark:text-slate-300 text-xs font-mono">
+                    {editingClassModal.khoaHoc || getCohortForClass(editingClassModal.lopName)}
+                  </div>
+                </div>
               </div>
 
-              <div className="pt-2 flex justify-end gap-2 border-t border-zinc-200 dark:border-zinc-800">
+              <div className="pt-2 flex justify-end gap-2 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setEditingClassModal(null)}
-                  className="px-4 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-semibold text-xs cursor-pointer"
-                >
-                  Hủy bỏ
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Check className="w-4 h-4" />
-                  <span>Lưu Thay Đổi</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Add New Class */}
-      {isAddClassModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 sm:p-6 overflow-y-auto">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl max-w-md w-full p-6 shadow-2xl relative my-auto max-h-[88vh] overflow-y-auto">
-            <button
-              type="button"
-              onClick={() => setIsAddClassModalOpen(false)}
-              className="absolute top-4 right-4 p-2 text-zinc-400 hover:text-zinc-600 rounded-full cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-4 flex items-center gap-2">
-              <GraduationCap className="w-5 h-5 text-indigo-600" />
-              <span>Tạo Lớp Học Mới</span>
-            </h3>
-
-            <form onSubmit={handleSaveNewClass} className="space-y-4 text-xs">
-              <div>
-                <label className="font-semibold block mb-1 text-zinc-700 dark:text-zinc-300">Tên Lớp Học Mới *</label>
-                <input
-                  type="text"
-                  value={newClassFormData.lopName}
-                  onChange={(e) =>
-                    setNewClassFormData({ ...newClassFormData, lopName: e.target.value })
-                  }
-                  placeholder="Ví dụ: CNKT Điện - Điện tử 25DDS"
-                  className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-zinc-900 dark:text-white font-bold"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="font-semibold block mb-1 text-zinc-700 dark:text-zinc-300">Khoa / Viện Quản Lý *</label>
-                {Array.from(new Set(students.map((s) => s.khoa).filter(Boolean))).length > 0 ? (
-                  <div className="flex gap-2">
-                    <select
-                      value={Array.from(new Set(students.map((s) => s.khoa).filter(Boolean))).includes(newClassFormData.khoa) ? newClassFormData.khoa : 'OTHER'}
-                      onChange={(e) => {
-                        if (e.target.value !== 'OTHER') {
-                          setNewClassFormData({ ...newClassFormData, khoa: e.target.value });
-                        }
-                      }}
-                      className="w-1/2 p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-zinc-900 dark:text-white font-bold text-xs cursor-pointer"
-                    >
-                      <option value="" disabled>-- Chọn Khoa / Viện --</option>
-                      {Array.from(new Set(students.map((s) => s.khoa).filter(Boolean))).map((k) => (
-                        <option key={k} value={k}>{k}</option>
-                      ))}
-                      <option value="OTHER">Tự nhập khác...</option>
-                    </select>
-                    <input
-                      type="text"
-                      value={newClassFormData.khoa}
-                      onChange={(e) =>
-                        setNewClassFormData({ ...newClassFormData, khoa: e.target.value })
-                      }
-                      placeholder="Tên Khoa/Viện..."
-                      className="w-1/2 p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-zinc-900 dark:text-white font-bold text-xs"
-                      required
-                    />
-                  </div>
-                ) : (
-                  <input
-                    type="text"
-                    value={newClassFormData.khoa}
-                    onChange={(e) =>
-                      setNewClassFormData({ ...newClassFormData, khoa: e.target.value })
-                    }
-                    placeholder="Nhập tên Khoa / Viện quản lý..."
-                    className="w-full p-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none text-zinc-900 dark:text-white font-bold text-xs"
-                    required
-                  />
-                )}
-              </div>
-
-              <div className="pt-2 flex justify-end gap-2 border-t border-zinc-200 dark:border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => setIsAddClassModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-semibold text-xs cursor-pointer"
+                  className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 text-xs font-medium cursor-pointer"
                 >
                   Hủy
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md shadow-indigo-500/20 flex items-center gap-1.5 cursor-pointer"
+                  className="px-3.5 py-1.5 rounded bg-blue-700 hover:bg-blue-800 text-white font-medium text-xs transition-colors cursor-pointer"
                 >
-                  <Plus className="w-4 h-4" />
-                  <span>Tạo Lớp Mới</span>
+                  Lưu thay đổi
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
+
+      {/* MODAL: ADD NEW CLASS */}
+      {isAddClassModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 sm:p-6 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setIsAddClassModalOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md max-w-md w-full p-5 shadow-xl relative my-auto max-h-[88vh] overflow-y-auto space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <GraduationCap className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Tạo Lớp Học Mới</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddClassModalOpen(false)}
+                className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                aria-label="Đóng hộp thoại"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveNewClass} className="space-y-3.5 text-xs">
+              <div>
+                <label
+                  htmlFor={`${formIdPrefix}-new-lop`}
+                  className="font-medium block mb-1 text-slate-700 dark:text-slate-300"
+                >
+                  Tên Lớp Học Mới <span className="text-rose-600">*</span>
+                </label>
+                <input
+                  id={`${formIdPrefix}-new-lop`}
+                  type="text"
+                  value={newClassFormData.lopName}
+                  onChange={(e) => setNewClassFormData({ ...newClassFormData, lopName: e.target.value })}
+                  placeholder="Ví dụ: CNKT Cơ khí 25DDS09041"
+                  className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded focus:border-blue-600 focus:outline-none text-slate-900 dark:text-slate-100 font-medium"
+                  required
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor={`${formIdPrefix}-new-khoa`}
+                  className="font-medium block mb-1 text-slate-700 dark:text-slate-300"
+                >
+                  Khoa / Viện Quản Lý <span className="text-rose-600">*</span>
+                </label>
+                {uniqueFaculties.length > 0 ? (
+                  <div className="flex gap-2">
+                    <select
+                      aria-label="Chọn Khoa"
+                      value={uniqueFaculties.includes(newClassFormData.khoa) ? newClassFormData.khoa : 'OTHER'}
+                      onChange={(e) => {
+                        if (e.target.value !== 'OTHER') {
+                          setNewClassFormData({ ...newClassFormData, khoa: e.target.value });
+                        }
+                      }}
+                      className="w-1/2 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded focus:border-blue-600 focus:outline-none text-slate-900 dark:text-slate-100 text-xs cursor-pointer"
+                    >
+                      {uniqueFaculties.map((k) => (
+                        <option key={k} value={k}>
+                          {k}
+                        </option>
+                      ))}
+                      <option value="OTHER">Nhập khác...</option>
+                    </select>
+                    <input
+                      id={`${formIdPrefix}-new-khoa`}
+                      type="text"
+                      value={newClassFormData.khoa}
+                      onChange={(e) => setNewClassFormData({ ...newClassFormData, khoa: e.target.value })}
+                      placeholder="Tên Khoa/Viện"
+                      className="w-1/2 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded focus:border-blue-600 focus:outline-none text-slate-900 dark:text-slate-100 text-xs font-medium"
+                      required
+                    />
+                  </div>
+                ) : (
+                  <input
+                    id={`${formIdPrefix}-new-khoa`}
+                    type="text"
+                    value={newClassFormData.khoa}
+                    onChange={(e) => setNewClassFormData({ ...newClassFormData, khoa: e.target.value })}
+                    placeholder="Nhập tên Khoa / Viện"
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded focus:border-blue-600 focus:outline-none text-slate-900 dark:text-slate-100 text-xs font-medium"
+                    required
+                  />
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label
+                    htmlFor={`${formIdPrefix}-new-nganh`}
+                    className="font-medium block mb-1 text-slate-700 dark:text-slate-300"
+                  >
+                    Ngành Đào Tạo
+                  </label>
+                  <input
+                    id={`${formIdPrefix}-new-nganh`}
+                    type="text"
+                    list={`${formIdPrefix}-majors-list`}
+                    value={newClassFormData.nganh}
+                    onChange={(e) => setNewClassFormData({ ...newClassFormData, nganh: e.target.value })}
+                    placeholder="Nhập ngành đào tạo"
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded focus:border-blue-600 focus:outline-none text-slate-900 dark:text-slate-100 text-xs"
+                  />
+                  <datalist id={`${formIdPrefix}-majors-list`}>
+                    {uniqueMajors.map((m) => (
+                      <option key={m} value={m} />
+                    ))}
+                  </datalist>
+                </div>
+                <div>
+                  <label
+                    htmlFor={`${formIdPrefix}-new-khoahoc`}
+                    className="font-medium block mb-1 text-slate-700 dark:text-slate-300"
+                  >
+                    Khóa Tuyển Sinh
+                  </label>
+                  <input
+                    id={`${formIdPrefix}-new-khoahoc`}
+                    type="text"
+                    list={`${formIdPrefix}-cohorts-list`}
+                    value={newClassFormData.khoaHoc}
+                    onChange={(e) => setNewClassFormData({ ...newClassFormData, khoaHoc: e.target.value })}
+                    placeholder="Ví dụ: Khóa 2025 (K25)"
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded focus:border-blue-600 focus:outline-none text-slate-900 dark:text-slate-100 text-xs font-mono"
+                  />
+                  <datalist id={`${formIdPrefix}-cohorts-list`}>
+                    {uniqueCohorts.map((c) => (
+                      <option key={c} value={c} />
+                    ))}
+                  </datalist>
+                </div>
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsAddClassModalOpen(false)}
+                  className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 text-xs font-medium cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  className="px-3.5 py-1.5 rounded bg-blue-700 hover:bg-blue-800 text-white font-medium text-xs transition-colors cursor-pointer"
+                >
+                  Tạo lớp mới
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRM DELETE CLASS DIALOG */}
+      <ConfirmDialog
+        isOpen={Boolean(classToDeleteConfirm)}
+        title="Xác nhận xóa sinh viên trong lớp"
+        message="Bạn có chắc chắn muốn xóa toàn bộ sinh viên thuộc lớp học này không? Bản thân lớp học vẫn được giữ lại."
+        confirmLabel="Xóa sinh viên lớp"
+        variant="danger"
+        isSubmitting={isDeletingClass}
+        onCancel={() => setClassToDeleteConfirm(null)}
+        onConfirm={handleExecuteDeleteClass}
+        details={
+          classToDeleteConfirm && (
+            <div className="space-y-1">
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400">Lớp sinh hoạt:</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100">
+                  {classToDeleteConfirm.lopName}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400">Khoa / Viện:</span>
+                <span className="text-slate-800 dark:text-slate-200">{classToDeleteConfirm.faculty}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400">Số lượng xóa:</span>
+                <span className="font-mono font-bold text-rose-600 dark:text-rose-400 tabular-nums">
+                  {classToDeleteConfirm.count} sinh viên
+                </span>
+              </div>
+            </div>
+          )
+        }
+      />
     </div>
   );
 };

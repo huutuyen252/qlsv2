@@ -1,41 +1,60 @@
-import React, { useEffect, useState } from 'react';
+// src/components/reports/ReportsModule.tsx
+// Phân hệ Tổng Quan & Báo Cáo Đào Tạo - Trường ĐH Trần Đại Nghĩa (TDNU EduAdmin)
+// Tuân thủ triệt để nguyên tắc:
+// 1. KHÔNG tự tạo dữ liệu mẫu, không hard-code số liệu. Số liệu 100% từ database thực tế.
+// 2. Trạng thái rỗng (Empty State) trung thực: hiển thị rõ ràng khi chưa có điểm/rèn luyện/học phí.
+// 3. KHÔNG biến hệ thống thành AI app (Không chatbot, robot, Copilot, gradient lòe loẹt).
+// 4. STUDENT DASHBOARD: Tập trung vào học kỳ hiện hành (Học tập, Tình trạng môn học, Rèn luyện theo tháng, Học phí/lệ phí thực tế).
+// 5. ADMIN DASHBOARD: Tổng quan học tập, Rèn luyện tháng hiện tại, Kết quả theo lớp & Mô hình Drill-Down.
+// 6. BÁO CÁO NHANH CHO ADMIN: Chọn phạm vi -> Chọn loại -> Xem trước (Preview A4) -> In/Xuất Excel (.xlsx).
+
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { apiService } from '../../services/apiService';
-import { UserRole, Diem, SinhVien, MonHoc, DiemDanh, ThongBaoKiemTra, ThoiKhoaBieu, HocKy, NamHoc } from '../../types';
+import { triggerPrintWithFallback, downloadPrintableHtml } from '../../utils/printHelper';
+import { ReportView, ReportFilterControl } from './ReportView';
+import {
+  UserRole,
+  Diem,
+  SinhVien,
+  MonHoc,
+  DiemDanh,
+  ThoiKhoaBieu,
+  HocKy,
+  NamHoc,
+  ThiLaiHocLai,
+  RenLuyen,
+} from '../../types';
 import {
   BarChart3,
   Award,
-  PieChart,
-  Printer,
   GraduationCap,
-  TrendingUp,
-  FileCheck,
   Building,
   BookOpen,
   CheckCircle2,
-  XCircle,
-  Calendar,
-  Filter,
-  List,
-  LayoutGrid,
-  ChevronRight,
+  Download,
   Info,
   X,
-  Users,
   FileSpreadsheet,
   ArrowLeft,
-  Download,
-  Eye,
-  Search,
-  Folder,
-  FileText,
-  Table,
+  Printer,
+  ChevronRight,
   ShieldAlert,
-  BellRing,
-  Clock,
-  AlertTriangle,
+  CreditCard,
 } from 'lucide-react';
 import { getAcademicPeriod } from '../../utils/academicCalendar';
+import {
+  PageHeader,
+  MetricStrip,
+  DataToolbar,
+  StatusBadge,
+  PaginationBar,
+  LoadingState,
+  EmptyState,
+  FilteredEmptyState,
+  ErrorBanner,
+  ErrorState,
+} from '../common';
 
 interface ReportsModuleProps {
   userRole?: UserRole;
@@ -47,2592 +66,2390 @@ interface ReportsModuleProps {
   grades?: Diem[];
   schedule?: ThoiKhoaBieu[];
   subjects?: MonHoc[];
-  trainingPoints?: any[];
+  trainingPoints?: RenLuyen[];
+  retakes?: ThiLaiHocLai[];
   onSwitchView?: (view: string) => void;
+  initialTab?: 'DASHBOARD' | 'CLASS_DRILLDOWN' | 'QUICK_REPORT';
+  isLoadingData?: boolean;
+  loadError?: string | null;
+  onRetryLoad?: () => void;
 }
 
-// Data model for classes & training metrics
+// Data model for class metrics
 interface ClassMetricItem {
   maLop: string;
   tenLop: string;
   siSo: number;
   khoa: string;
   covan: string;
-  renLuyenTotal: number; // Combined % Khá + Tốt + Xuất Sắc
-  renLuyenBreakdown: {
-    xuatSac: number;
-    tot: number;
-    kha: number;
-    trungBinh: number;
-    yeuKem: number;
-  };
-  donThiLai: number;
-  thiLaiBreakdown: Array<{ mon: string; soLuong: number; lyDo: string }>;
-  tyLeQuaMon: number;
-  quaMonBreakdown: {
-    loaiA: number; // 8.5 - 10
-    loaiB: number; // 7.0 - 8.4
-    loaiC: number; // 5.5 - 6.9
-    loaiDF: number; // < 5.5
-  };
+  diemTBHocTap: number; // 0-10
+  tyLeQuaMon: number; // 0-100%
+  diemRLLopTB: number; // 0-100
+  soSVCandChuY: number;
 }
-
-const mockClassMetrics: ClassMetricItem[] = [];
 
 export const ReportsModule: React.FC<ReportsModuleProps> = ({
   userRole = 'STUDENT',
   currentStudentCode = '',
   activeSemester = getAcademicPeriod().code,
   semesters = [],
-  academicYears = [],
+  academicYears: _academicYears = [],
   students = [],
   grades = [],
   schedule = [],
   subjects = [],
   trainingPoints = [],
+  retakes = [],
   onSwitchView,
+  initialTab = 'DASHBOARD',
+  isLoadingData = false,
+  loadError = null,
+  onRetryLoad,
 }) => {
-  const allSubjectList = subjects || [];
-  const [summary, setSummary] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [allGrades, setAllGrades] = useState<Diem[]>(grades);
-  const [attendanceList, setAttendanceList] = useState<DiemDanh[]>([]);
-  const [examNotices, setExamNotices] = useState<ThongBaoKiemTra[]>([]);
-  const [selectedSemester, setSelectedSemester] = useState<string>('ALL');
+  const isStudent = userRole === 'STUDENT';
+  const myStudentCode = (currentStudentCode || '').trim().toLowerCase();
+
+  // Active semester breakdown
   const semesterSeparator = activeSemester.indexOf('-');
   const currentActiveSemester = semesterSeparator >= 0 ? activeSemester.slice(0, semesterSeparator) : activeSemester;
   const currentActiveYear = semesterSeparator >= 0 ? activeSemester.slice(semesterSeparator + 1) : '';
 
-  // Filters for Training Indices Section
-  const [filterSemester, setFilterSemester] = useState<string>('ALL');
-  const [filterMonth, setFilterMonth] = useState<string>('ALL');
-  const [selectedClassFilter, setSelectedClassFilter] = useState<string>('ALL');
-  const [adminViewMode, setAdminViewMode] = useState<'OVERVIEW' | 'CLASS_LIST'>('OVERVIEW');
+  // Core State
+  const [loading, setLoading] = useState<boolean>(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [allGrades, setAllGrades] = useState<Diem[]>(grades);
+  const [attendanceList, setAttendanceList] = useState<DiemDanh[]>([]);
 
-  // Modals for details
-  const [activeDetailModal, setActiveDetailModal] = useState<
-    'REN_LUYEN' | 'THI_LAI' | 'QUA_MON' | 'CLASS_DETAIL' | null
-  >(null);
-  const [modalTargetClass, setModalTargetClass] = useState<ClassMetricItem | null>(null);
+  // Navigation mode for Admin: 'DASHBOARD' | 'CLASS_DRILLDOWN' | 'QUICK_REPORT'
+  const [adminTab, setAdminTab] = useState<'DASHBOARD' | 'CLASS_DRILLDOWN' | 'QUICK_REPORT'>(initialTab);
 
-  // State for Admin Class Grade Files Explorer
-  const [selectedAdminClassCode, setSelectedAdminClassCode] = useState<string | null>(null);
-  const [subjectSearchQuery, setSubjectSearchQuery] = useState<string>('');
-  const [subjectGradeSheetModal, setSubjectGradeSheetModal] = useState<{
-    maLop: string;
-    tenLop: string;
-    monHoc: MonHoc;
-    studentGrades: {
-      stt: number;
-      maSV: string;
-      hoTen: string;
-      lop: string;
-      maMH: string;
-      tenMH: string;
-      soTinChi: number;
-      hocKy: string;
-      namHoc: string;
-      diemChuyenCan: number;
-      diemGiuaKy: number;
-      diemCuoiKy: number;
-      diemTongKet10: number;
-      diemThang4: number;
-      diemChu: string;
-      trangThai: 'PASSED' | 'FAILED';
-    }[];
-  } | null>(null);
-  const [modalStudentSearch, setModalStudentSearch] = useState<string>('');
-
-  // Dynamic class metrics calculated strictly from real entered data
-  const dynamicClassMetrics: ClassMetricItem[] = React.useMemo(() => {
-    const map = new Map<string, { maLop: string; tenLop: string; siSo: number; covan: string; khoa: string }>();
-
-    (students || []).forEach((st) => {
-      if (st.lop && !map.has(st.lop)) {
-        map.set(st.lop, {
-          maLop: st.lop,
-          tenLop: `Lớp ${st.lop}`,
-          siSo: (students || []).filter((s) => s.lop === st.lop).length,
-          covan: 'Giảng viên Chủ nhiệm',
-          khoa: st.khoa || 'Khoa Chuyên môn',
-        });
-      }
-    });
-
-    const classItems = Array.from(map.values());
-    if (classItems.length === 0) return [];
-
-    return classItems.map((c) => {
-      const classStudents = (students || []).filter((s) => s.lop === c.maLop);
-      const studentIds = new Set(classStudents.map((s) => s.maSV.toLowerCase()));
-
-      const classGrades = (allGrades || []).filter((g) => {
-        if (!studentIds.has(g.maSV.toLowerCase())) return false;
-        if (filterSemester !== 'ALL' && g.hocKy && g.hocKy !== filterSemester) return false;
-        return true;
-      });
-      const totalGrades = classGrades.length;
-      const passedGrades = classGrades.filter((g) => g.trangThai === 'PASSED').length;
-      const tyLeQuaMon = totalGrades > 0 ? Math.round((passedGrades / totalGrades) * 1000) / 10 : 0;
-
-      const loaiA = totalGrades > 0 ? Math.round((classGrades.filter((g) => g.diemTongKet10 >= 8.5).length / totalGrades) * 1000) / 10 : 0;
-      const loaiB = totalGrades > 0 ? Math.round((classGrades.filter((g) => g.diemTongKet10 >= 7.0 && g.diemTongKet10 < 8.5).length / totalGrades) * 1000) / 10 : 0;
-      const loaiC = totalGrades > 0 ? Math.round((classGrades.filter((g) => g.diemTongKet10 >= 5.5 && g.diemTongKet10 < 7.0).length / totalGrades) * 1000) / 10 : 0;
-      const loaiDF = totalGrades > 0 ? Math.round((classGrades.filter((g) => g.diemTongKet10 < 5.5).length / totalGrades) * 1000) / 10 : 0;
-
-      // Calculate Training Point breakdown for this class filtered by semester & month
-      let rlXS = 0, rlTot = 0, rlKha = 0, rlTB = 0, rlYeuKem = 0;
-      let evaluatedCount = 0;
-
-      if (classStudents.length > 0) {
-        classStudents.forEach((st) => {
-          const stRL = (trainingPoints || []).filter((r) => {
-            if (!r || !r.maSV || r.maSV.toLowerCase() !== st.maSV.toLowerCase()) return false;
-            if (filterSemester !== 'ALL' && r.hocKy && r.hocKy !== filterSemester) return false;
-            if (filterMonth !== 'ALL' && r.thang !== Number(filterMonth)) return false;
-            return true;
-          });
-
-          // ONLY evaluate if actual training point record exists for this student
-          if (stRL.length > 0) {
-            const validScores = stRL.map(r => Number(r.diemRL ?? (r as any).totalScore ?? 0)).filter(s => !isNaN(s) && s > 0);
-            if (validScores.length > 0) {
-              const score = Math.round(validScores.reduce((a, b) => a + b, 0) / validScores.length);
-              evaluatedCount++;
-              if (score >= 90) rlXS++;
-              else if (score >= 80) rlTot++;
-              else if (score >= 70) rlKha++;
-              else if (score >= 50) rlTB++;
-              else rlYeuKem++;
-            }
-          }
-        });
-      }
-
-      const xuatSac = evaluatedCount > 0 ? Math.round((rlXS / evaluatedCount) * 100) : 0;
-      const tot = evaluatedCount > 0 ? Math.round((rlTot / evaluatedCount) * 100) : 0;
-      const kha = evaluatedCount > 0 ? Math.round((rlKha / evaluatedCount) * 100) : 0;
-      const trungBinh = evaluatedCount > 0 ? Math.round((rlTB / evaluatedCount) * 100) : 0;
-      const yeuKem = evaluatedCount > 0 ? Math.round((rlYeuKem / evaluatedCount) * 100) : 0;
-      const renLuyenTotal = evaluatedCount > 0 ? xuatSac + tot + kha : 0;
-
-      return {
-        maLop: c.maLop,
-        tenLop: c.tenLop,
-        siSo: c.siSo,
-        khoa: c.khoa,
-        covan: c.covan,
-        renLuyenTotal,
-        renLuyenBreakdown: { xuatSac, tot, kha, trungBinh, yeuKem },
-        donThiLai: classGrades.filter(g => g.trangThai === 'FAILED').length,
-        thiLaiBreakdown: [],
-        tyLeQuaMon,
-        quaMonBreakdown: { loaiA, loaiB, loaiC, loaiDF },
-      };
-    });
-  }, [students, allGrades, trainingPoints, filterSemester, filterMonth]);
-
-  // Combined unique list of classes
-  const allClassesList = React.useMemo(() => {
-    const map = new Map<string, { maLop: string; tenLop: string; siSo: number; covan: string; khoa: string }>();
-
-    dynamicClassMetrics.forEach((cm) => {
-      map.set(cm.maLop, {
-        maLop: cm.maLop,
-        tenLop: cm.tenLop,
-        siSo: cm.siSo,
-        covan: cm.covan,
-        khoa: cm.khoa,
-      });
-    });
-
-    (students || []).forEach((st) => {
-      if (st.lop && !map.has(st.lop)) {
-        map.set(st.lop, {
-          maLop: st.lop,
-          tenLop: `Lớp Chuyên Ngành ${st.lop}`,
-          siSo: (students || []).filter((s) => s.lop === st.lop).length,
-          covan: 'Giảng viên Chủ nhiệm',
-          khoa: st.khoa || 'Khoa Chuyên môn',
-        });
-      }
-    });
-
-    return Array.from(map.values());
-  }, [students, dynamicClassMetrics]);
-
-  const getSubjectsForClass = (classCode: string) => {
-    const normalizedClass = classCode.trim().toLowerCase();
-    return allSubjectList.filter((subject) => {
-      const subjectClass = subject.lop?.trim().toLowerCase();
-      return !subjectClass || subjectClass === 'all' || subjectClass === normalizedClass;
-    });
-  };
-
-  // Helper to generate or fetch grade sheet for a class & subject
-  const getSubjectGradeListForClass = (maLop: string, monHoc: MonHoc) => {
-    if (!monHoc || !monHoc.maMH) return [];
-    let classStudents = (students || []).filter((s) => s.lop === maLop);
-    if (classStudents.length === 0) {
-      classStudents = (students || []).filter(
-        (s) => s.lop.toLowerCase().includes(maLop.toLowerCase()) || maLop.toLowerCase().includes(s.lop.toLowerCase())
-      );
+  useEffect(() => {
+    setAdminTab(initialTab);
+    if (initialTab !== 'CLASS_DRILLDOWN') {
+      setDrilldownClassCode(null);
+      setDrilldownStudent(null);
     }
+  }, [initialTab]);
 
-    return classStudents.map((st, idx) => {
-      const existing = (allGrades || []).find(
-        (g) => g.maSV.toLowerCase() === st.maSV.toLowerCase() && g.maMH === monHoc.maMH
-      );
+  // Filter States for Admin Dashboard
+  const [filterSemester, setFilterSemester] = useState<string>('ALL');
+  const [filterMonth, setFilterMonth] = useState<string>(() => String(new Date().getMonth() + 1));
+  const [filterFaculty, setFilterFaculty] = useState<string>('ALL');
+  const [selectedClassFilter, setSelectedClassFilter] = useState<string>('ALL');
 
-      if (existing) {
-        return {
-          stt: idx + 1,
-          maSV: st.maSV,
-          hoTen: st.hoTen,
-          lop: maLop,
-          maMH: monHoc.maMH,
-          tenMH: monHoc.tenMH,
-          soTinChi: monHoc.soTinChi,
-          hocKy: existing.hocKy || 'HK1',
-          namHoc: existing.namHoc || '2025-2026',
-          diemChuyenCan: existing.diemChuyenCan,
-          diemGiuaKy: existing.diemGiuaKy,
-          diemCuoiKy: existing.diemCuoiKy,
-          diemTongKet10: existing.diemTongKet10,
-          diemThang4: existing.diemThang4,
-          diemChu: existing.diemChu,
-          trangThai: existing.trangThai,
-        };
+  // Drill-down State (Level 2: Selected Class, Level 3: Selected Student)
+  const [drilldownClassCode, setDrilldownClassCode] = useState<string | null>(null);
+  const [drilldownStudent, setDrilldownStudent] = useState<SinhVien | null>(null);
+
+  // Quick Report Generator State
+  const [reportScopeSemester, setReportScopeSemester] = useState<string>('ALL');
+  const [reportScopeFaculty, setReportScopeFaculty] = useState<string>('ALL');
+  const [reportScopeClass, setReportScopeClass] = useState<string>('ALL');
+  const [reportScopeMonth, setReportScopeMonth] = useState<string>(() => String(new Date().getMonth() + 1));
+  const [reportType, setReportType] = useState<'ACADEMIC' | 'TRAINING' | 'ATTENTION' | 'RETAKES_FEES'>('ACADEMIC');
+  const [reportUnitName, setReportUnitName] = useState<string>('PHÒNG ĐÀO TẠO VÀ QUẢN LÝ SINH VIÊN');
+  const [reportDocumentCode, setReportDocumentCode] = useState<string>('');
+  const [showReportSignatures, setShowReportSignatures] = useState<boolean>(true);
+  const [reporterTitle, setReporterTitle] = useState<string>('NGƯỜI LẬP BÁO CÁO');
+  const [reporterName, setReporterName] = useState<string>('');
+  const [managerTitle, setManagerTitle] = useState<string>('TRƯỞNG PHÒNG ĐÀO TẠO');
+  const [managerName, setManagerName] = useState<string>('');
+  const [printNotice, setPrintNotice] = useState<string | null>(null);
+  const printPageRef = useRef<HTMLDivElement>(null);
+
+  // Search query & Pagination states
+  const [searchStudentQuery, setSearchStudentQuery] = useState<string>('');
+  const [classSearchQuery, setClassSearchQuery] = useState<string>('');
+  const [attentionPage, setAttentionPage] = useState<number>(1);
+  const [attentionPageSize, setAttentionPageSize] = useState<number>(10);
+  const [classPage, setClassPage] = useState<number>(1);
+  const [classPageSize, setClassPageSize] = useState<number>(10);
+  const [drilldownPage, setDrilldownPage] = useState<number>(1);
+  const [drilldownPageSize, setDrilldownPageSize] = useState<number>(10);
+
+  // Escape handler for Drilldown modal
+  useEffect(() => {
+    if (!drilldownStudent) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDrilldownStudent(null);
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [drilldownStudent]);
+
+  // Initial Data Fetching
+  const fetchData = async () => {
+    setLoading(true);
+    setFetchError(null);
+    try {
+      const [resAtt, resGrades] = await Promise.all([
+        apiService.getAttendance(),
+        grades.length > 0 ? Promise.resolve({ success: true, data: grades }) : apiService.getGrades(),
+      ]);
+      if (resAtt?.success && resAtt.data) setAttendanceList(resAtt.data);
+      if (resGrades?.success && resGrades.data) {
+        setAllGrades(resGrades.data);
+      } else if (!resGrades?.success) {
+        const errMsg =
+          resGrades && 'message' in resGrades && typeof (resGrades as { message?: unknown }).message === 'string'
+            ? (resGrades as { message: string }).message
+            : undefined;
+        setFetchError(errMsg || 'Không thể tải dữ liệu điểm số.');
       }
-
-      return {
-        stt: idx + 1,
-        maSV: st.maSV,
-        hoTen: st.hoTen,
-        lop: maLop,
-        maMH: monHoc.maMH,
-        tenMH: monHoc.tenMH,
-        soTinChi: monHoc.soTinChi,
-        hocKy: 'HK1',
-        namHoc: '2025-2026',
-        diemChuyenCan: 0,
-        diemGiuaKy: 0,
-        diemCuoiKy: 0,
-        diemTongKet10: 0,
-        diemThang4: 0,
-        diemChu: 'F',
-        trangThai: 'FAILED' as const,
-      };
-    });
-  };
-
-  // Helper to export Excel
-  const handleExportSubjectExcel = (maLop: string, monHoc: MonHoc, studentGrades: any[]) => {
-    const exportData = studentGrades.map((g) => ({
-      'STT': g.stt,
-      'Mã Sinh Viên': g.maSV,
-      'Họ và Tên': g.hoTen,
-      'Lớp Học': g.lop || maLop,
-      'Mã Môn Học': g.maMH,
-      'Tên Môn Học': g.tenMH,
-      'Số Tín Chỉ': g.soTinChi,
-      'Học Kỳ': g.hocKy,
-      'Năm Học': g.namHoc,
-      'Chuyên Cần (10%)': g.diemChuyenCan,
-      'Giữa Kỳ (30%)': g.diemGiuaKy,
-      'Cuối Kỳ (60%)': g.diemCuoiKy,
-      'Điểm Tổng Kết (10)': g.diemTongKet10,
-      'Điểm Thang 4': g.diemThang4,
-      'Điểm Chữ': g.diemChu,
-      'Kết Quả': g.trangThai === 'PASSED' ? 'ĐẠT' : 'KHÔNG ĐẠT',
-    }));
-
-    const worksheet = XLSX.utils.json_to_sheet(exportData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, `BangDiem_${monHoc.maMH}`);
-    XLSX.writeFile(workbook, `BangDiem_${maLop}_${monHoc.maMH}.xlsx`);
+    } catch {
+      setFetchError('Không thể kết nối máy chủ khi tải dữ liệu báo cáo.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    loadSummary();
-    loadAttendanceAndNotices();
-    if (grades && grades.length > 0) {
-      setAllGrades(grades);
-    } else {
-      loadGrades();
-    }
+    let isMounted = true;
+    const load = async () => {
+      if (!isMounted) return;
+      await fetchData();
+    };
+    load();
 
     const handleUpdate = () => {
-      loadAttendanceAndNotices();
-      loadSummary();
+      if (isMounted) fetchData();
     };
     window.addEventListener('app-data-updated', handleUpdate);
     window.addEventListener('attendance-updated', handleUpdate);
     window.addEventListener('exam-notices-updated', handleUpdate);
     return () => {
+      isMounted = false;
       window.removeEventListener('app-data-updated', handleUpdate);
       window.removeEventListener('attendance-updated', handleUpdate);
       window.removeEventListener('exam-notices-updated', handleUpdate);
     };
-  }, [grades, userRole, activeSemester, currentStudentCode]);
+  }, [grades, activeSemester]);
 
-  const loadAttendanceAndNotices = async () => {
-    try {
-      const [resAtt, resNotices] = await Promise.all([
-        apiService.getAttendance(),
-        apiService.getExamNotices(),
-      ]);
-      if (resAtt.success && resAtt.data) setAttendanceList(resAtt.data);
-      if (resNotices.success && resNotices.data) setExamNotices(resNotices.data);
-    } catch {
-      console.log('Using initial attendance/notices fallback');
-    }
-  };
+  // Dynamic Faculties
+  const uniqueFaculties = useMemo(() => {
+    const set = new Set<string>();
+    (students || []).forEach((s) => s.khoa && set.add(s.khoa));
+    return Array.from(set).sort();
+  }, [students]);
 
-  const loadGrades = async () => {
-    const res = await apiService.getGrades();
-    if (res.success && res.data) {
-      setAllGrades(res.data);
-    }
-  };
+  // Dynamic Classes (scoped by faculty for dashboard & quick report)
+  const uniqueClasses = useMemo(() => {
+    const set = new Set<string>();
+    (students || []).forEach((s) => {
+      if (filterFaculty !== 'ALL' && s.khoa !== filterFaculty) return;
+      if (s.lop) set.add(s.lop);
+    });
+    return Array.from(set).sort();
+  }, [students, filterFaculty]);
 
-  const loadSummary = async () => {
-    setLoading(true);
-    const res = await apiService.getSummaryReport();
-    if (res.success && res.summary) {
-      setSummary(res.summary);
-    }
-    setLoading(false);
-  };
+  const reportUniqueClasses = useMemo(() => {
+    const set = new Set<string>();
+    (students || []).forEach((s) => {
+      if (reportScopeFaculty !== 'ALL' && s.khoa !== reportScopeFaculty) return;
+      if (s.lop) set.add(s.lop);
+    });
+    return Array.from(set).sort();
+  }, [students, reportScopeFaculty]);
 
-  const handlePrint = () => {
-    window.print();
-  };
-
-  const isStudent = userRole === 'STUDENT';
-  const myStudentCode = currentStudentCode.toLowerCase();
-
-  // Find student profile if student role
-  const currentStudent = students.find(
-    (s) => s.maSV.toLowerCase() === myStudentCode
-  );
-
-  // Class for current student
-  const studentClassCode = currentStudent?.lop || '';
-  const createDefaultClassMetric = (classCode: string, faculty?: string): ClassMetricItem => ({
-    maLop: classCode || 'Chưa phân lớp',
-    tenLop: classCode ? (classCode.startsWith('Lớp') ? classCode : `Lớp ${classCode}`) : 'Chưa phân lớp',
-    siSo: (students || []).filter((s) => s.lop === classCode).length,
-    khoa: faculty || currentStudent?.khoa || 'Khoa Chuyên môn',
-    covan: 'Giảng viên Chủ nhiệm',
-    renLuyenTotal: 100,
-    renLuyenBreakdown: {
-      xuatSac: 0,
-      tot: 0,
-      kha: 0,
-      trungBinh: 0,
-      yeuKem: 0,
-    },
-    donThiLai: 0,
-    thiLaiBreakdown: [],
-    tyLeQuaMon: 100,
-    quaMonBreakdown: {
-      loaiA: 0,
-      loaiB: 0,
-      loaiC: 0,
-      loaiDF: 0,
-    },
-  });
-
-  const foundClassMetric = dynamicClassMetrics.find((c) => c.maLop === studentClassCode);
-  const studentClassItem: ClassMetricItem =
-    foundClassMetric || createDefaultClassMetric(studentClassCode, currentStudent?.khoa);
-
-  // Effective class filter (strictly locked to student class if STUDENT role)
-  const effectiveClassFilter = isStudent ? studentClassCode : selectedClassFilter;
-
-  // Calculate dynamic academic standing (GPA 4.0 scale) from recorded grades
-  const dynamicAcademicStanding = React.useMemo(() => {
-    let xuatSac = 0, gioi = 0, kha = 0, tbk = 0, trungBinh = 0, yeu = 0, kem = 0, chuaCoDiem = 0;
-    const targetStudents = effectiveClassFilter !== 'ALL'
-      ? (students || []).filter((s) => s.lop === effectiveClassFilter)
-      : (students || []);
-
-    targetStudents.forEach((s) => {
-      const sGrades = (allGrades || []).filter((g) => g.maSV.toLowerCase() === s.maSV.toLowerCase());
-      if (sGrades.length > 0) {
-        const totalW = sGrades.reduce((sum, g) => sum + (g.diemThang4 || 0) * (g.soTinChi || 3), 0);
-        const totalC = sGrades.reduce((sum, g) => sum + (g.soTinChi || 3), 0);
-        const gpa = totalC > 0 ? totalW / totalC : 0;
-
-        if (gpa >= 3.60) xuatSac++;
-        else if (gpa >= 3.20) gioi++;
-        else if (gpa >= 2.80) kha++;
-        else if (gpa >= 2.40) tbk++;
-        else if (gpa >= 2.00) trungBinh++;
-        else if (gpa >= 1.00) yeu++;
-        else kem++;
-      } else {
-        chuaCoDiem++;
+  // Dynamic Semesters from HocKy table + Grade records
+  const availableSemesters = useMemo(() => {
+    const map = new Map<string, string>();
+    (semesters || []).forEach((hk) => {
+      if (hk.hocKyID) {
+        map.set(hk.hocKyID, hk.tenHocKy ? `${hk.tenHocKy} (${hk.hocKyID})` : hk.hocKyID);
       }
     });
-
-    return {
-      xuatSac,
-      gioi,
-      kha,
-      tbk,
-      trungBinh,
-      yeu,
-      kem,
-      chuaCoDiem,
-      totalCount: targetStudents.length,
-    };
-  }, [students, allGrades, effectiveClassFilter]);
-
-  const standing = dynamicAcademicStanding;
-  const totalSt = dynamicAcademicStanding.totalCount;
-
-  // Filter grades for current student if STUDENT role
-  const studentGrades = isStudent
-    ? allGrades.filter((g) => g.maSV.toLowerCase() === myStudentCode)
-    : allGrades;
-
-  // Real-time current semester grades for student (strictly for the current active semester & academic year)
-  const currentRealtimeGrades = React.useMemo(() => {
-    return studentGrades.filter((g) => {
-      const sem = (g.hocKy || '').trim().toLowerCase();
-      const currSem = currentActiveSemester.trim().toLowerCase();
-      const matchesSemester =
-        sem === currSem || sem === `hk${currSem}` || currSem === `hk${sem}`;
-      const matchesYear =
-        !currentActiveYear || !g.namHoc || g.namHoc.trim() === currentActiveYear.trim();
-      return matchesSemester && matchesYear;
+    (allGrades || []).forEach((g) => {
+      if (g.hocKy && !map.has(g.hocKy)) {
+        map.set(g.hocKy, g.hocKy);
+      }
     });
-  }, [studentGrades, currentActiveSemester, currentActiveYear]);
+    return Array.from(map.entries()).map(([value, label]) => ({ value, label }));
+  }, [semesters, allGrades]);
 
-  // Historical grades from past semesters/years stored in Bảng điểm & GPA
-  const historicalOldGrades = React.useMemo(() => {
-    const currentIds = new Set(currentRealtimeGrades.map((g) => g.id));
-    return studentGrades.filter((g) => !currentIds.has(g.id));
-  }, [studentGrades, currentRealtimeGrades]);
+  // Dynamic Months from Training Points + Current Month
+  const availableMonths = useMemo(() => {
+    const set = new Set<number>();
+    set.add(new Date().getMonth() + 1);
+    (trainingPoints || []).forEach((r) => {
+      if (typeof r.thang === 'number' && r.thang >= 1 && r.thang <= 12) {
+        set.add(r.thang);
+      }
+    });
+    return Array.from(set).sort((a, b) => a - b);
+  }, [trainingPoints]);
 
-  // Semesters list for student grade table
-  const availableSemesters = Array.from(
-    new Set(studentGrades.map((g) => `${g.hocKy} (${g.namHoc})`))
-  );
+  // =========================================================================
+  // 1. STUDENT METRICS & LOGIC (STUDENT DASHBOARD)
+  // =========================================================================
+  const currentStudentObj = useMemo(() => {
+    if (!isStudent || !myStudentCode) return null;
+    return (students || []).find((s) => s.maSV.toLowerCase() === myStudentCode);
+  }, [isStudent, myStudentCode, students]);
 
-  // Filter student grades by selected semester
-  const filteredGradesList = studentGrades.filter((g) => {
-    if (selectedSemester === 'ALL') return true;
-    return `${g.hocKy} (${g.namHoc})` === selectedSemester;
-  });
-
-  // Calculate student course progress, absence rate (>10% and >=20%), and exam notices for student (Filtered for current ongoing semester)
-  const studentCourseProgressList = React.useMemo(() => {
+  // Student's grades in active semester
+  const studentActiveSemesterGrades = useMemo(() => {
     if (!isStudent || !myStudentCode) return [];
+    return (allGrades || []).filter((g) => {
+      if (g.maSV.toLowerCase() !== myStudentCode) return false;
+      if (currentActiveSemester && g.hocKy) {
+        return g.hocKy === currentActiveSemester || g.hocKy.includes(currentActiveSemester);
+      }
+      return true;
+    });
+  }, [isStudent, myStudentCode, allGrades, currentActiveSemester]);
 
-    const enrolledMap = new Map<string, { maMH: string; tenMH: string; soTinChi: number; giangVien: string; hocKy?: string }>();
+  // Student's registered courses in active semester from schedule & grades
+  const studentActiveSemesterCourses = useMemo(() => {
+    if (!isStudent) return [];
+    const courseMap = new Map<
+      string,
+      {
+        maMH: string;
+        tenMH: string;
+        soTinChi: number;
+        giangVien: string;
+        diem?: Diem;
+        missedPeriods: number;
+        totalPeriods: number;
+        absencePct: number;
+      }
+    >();
 
-    // 1. From Schedule - filter strictly by current ongoing semester (currentActiveSemester)
+    // 1. From Schedule
     (schedule || []).forEach((sch) => {
-      const schHocKy = sch.hocKy || 'HK1';
-      if (schHocKy === currentActiveSemester || schHocKy.includes(currentActiveSemester)) {
-        if (sch.maMH && !enrolledMap.has(sch.maMH)) {
-          enrolledMap.set(sch.maMH, {
+      const matchesStudent = sch.maSV && sch.maSV.toLowerCase() === myStudentCode;
+      const matchesLop = sch.lop && currentStudentObj?.lop && sch.lop.toLowerCase() === currentStudentObj.lop.toLowerCase();
+      const matchesHk = !sch.hocKy || sch.hocKy === currentActiveSemester || sch.hocKy.includes(currentActiveSemester);
+
+      if ((matchesStudent || matchesLop) && matchesHk && sch.maMH) {
+        if (!courseMap.has(sch.maMH)) {
+          courseMap.set(sch.maMH, {
             maMH: sch.maMH,
             tenMH: sch.tenMH || sch.maMH,
             soTinChi: sch.soTinChi || 3,
-            giangVien: sch.giangVien || 'Giảng viên Bộ môn',
-            hocKy: schHocKy,
+            giangVien: sch.giangVien || 'Khoa phân công',
+            missedPeriods: 0,
+            totalPeriods: (sch.soTinChi || 3) * 15,
+            absencePct: 0,
           });
         }
       }
     });
 
-    // 2. Load/supplement from allSubjectList so ALL imported subjects are displayed
-    const normalizedStudentClass = currentStudent?.lop?.trim().toLowerCase() || '';
-    const targetSubjects = allSubjectList.filter((mh) => {
-      const matchesClass = !mh.lop || mh.lop === 'ALL' ||
-        (!normalizedStudentClass || mh.lop.trim().toLowerCase() === normalizedStudentClass);
-      const matchesSemester = !mh.hocKy || mh.hocKy.trim().toLowerCase() === currentActiveSemester.trim().toLowerCase();
-      const matchesYear = !currentActiveYear || !mh.namHoc || mh.namHoc.trim() === currentActiveYear.trim();
-      return matchesClass && matchesSemester && matchesYear;
-    });
-    const subjectsToUse = targetSubjects;
-
-    subjectsToUse.forEach((mh) => {
-      if (!enrolledMap.has(mh.maMH)) {
-        enrolledMap.set(mh.maMH, {
-          maMH: mh.maMH,
-          tenMH: mh.tenMH,
-          soTinChi: mh.soTinChi || 3,
-          giangVien: 'Giảng viên Phụ trách',
-          hocKy: mh.hocKy || currentActiveSemester,
-        });
+    // 2. From Subjects (if student class matches)
+    (subjects || []).forEach((sub) => {
+      const matchesLop = !sub.lop || sub.lop === 'all' || (currentStudentObj?.lop && sub.lop.toLowerCase() === currentStudentObj.lop.toLowerCase());
+      const matchesHk = !sub.hocKy || sub.hocKy === currentActiveSemester;
+      if (matchesLop && matchesHk && sub.maMH) {
+        if (!courseMap.has(sub.maMH)) {
+          courseMap.set(sub.maMH, {
+            maMH: sub.maMH,
+            tenMH: sub.tenMH,
+            soTinChi: sub.soTinChi || 3,
+            giangVien: 'Khoa phân công',
+            missedPeriods: 0,
+            totalPeriods: (sub.soTinChi || 3) * 15,
+            absencePct: 0,
+          });
+        }
       }
     });
 
-    // 3. Include any additional subjects in studentGrades
-    studentGrades
-      .filter((g) => g.hocKy?.trim().toLowerCase() === currentActiveSemester.trim().toLowerCase())
-      .filter((g) => !currentActiveYear || g.namHoc?.trim() === currentActiveYear.trim())
-      .forEach((g) => {
-      if (g.maMH && !enrolledMap.has(g.maMH)) {
-        enrolledMap.set(g.maMH, {
+    // 3. Attach Grades & Attendance
+    const studentAtt = (attendanceList || []).filter((a) => a.maSV?.toLowerCase() === myStudentCode);
+
+    courseMap.forEach((item, maMH) => {
+      const matchingGrade = studentActiveSemesterGrades.find((g) => g.maMH === maMH);
+      if (matchingGrade) {
+        item.diem = matchingGrade;
+        if (matchingGrade.tenMH) item.tenMH = matchingGrade.tenMH;
+        if (matchingGrade.soTinChi) {
+          item.soTinChi = matchingGrade.soTinChi;
+          item.totalPeriods = matchingGrade.soTinChi * 15;
+        }
+      }
+
+      const attRecords = studentAtt.filter((a) => a.maMH === maMH);
+      const missed = attRecords.reduce((sum, r) => sum + (r.soTietNghi || 0), 0);
+      item.missedPeriods = missed;
+      item.absencePct = item.totalPeriods > 0 ? (missed / item.totalPeriods) * 100 : 0;
+    });
+
+    // Also include any courses that have grades but were not in schedule
+    studentActiveSemesterGrades.forEach((g) => {
+      if (!courseMap.has(g.maMH)) {
+        const totalPeriods = (g.soTinChi || 3) * 15;
+        const attRecords = studentAtt.filter((a) => a.maMH === g.maMH);
+        const missed = attRecords.reduce((sum, r) => sum + (r.soTietNghi || 0), 0);
+        courseMap.set(g.maMH, {
           maMH: g.maMH,
           tenMH: g.tenMH || g.maMH,
           soTinChi: g.soTinChi || 3,
-          giangVien: 'Giảng viên Bộ môn',
-          hocKy: g.hocKy || currentActiveSemester,
-        });
-      }
-      });
-
-    const svAtt = attendanceList.filter((a) => a.maSV?.toLowerCase() === myStudentCode?.toLowerCase());
-
-    // 4. Ensure all subjects having attendance records for this student are added to enrolledMap
-    svAtt.forEach((a) => {
-      if (a.maMH && !enrolledMap.has(a.maMH)) {
-        enrolledMap.set(a.maMH, {
-          maMH: a.maMH,
-          tenMH: a.tenMH || a.maMH,
-          soTinChi: 3,
-          giangVien: a.nguoiDiemDanh || 'Giảng viên Bộ môn',
-          hocKy: currentActiveSemester,
+          giangVien: 'Khoa phân công',
+          diem: g,
+          missedPeriods: missed,
+          totalPeriods,
+          absencePct: totalPeriods > 0 ? (missed / totalPeriods) * 100 : 0,
         });
       }
     });
 
-    // 5. Fallback: if enrolledMap is still empty, include all courses from schedule for student
-    if (enrolledMap.size === 0) {
-      (schedule || []).forEach((sch) => {
-        if (sch.maMH && !enrolledMap.has(sch.maMH)) {
-          enrolledMap.set(sch.maMH, {
-            maMH: sch.maMH,
-            tenMH: sch.tenMH || sch.maMH,
-            soTinChi: sch.soTinChi || 3,
-            giangVien: sch.giangVien || 'Giảng viên Bộ môn',
-            hocKy: sch.hocKy || currentActiveSemester,
-          });
-        }
-      });
+    return Array.from(courseMap.values());
+  }, [isStudent, myStudentCode, schedule, subjects, currentStudentObj, currentActiveSemester, studentActiveSemesterGrades, attendanceList]);
+
+  // Student Academic Stats (Học tập học kỳ hiện tại)
+  const studentAcademicSummary = useMemo(() => {
+    if (!isStudent) return null;
+    const courses = studentActiveSemesterCourses;
+    const coursesWithGrades = courses.filter((c) => c.diem && typeof c.diem.diemTongKet10 === 'number' && !isNaN(c.diem.diemTongKet10));
+
+    const totalRegisteredCredits = courses.reduce((sum, c) => sum + c.soTinChi, 0);
+
+    if (coursesWithGrades.length === 0) {
+      return {
+        hasGrades: false,
+        totalRegisteredCredits,
+        passedCredits: 0,
+        gpa10: null,
+        gpa4: null,
+        academicStanding: 'Chưa có điểm',
+        passedCoursesCount: 0,
+        totalCoursesCount: courses.length,
+      };
     }
 
-    return Array.from(enrolledMap.values()).map((course) => {
-      const credits = course.soTinChi || 3;
-      const totalPeriods = credits * 15; // 1 tín chỉ = 15 tiết
+    let weighted10 = 0;
+    let weighted4 = 0;
+    let gradedCredits = 0;
+    let passedCredits = 0;
+    let passedCoursesCount = 0;
 
-      const courseAtt = svAtt.filter((a) => a.maMH === course.maMH);
-      const missedPeriods = courseAtt.reduce((acc, curr) => acc + (curr.soTietNghi || 0), 0);
+    coursesWithGrades.forEach((c) => {
+      const g = c.diem!;
+      const credits = c.soTinChi;
+      weighted10 += (g.diemTongKet10 || 0) * credits;
+      weighted4 += (g.diemThang4 || 0) * credits;
+      gradedCredits += credits;
 
-      const absencePercentage = (missedPeriods / totalPeriods) * 100;
-      const attendedPeriods = Math.max(0, totalPeriods - missedPeriods);
-      const attendanceRate = (attendedPeriods / totalPeriods) * 100;
-
-      const gradeObj = studentGrades.find((g) => g.maMH === course.maMH);
-
-      const isWarning10 = absencePercentage >= 10 && absencePercentage < 20;
-      const isDanger20 = absencePercentage >= 20;
-
-      return {
-        ...course,
-        totalPeriods,
-        missedPeriods,
-        absencePercentage,
-        attendedPeriods,
-        attendanceRate,
-        gradeObj,
-        isWarning10,
-        isDanger20,
-      };
-    });
-  }, [isStudent, myStudentCode, schedule, attendanceList, studentGrades, currentActiveSemester, currentActiveYear, allSubjectList, currentStudent?.lop]);
-
-  // Filter list of subjects with absence >= 10%
-  const studentAbsenceWarnings10 = React.useMemo(() => {
-    return studentCourseProgressList.filter((item) => item.absencePercentage >= 10);
-  }, [studentCourseProgressList]);
-
-  // Exam notices for student's subjects (upcoming week)
-  const studentExamNotices = React.useMemo(() => {
-    if (!isStudent) return [];
-    const courseCodes = new Set(studentCourseProgressList.map((c) => c.maMH));
-    (schedule || []).forEach((s) => s.maMH && courseCodes.add(s.maMH));
-    (allSubjectList || []).forEach((s) => s.maMH && courseCodes.add(s.maMH));
-    (attendanceList || []).filter((a) => a.maSV?.toLowerCase() === myStudentCode?.toLowerCase()).forEach((a) => a.maMH && courseCodes.add(a.maMH));
-
-    return (examNotices || []).filter((notice) => {
-      if (!notice.maMH) return true;
-      if (courseCodes.size === 0) return true;
-      return courseCodes.has(notice.maMH);
-    });
-  }, [isStudent, studentCourseProgressList, examNotices, schedule, allSubjectList, attendanceList, myStudentCode]);
-
-  // Semesters list derived strictly from actual entered data
-  const availableReportSemesters = React.useMemo(() => {
-    const semSet = new Set<string>();
-    (trainingPoints || []).forEach((r) => {
-      if (r && r.hocKy) semSet.add(r.hocKy.trim());
-    });
-    (allGrades || []).forEach((g) => {
-      if (g && g.hocKy) semSet.add(g.hocKy.trim());
-    });
-    (schedule || []).forEach((s) => {
-      if (s && s.hocKy) semSet.add(s.hocKy.trim());
-    });
-    return Array.from(semSet).sort();
-  }, [trainingPoints, allGrades, schedule]);
-
-  // Month list based on filterSemester derived strictly from real trainingPoints data
-  const availableReportMonths = React.useMemo(() => {
-    const monthMap = new Map<number, string>();
-    (trainingPoints || []).forEach((r) => {
-      if (r && r.thang) {
-        if (filterSemester === 'ALL' || !r.hocKy || r.hocKy === filterSemester) {
-          monthMap.set(Number(r.thang), `Tháng ${r.thang}`);
-        }
+      if (g.trangThai === 'PASSED' || (g.diemTongKet10 || 0) >= 4.0) {
+        passedCredits += credits;
+        passedCoursesCount++;
       }
     });
-    const sorted = Array.from(monthMap.keys()).sort((a, b) => a - b);
-    return sorted.map((m) => ({ value: String(m), label: `Tháng ${m}` }));
-  }, [trainingPoints, filterSemester]);
 
-  // Compute stats based on effective class filter
-  const activeClassItem: ClassMetricItem | null =
-    effectiveClassFilter !== 'ALL'
-      ? dynamicClassMetrics.find((c) => c.maLop === effectiveClassFilter) || (isStudent ? studentClassItem : createDefaultClassMetric(effectiveClassFilter))
-      : null;
+    const gpa10 = gradedCredits > 0 ? Math.round((weighted10 / gradedCredits) * 100) / 100 : 0;
+    const gpa4 = gradedCredits > 0 ? Math.round((weighted4 / gradedCredits) * 100) / 100 : 0;
 
-  // Calculate overall Training Point breakdown when ALL classes selected
-  const overallRenLuyenBreakdown = React.useMemo(() => {
-    let rlXS = 0, rlTot = 0, rlKha = 0, rlTB = 0, rlYeuKem = 0;
-    let evaluatedCount = 0;
-    const allSt = students || [];
-    if (allSt.length > 0) {
-      allSt.forEach((st) => {
-        const stRL = (trainingPoints || []).filter((r) => {
-          if (!r || !r.maSV || r.maSV.toLowerCase() !== st.maSV.toLowerCase()) return false;
-          if (filterSemester !== 'ALL' && r.hocKy && r.hocKy !== filterSemester) return false;
-          if (filterMonth !== 'ALL' && r.thang !== Number(filterMonth)) return false;
+    let academicStanding = 'Chưa có điểm';
+    if (gpa10 >= 9.0) academicStanding = 'Xuất sắc';
+    else if (gpa10 >= 8.0) academicStanding = 'Giỏi';
+    else if (gpa10 >= 7.0) academicStanding = 'Khá';
+    else if (gpa10 >= 5.5) academicStanding = 'Trung bình';
+    else if (gpa10 >= 4.0) academicStanding = 'Yếu';
+    else academicStanding = 'Kém';
+
+    return {
+      hasGrades: true,
+      totalRegisteredCredits,
+      passedCredits,
+      gpa10,
+      gpa4,
+      academicStanding,
+      passedCoursesCount,
+      totalCoursesCount: courses.length,
+    };
+  }, [isStudent, studentActiveSemesterCourses]);
+
+  // Student Training Points by Month
+  const studentTrainingData = useMemo(() => {
+    if (!isStudent || !myStudentCode) return { currentMonthRecord: null, recentHistory: [], allRecords: [] };
+    const myRecords = (trainingPoints || []).filter(
+      (r) => r.maSV && r.maSV.toLowerCase() === myStudentCode
+    );
+
+    const now = new Date();
+    const currM = now.getMonth() + 1;
+    const currY = now.getFullYear();
+
+    // Check if record exists for current month
+    const currentMonthRecord = myRecords.find((r) => r.thang === currM && (!r.nam || r.nam === currY)) || null;
+
+    // Sort recent history descending
+    const sorted = [...myRecords].sort((a, b) => {
+      const yA = a.nam || currY;
+      const yB = b.nam || currY;
+      if (yA !== yB) return yB - yA;
+      return (b.thang || 0) - (a.thang || 0);
+    });
+
+    return {
+      currentMonthRecord,
+      recentHistory: sorted.slice(0, 5),
+      allRecords: sorted,
+    };
+  }, [isStudent, myStudentCode, trainingPoints]);
+
+  // Student Tuition & Retake Fees
+  const studentTuitionData = useMemo(() => {
+    if (!isStudent || !myStudentCode) return { hasData: false, totalFee: 0, retakeItems: [] };
+    const myRetakes = (retakes || []).filter(
+      (r) => r.maSV && r.maSV.toLowerCase() === myStudentCode
+    );
+
+    const totalFee = myRetakes.reduce((sum, r) => sum + (r.phiDiem || 0), 0);
+    return {
+      hasData: myRetakes.length > 0,
+      totalFee,
+      retakeItems: myRetakes,
+    };
+  }, [isStudent, myStudentCode, retakes]);
+
+  // =========================================================================
+  // 2. ADMIN METRICS & LOGIC (ADMIN DASHBOARD)
+  // =========================================================================
+
+  // Scope filter students
+  const filteredStudents = useMemo(() => {
+    return (students || []).filter((s) => {
+      if (filterFaculty !== 'ALL' && s.khoa !== filterFaculty) return false;
+      if (selectedClassFilter !== 'ALL' && s.lop !== selectedClassFilter) return false;
+      return true;
+    });
+  }, [students, filterFaculty, selectedClassFilter]);
+
+  const filteredStudentIds = useMemo(() => {
+    return new Set(filteredStudents.map((s) => s.maSV.toLowerCase()));
+  }, [filteredStudents]);
+
+  // Scope filter grades
+  const filteredGrades = useMemo(() => {
+    return (allGrades || []).filter((g) => {
+      if (!filteredStudentIds.has(g.maSV.toLowerCase())) return false;
+      if (filterSemester !== 'ALL' && g.hocKy && g.hocKy !== filterSemester) return false;
+      return true;
+    });
+  }, [allGrades, filteredStudentIds, filterSemester]);
+
+  // Academic Overview KPIs (100% real math, no mock)
+  const adminAcademicKPIs = useMemo(() => {
+    const totalStudents = filteredStudents.length;
+    const totalGrades = filteredGrades.length;
+
+    if (totalGrades === 0) {
+      return {
+        totalStudents,
+        totalClasses: new Set(filteredStudents.map((s) => s.lop).filter(Boolean)).size,
+        avgGPA10: null,
+        passRate: null,
+        passedGradesCount: 0,
+        failedGradesCount: 0,
+        totalGradesCount: 0,
+      };
+    }
+
+    const passedGrades = filteredGrades.filter(
+      (g) => g.trangThai === 'PASSED' || (typeof g.diemTongKet10 === 'number' && g.diemTongKet10 >= 4.0)
+    );
+    const failedGrades = filteredGrades.filter(
+      (g) => g.trangThai === 'FAILED' || (typeof g.diemTongKet10 === 'number' && g.diemTongKet10 < 4.0)
+    );
+
+    const sum10 = filteredGrades.reduce((sum, g) => sum + (g.diemTongKet10 || 0), 0);
+    const avgGPA10 = Math.round((sum10 / totalGrades) * 100) / 100;
+    const passRate = Math.round((passedGrades.length / totalGrades) * 1000) / 10;
+
+    return {
+      totalStudents,
+      totalClasses: new Set(filteredStudents.map((s) => s.lop).filter(Boolean)).size,
+      avgGPA10,
+      passRate,
+      passedGradesCount: passedGrades.length,
+      failedGradesCount: failedGrades.length,
+      totalGradesCount: totalGrades,
+    };
+  }, [filteredStudents, filteredGrades]);
+
+  // Attention cases (Students needing attention: failed subjects, high absences >= 10%, or low training points < 50)
+  const attentionStudentsList = useMemo(() => {
+    const list: Array<{
+      maSV: string;
+      hoTen: string;
+      lop: string;
+      khoa: string;
+      failedSubjectsCount: number;
+      missedPeriodsTotal: number;
+      hasAbsenceDanger: boolean;
+      trainingScoreRecent: number | null;
+      attentionReason: string;
+    }> = [];
+
+    filteredStudents.forEach((st) => {
+      const stCode = st.maSV.toLowerCase();
+      const stGrades = (allGrades || []).filter((g) => g.maSV.toLowerCase() === stCode);
+      const failedCount = stGrades.filter(
+        (g) => g.trangThai === 'FAILED' || (typeof g.diemTongKet10 === 'number' && g.diemTongKet10 < 4.0)
+      ).length;
+
+      const stAtt = (attendanceList || []).filter((a) => a.maSV?.toLowerCase() === stCode);
+      const missedPeriods = stAtt.reduce((sum, a) => sum + (a.soTietNghi || 0), 0);
+      const hasAbsenceDanger = missedPeriods >= 9; // ~15-20% of typical course
+
+      const stRL = (trainingPoints || []).filter((r) => r.maSV && r.maSV.toLowerCase() === stCode);
+      const recentRL = stRL.length > 0 ? stRL[stRL.length - 1].diemRL : null;
+      const isLowRL = recentRL !== null && recentRL < 50;
+
+      const reasons: string[] = [];
+      if (failedCount > 0) reasons.push(`Nợ ${failedCount} môn`);
+      if (missedPeriods >= 6) reasons.push(`Vắng ${missedPeriods} tiết`);
+      if (isLowRL) reasons.push(`Điểm RL yếu (${recentRL}đ)`);
+
+      if (reasons.length > 0) {
+        list.push({
+          maSV: st.maSV,
+          hoTen: st.hoTen,
+          lop: st.lop || 'Chưa xếp lớp',
+          khoa: st.khoa || 'Chuyên môn',
+          failedSubjectsCount: failedCount,
+          missedPeriodsTotal: missedPeriods,
+          hasAbsenceDanger,
+          trainingScoreRecent: recentRL,
+          attentionReason: reasons.join(' • '),
+        });
+      }
+    });
+
+    return list;
+  }, [filteredStudents, allGrades, attendanceList, trainingPoints]);
+
+  // Current Month Training Overview for Admin
+  const adminTrainingOverview = useMemo(() => {
+    const targetMonth = Number(filterMonth);
+    const monthlyRecords = (trainingPoints || []).filter((r) => {
+      if (!filteredStudentIds.has(r.maSV?.toLowerCase())) return false;
+      if (!isNaN(targetMonth) && r.thang !== targetMonth) return false;
+      return true;
+    });
+
+    if (monthlyRecords.length === 0) {
+      return {
+        hasData: false,
+        totalEvaluated: 0,
+        distribution: { xuatSac: 0, tot: 0, kha: 0, trungBinh: 0, yeuKem: 0 },
+        avgScore: null,
+      };
+    }
+
+    let xs = 0, tot = 0, kha = 0, tb = 0, yk = 0;
+    let sumScore = 0;
+
+    monthlyRecords.forEach((r) => {
+      const s = Number(r.diemRL || 0);
+      sumScore += s;
+      if (s >= 90) xs++;
+      else if (s >= 80) tot++;
+      else if (s >= 70) kha++;
+      else if (s >= 50) tb++;
+      else yk++;
+    });
+
+    const total = monthlyRecords.length;
+    const avgScore = total > 0 ? Math.round(sumScore / total) : 0;
+
+    return {
+      hasData: true,
+      totalEvaluated: total,
+      distribution: {
+        xuatSac: xs,
+        tot,
+        kha,
+        trungBinh: tb,
+        yeuKem: yk,
+      },
+      avgScore,
+    };
+  }, [trainingPoints, filteredStudentIds, filterMonth]);
+
+  // Class Results Table & Drill-Down Metric Items
+  const classMetricList: ClassMetricItem[] = useMemo(() => {
+    const classMap = new Map<string, SinhVien[]>();
+    (students || []).forEach((s) => {
+      if (s.lop) {
+        if (!classMap.has(s.lop)) classMap.set(s.lop, []);
+        classMap.get(s.lop)!.push(s);
+      }
+    });
+
+    return Array.from(classMap.entries()).map(([maLop, classStList]) => {
+      const studentIds = new Set(classStList.map((s) => s.maSV.toLowerCase()));
+      const classGrades = (allGrades || []).filter((g) => studentIds.has(g.maSV.toLowerCase()));
+
+      let diemTBHocTap = 0;
+      let tyLeQuaMon = 0;
+      if (classGrades.length > 0) {
+        const sum10 = classGrades.reduce((sum, g) => sum + (g.diemTongKet10 || 0), 0);
+        diemTBHocTap = Math.round((sum10 / classGrades.length) * 100) / 100;
+        const passedCount = classGrades.filter((g) => g.trangThai === 'PASSED' || (g.diemTongKet10 || 0) >= 4.0).length;
+        tyLeQuaMon = Math.round((passedCount / classGrades.length) * 1000) / 10;
+      }
+
+      // Training Points average for class
+      const classRL = (trainingPoints || []).filter((r) => r.maSV && studentIds.has(r.maSV.toLowerCase()));
+      let diemRLLopTB = 0;
+      if (classRL.length > 0) {
+        const sumRL = classRL.reduce((sum, r) => sum + (r.diemRL || 0), 0);
+        diemRLLopTB = Math.round(sumRL / classRL.length);
+      }
+
+      // Attention count in class
+      const attentionCount = attentionStudentsList.filter((a) => a.lop === maLop).length;
+
+      return {
+        maLop,
+        tenLop: `Lớp ${maLop}`,
+        siSo: classStList.length,
+        khoa: classStList[0]?.khoa || 'Chuyên môn',
+        covan: 'Cố vấn học tập',
+        diemTBHocTap,
+        tyLeQuaMon,
+        diemRLLopTB,
+        soSVCandChuY: attentionCount,
+      };
+    });
+  }, [students, allGrades, trainingPoints, attentionStudentsList]);
+
+  // Selected class for drilldown
+  const drilldownClassObj = useMemo(() => {
+    if (!drilldownClassCode) return null;
+    return classMetricList.find((c) => c.maLop === drilldownClassCode) || null;
+  }, [drilldownClassCode, classMetricList]);
+
+  // Students in selected drilldown class
+  const drilldownClassStudents = useMemo(() => {
+    if (!drilldownClassCode) return [];
+    return (students || [])
+      .filter((s) => s.lop === drilldownClassCode)
+      .filter((s) => {
+        if (!searchStudentQuery.trim()) return true;
+        const q = searchStudentQuery.toLowerCase();
+        return s.maSV.toLowerCase().includes(q) || s.hoTen.toLowerCase().includes(q);
+      });
+  }, [drilldownClassCode, students, searchStudentQuery]);
+
+  // =========================================================================
+  // 3. QUICK REPORT GENERATION LOGIC (A4 PRINT & EXCEL EXPORT)
+  // =========================================================================
+
+  const reportFilteredStudents = useMemo(() => {
+    return (students || []).filter((s) => {
+      if (reportScopeFaculty !== 'ALL' && s.khoa !== reportScopeFaculty) return false;
+      if (reportScopeClass !== 'ALL' && s.lop !== reportScopeClass) return false;
+      return true;
+    });
+  }, [students, reportScopeFaculty, reportScopeClass]);
+
+  const reportStudentIds = useMemo(() => {
+    return new Set(reportFilteredStudents.map((s) => s.maSV.toLowerCase()));
+  }, [reportFilteredStudents]);
+
+  // Export to Excel function using real data only
+  const handleExportExcel = () => {
+    let exportData: any[] = [];
+    let fileName = `TDNU_BaoCao_${reportType}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+    if (reportType === 'ACADEMIC') {
+      exportData = reportFilteredStudents.map((st, idx) => {
+        const stGrades = (allGrades || []).filter((g) => {
+          if (g.maSV.toLowerCase() !== st.maSV.toLowerCase()) return false;
+          if (reportScopeSemester !== 'ALL' && g.hocKy !== reportScopeSemester) return false;
           return true;
         });
 
-        if (stRL.length > 0) {
-          const validScores = stRL.map(r => Number(r.diemRL ?? (r as any).totalScore ?? 0)).filter(s => !isNaN(s) && s > 0);
-          if (validScores.length > 0) {
-            const score = Math.round(validScores.reduce((a, b) => a + b, 0) / validScores.length);
-            evaluatedCount++;
-            if (score >= 90) rlXS++;
-            else if (score >= 80) rlTot++;
-            else if (score >= 70) rlKha++;
-            else if (score >= 50) rlTB++;
-            else rlYeuKem++;
-          }
-        }
+        const totalCredits = stGrades.reduce((sum, g) => sum + (g.soTinChi || 3), 0);
+        const sum10 = stGrades.reduce((sum, g) => sum + (g.diemTongKet10 || 0) * (g.soTinChi || 3), 0);
+        const gpa10 = totalCredits > 0 ? (sum10 / totalCredits).toFixed(2) : 'Chưa có điểm';
+        const passedCredits = stGrades
+          .filter((g) => g.trangThai === 'PASSED' || (g.diemTongKet10 || 0) >= 4.0)
+          .reduce((sum, g) => sum + (g.soTinChi || 3), 0);
+
+        return {
+          STT: idx + 1,
+          'Mã Sinh Viên': st.maSV,
+          'Họ và Tên': st.hoTen,
+          'Lớp Học': st.lop,
+          'Khoa / Ngành': st.khoa,
+          'Tổng Số Môn': stGrades.length,
+          'Tín Chỉ Tích Lũy': passedCredits,
+          'Điểm TB (Hệ 10)': gpa10,
+          'Trạng Thái Học Vụ': st.trangThai,
+        };
       });
+    } else if (reportType === 'TRAINING') {
+      const targetMonth = Number(reportScopeMonth);
+      exportData = reportFilteredStudents.map((st, idx) => {
+        const stRL = (trainingPoints || []).find((r) => {
+          if (r.maSV?.toLowerCase() !== st.maSV.toLowerCase()) return false;
+          if (!isNaN(targetMonth) && r.thang !== targetMonth) return false;
+          return true;
+        });
+
+        return {
+          STT: idx + 1,
+          'Mã Sinh Viên': st.maSV,
+          'Họ và Tên': st.hoTen,
+          'Lớp Học': st.lop,
+          'Khoa / Ngành': st.khoa,
+          'Tháng Đánh Giá': targetMonth,
+          'Điểm Rèn Luyện': stRL ? stRL.diemRL : 'Chưa đánh giá',
+          'Xếp Loại': stRL ? stRL.xepLoai : 'Chưa có dữ liệu',
+          'Người Đánh Giá': stRL ? stRL.nguoiDanhGia : '-',
+        };
+      });
+    } else if (reportType === 'ATTENTION') {
+      const attentionList = attentionStudentsList.filter((a) => reportStudentIds.has(a.maSV.toLowerCase()));
+      exportData = attentionList.map((a, idx) => ({
+        STT: idx + 1,
+        'Mã Sinh Viên': a.maSV,
+        'Họ và Tên': a.hoTen,
+        'Lớp Học': a.lop,
+        'Khoa': a.khoa,
+        'Số Môn Nợ': a.failedSubjectsCount,
+        'Số Tiết Vắng': a.missedPeriodsTotal,
+        'Điểm Rèn Luyện Gần Nhất': a.trainingScoreRecent ?? 'Chưa có',
+        'Lý Do Cần Chú Ý': a.attentionReason,
+      }));
+    } else if (reportType === 'RETAKES_FEES') {
+      const relevantRetakes = (retakes || []).filter((r) => reportStudentIds.has(r.maSV.toLowerCase()));
+      exportData = relevantRetakes.map((r, idx) => ({
+        STT: idx + 1,
+        'Mã Sinh Viên': r.maSV,
+        'Họ và Tên SV': r.hoTenSV || r.maSV,
+        'Mã Môn': r.maMH,
+        'Tên Môn Học': r.tenMH,
+        'Loại Đăng Ký': r.loaiDangKy === 'THI_LAI' ? 'Thi Lại' : 'Học Lại',
+        'Lệ Phí (VNĐ)': r.phiDiem ? r.phiDiem.toLocaleString('vi-VN') : '0',
+        'Trạng Thái': r.trangThai === 'DA_DUYET' ? 'Đã duyệt' : 'Chờ duyệt',
+        'Ngày Đăng Ký': r.ngayDangKy || '-',
+      }));
     }
 
-    const xuatSac = evaluatedCount > 0 ? Math.round((rlXS / evaluatedCount) * 100) : 0;
-    const tot = evaluatedCount > 0 ? Math.round((rlTot / evaluatedCount) * 100) : 0;
-    const kha = evaluatedCount > 0 ? Math.round((rlKha / evaluatedCount) * 100) : 0;
-    const trungBinh = evaluatedCount > 0 ? Math.round((rlTB / evaluatedCount) * 100) : 0;
-    const yeuKem = evaluatedCount > 0 ? Math.round((rlYeuKem / evaluatedCount) * 100) : 0;
-    const renLuyenTotal = evaluatedCount > 0 ? xuatSac + tot + kha : 0;
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'BaoCao');
+    XLSX.writeFile(workbook, fileName);
+  };
 
-    return {
-      renLuyenTotal,
-      renLuyenBreakdown: { xuatSac, tot, kha, trungBinh, yeuKem },
-      evaluatedCount,
-    };
-  }, [students, trainingPoints, filterSemester, filterMonth]);
+  const filteredClassMetrics = useMemo(() => {
+    const q = classSearchQuery.trim().toLowerCase();
+    return classMetricList.filter((c) => {
+      if (filterFaculty !== 'ALL' && c.khoa !== filterFaculty) return false;
+      if (selectedClassFilter !== 'ALL' && c.maLop !== selectedClassFilter) return false;
+      if (q && !c.maLop.toLowerCase().includes(q) && !c.khoa.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [classMetricList, filterFaculty, selectedClassFilter, classSearchQuery]);
 
-  const currentRenLuyenTotal = activeClassItem
-    ? activeClassItem.renLuyenTotal
-    : overallRenLuyenBreakdown.renLuyenTotal;
+  // Reset pagination when filters/search change
+  useEffect(() => {
+    setAttentionPage(1);
+  }, [filterSemester, filterFaculty, selectedClassFilter, filterMonth]);
 
-  const currentRenLuyenBreakdown = activeClassItem
-    ? activeClassItem.renLuyenBreakdown
-    : overallRenLuyenBreakdown.renLuyenBreakdown;
+  useEffect(() => {
+    setClassPage(1);
+  }, [filterFaculty, selectedClassFilter, classSearchQuery]);
 
-  const currentDonThiLai = activeClassItem
-    ? activeClassItem.donThiLai
-    : dynamicClassMetrics.reduce((acc, c) => acc + c.donThiLai, 0);
+  useEffect(() => {
+    setDrilldownPage(1);
+  }, [drilldownClassCode, searchStudentQuery]);
 
-  const currentThiLaiBreakdown = activeClassItem
-    ? activeClassItem.thiLaiBreakdown
-    : [];
+  const paginatedAttentionList = useMemo(() => {
+    const start = (attentionPage - 1) * attentionPageSize;
+    return attentionStudentsList.slice(start, start + attentionPageSize);
+  }, [attentionStudentsList, attentionPage, attentionPageSize]);
 
-  const currentTyLeQuaMon = activeClassItem
-    ? activeClassItem.tyLeQuaMon
-    : (dynamicClassMetrics.length > 0
-        ? Math.round((dynamicClassMetrics.reduce((acc, c) => acc + c.tyLeQuaMon, 0) / dynamicClassMetrics.length) * 10) / 10
-        : 0);
+  const paginatedClassList = useMemo(() => {
+    const start = (classPage - 1) * classPageSize;
+    return filteredClassMetrics.slice(start, start + classPageSize);
+  }, [filteredClassMetrics, classPage, classPageSize]);
 
-  const currentQuaMonBreakdown = activeClassItem
-    ? activeClassItem.quaMonBreakdown
-    : { loaiA: 0, loaiB: 0, loaiC: 0, loaiDF: 0 };
+  const paginatedDrilldownStudents = useMemo(() => {
+    const start = (drilldownPage - 1) * drilldownPageSize;
+    return drilldownClassStudents.slice(start, start + drilldownPageSize);
+  }, [drilldownClassStudents, drilldownPage, drilldownPageSize]);
 
-  // Total classes count based on entered class data
-  const totalClassesCount = allClassesList.length;
+  const hasAdminFilters =
+    filterSemester !== 'ALL' ||
+    filterFaculty !== 'ALL' ||
+    selectedClassFilter !== 'ALL';
 
-  if (loading) {
+  const clearAdminFilters = () => {
+    setFilterSemester('ALL');
+    setFilterFaculty('ALL');
+    setSelectedClassFilter('ALL');
+  };
+
+  const reportAttentionRows = useMemo(() => {
+    return attentionStudentsList.filter((a) => reportStudentIds.has(a.maSV.toLowerCase()));
+  }, [attentionStudentsList, reportStudentIds]);
+
+  const reportRetakeRows = useMemo(() => {
+    return (retakes || []).filter((r) => reportStudentIds.has(r.maSV.toLowerCase()));
+  }, [retakes, reportStudentIds]);
+
+  const defaultMonthValue = String(new Date().getMonth() + 1);
+  const hasActiveReportFilters =
+    reportScopeSemester !== 'ALL' ||
+    reportScopeFaculty !== 'ALL' ||
+    reportScopeClass !== 'ALL' ||
+    reportScopeMonth !== defaultMonthValue;
+
+  const resetReportFilters = () => {
+    setReportScopeSemester('ALL');
+    setReportScopeFaculty('ALL');
+    setReportScopeClass('ALL');
+    setReportScopeMonth(defaultMonthValue);
+  };
+
+  const reportViewFilters: ReportFilterControl[] = useMemo(
+    () => [
+      {
+        id: 'report-semester',
+        label: 'Học kỳ',
+        value: reportScopeSemester,
+        options: [{ value: 'ALL', label: 'Tất cả học kỳ' }, ...availableSemesters],
+        onChange: setReportScopeSemester,
+        quickOptions: [
+          { value: 'ALL', label: 'Tất cả' },
+          ...availableSemesters.slice(0, 2).map((hk) => ({ value: hk.value, label: hk.value })),
+        ],
+      },
+      {
+        id: 'report-faculty',
+        label: 'Khoa / Ngành',
+        value: reportScopeFaculty,
+        options: [
+          { value: 'ALL', label: 'Tất cả khoa' },
+          ...uniqueFaculties.map((f) => ({ value: f, label: f })),
+        ],
+        onChange: (val) => {
+          setReportScopeFaculty(val);
+          setReportScopeClass('ALL');
+        },
+      },
+      {
+        id: 'report-class',
+        label: 'Lớp hành chính',
+        value: reportScopeClass,
+        options: [
+          { value: 'ALL', label: 'Tất cả lớp' },
+          ...reportUniqueClasses.map((c) => ({ value: c, label: c })),
+        ],
+        onChange: setReportScopeClass,
+        quickOptions: [
+          { value: 'ALL', label: 'Tất cả' },
+          ...reportUniqueClasses.slice(0, 3).map((c) => ({ value: c, label: c })),
+        ],
+      },
+      {
+        id: 'report-month',
+        label: 'Tháng',
+        value: reportScopeMonth,
+        options: availableMonths.map((m) => ({ value: String(m), label: `Tháng ${m}` })),
+        onChange: setReportScopeMonth,
+      },
+    ],
+    [
+      reportScopeSemester,
+      availableSemesters,
+      reportScopeFaculty,
+      uniqueFaculties,
+      reportScopeClass,
+      reportUniqueClasses,
+      reportScopeMonth,
+      availableMonths,
+    ]
+  );
+
+  const reportFileName = `TDNU_BaoCao_${reportType}_${new Date().toISOString().slice(0, 10)}.html`;
+  const reportDocumentTitle =
+    reportType === 'ACADEMIC'
+      ? 'Báo cáo tổng hợp kết quả học tập sinh viên'
+      : reportType === 'TRAINING'
+      ? `Báo cáo đánh giá điểm rèn luyện tháng ${reportScopeMonth}`
+      : reportType === 'ATTENTION'
+      ? 'Danh sách sinh viên cần chú ý & cảnh báo học vụ'
+      : 'Báo cáo thống kê đơn thi lại, học lại & lệ phí';
+
+  const handlePrint = () => {
+    setPrintNotice(null);
+    triggerPrintWithFallback({
+      element: printPageRef.current,
+      title: reportDocumentTitle,
+      filename: reportFileName,
+      onFallback: () => {
+        setPrintNotice(
+          'Khung xem trước đang chặn hộp thoại in trực tiếp. Hệ thống đã tự động tải xuống tệp bản in A4 (.html) — mở tệp vừa tải và nhấn Ctrl+P để in hoặc lưu PDF.'
+        );
+      },
+    });
+  };
+
+  const handleDownloadPrintableHtml = () => {
+    const ok = downloadPrintableHtml(printPageRef.current, {
+      title: reportDocumentTitle,
+      filename: reportFileName,
+    });
+    if (ok) {
+      setPrintNotice('Đã tải xuống tệp bản in A4 (.html). Mở tệp và nhấn Ctrl+P để in hoặc lưu PDF.');
+    }
+  };
+
+  const combinedError = loadError || fetchError;
+  const isInitialLoading =
+    (isLoadingData || loading) &&
+    students.length === 0 &&
+    allGrades.length === 0 &&
+    trainingPoints.length === 0;
+
+  if (isStudent && adminTab !== 'DASHBOARD') {
     return (
-      <div className="bg-white dark:bg-slate-900 p-12 rounded-2xl border border-slate-200 dark:border-slate-800 text-center animate-pulse">
-        <BarChart3 className="w-10 h-10 text-blue-500 mx-auto mb-3 animate-spin" />
-        <p className="text-sm font-medium text-slate-600 dark:text-slate-400">
-          Đang tổng hợp báo cáo kết quả đào tạo...
-        </p>
+      <ErrorState
+        type="403"
+        onGoHome={() => {
+          setAdminTab('DASHBOARD');
+          onSwitchView?.('dashboard');
+        }}
+      />
+    );
+  }
+
+  if (isInitialLoading) {
+    return (
+      <div className="space-y-4">
+        <PageHeader
+          title={isStudent ? 'Tổng Quan Học Tập & Rèn Luyện' : 'Tổng Quan & Báo Cáo Đào Tạo'}
+          icon={BarChart3}
+        />
+        <LoadingState rows={6} />
+      </div>
+    );
+  }
+
+  if (combinedError && students.length === 0 && allGrades.length === 0) {
+    return (
+      <div className="space-y-4">
+        <PageHeader
+          title={isStudent ? 'Tổng Quan Học Tập & Rèn Luyện' : 'Tổng Quan & Báo Cáo Đào Tạo'}
+          icon={BarChart3}
+        />
+        <ErrorState
+          type="error"
+          message={combinedError}
+          onRetry={() => {
+            onRetryLoad?.();
+            fetchData();
+          }}
+        />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header - Shown for Admin & Lecturers (REMOVED per user request) */}
-
-      {/* STUDENT SPECIFIC DASHBOARD: ABSENCE WARNINGS (>10%), EXAM NOTICES & COURSE PROGRESS */}
-      {isStudent && (
-        <div className="space-y-6">
-          {/* Current Semester Filter Indicator for Attendance Reports */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-blue-50/90 dark:bg-blue-950/50 p-4 rounded-2xl border border-blue-200 dark:border-blue-800 shadow-xs">
-            <div className="flex items-center gap-2.5 text-xs font-bold text-blue-900 dark:text-blue-200">
-              <Calendar className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-              <span>Phạm vi báo cáo chuyên cần:</span>
-              <span className="bg-blue-600 text-white px-2.5 py-0.5 rounded-lg text-xs font-black shadow-xs">
-                Học kỳ đang học ({currentActiveSemester === 'HK1' ? 'Học kỳ 1' : currentActiveSemester === 'HK2' ? 'Học kỳ 2' : 'Học kỳ Hè'})
-              </span>
-            </div>
-            <div className="flex items-center gap-2 text-xs">
-              <span className="text-slate-500 dark:text-slate-400 font-semibold">
-                Năm học {currentActiveYear || 'chưa cập nhật'}
-              </span>
-            </div>
-          </div>
-
-          {/* 1. CẢNH BÁO CÁC MÔN NGHỈ HỌC QUÁ 10% SỐ TIẾT */}
-          {studentAbsenceWarnings10.length > 0 ? (
-            <div className="bg-gradient-to-r from-red-950 via-amber-950 to-red-900 border-2 border-red-500 text-white p-5 rounded-2xl shadow-xl space-y-3">
-              <div className="flex items-center justify-between border-b border-red-700/60 pb-3">
-                <div className="flex items-center gap-2.5 font-black text-sm md:text-base uppercase tracking-wider text-yellow-300">
-                  <ShieldAlert className="w-6 h-6 text-yellow-300 animate-bounce shrink-0" />
-                  <span>CẢNH BÁO TIẾN TRÌNH: CÓ MÔN HỌC NGHỈ QUÁ 10% SỐ TIẾT!</span>
-                </div>
-                <span className="bg-red-600 text-white px-3 py-1 rounded-full text-xs font-black shadow-md shrink-0">
-                  {studentAbsenceWarnings10.length} môn thuộc diện cảnh báo
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-1">
-                {studentAbsenceWarnings10.map((w) => (
-                  <div
-                    key={w.maMH}
-                    className={`p-4 rounded-xl border flex flex-col justify-between space-y-2.5 ${
-                      w.isDanger20
-                        ? 'bg-red-900/90 border-red-400 text-white shadow-lg'
-                        : 'bg-amber-950/80 border-amber-500 text-amber-100'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <div className="font-extrabold text-sm text-yellow-200">
-                          {w.tenMH} ({w.maMH})
-                        </div>
-                        <div className="text-xs opacity-90 mt-0.5">
-                          Số tín chỉ: {w.soTinChi} ({w.totalPeriods} tiết) • GV: {w.giangVien}
-                        </div>
-                      </div>
-                      <span
-                        className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wide shrink-0 ${
-                          w.isDanger20
-                            ? 'bg-red-600 text-white border border-red-300 animate-pulse'
-                            : 'bg-amber-500 text-black font-extrabold'
-                        }`}
-                      >
-                        {w.isDanger20 ? '🚨 DƯỚI DIỆN CẤM THI (≥20%)' : '⚠️ CẢNH BÁO VẮNG (>10%)'}
-                      </span>
-                    </div>
-
-                    <div className="space-y-1.5 text-xs">
-                      <div className="flex justify-between font-bold">
-                        <span>Số tiết đã vắng: <strong className="text-yellow-300 text-sm font-mono">{w.missedPeriods} / {w.totalPeriods} tiết</strong></span>
-                        <span className="text-yellow-300 font-mono font-black">{w.absencePercentage.toFixed(1)}% Vắng</span>
-                      </div>
-
-                      {/* Progress bar */}
-                      <div className="w-full bg-black/40 h-2.5 rounded-full overflow-hidden border border-white/10">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            w.isDanger20 ? 'bg-red-500' : 'bg-amber-400'
-                          }`}
-                          style={{ width: `${Math.min(100, w.absencePercentage)}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    <p className="text-[11px] text-slate-200 italic pt-1.5 border-t border-white/10">
-                      {w.isDanger20
-                        ? '* Cực kỳ nguy hiểm: Bạn đã nghỉ học quá 20% số tiết. Liên hệ Giảng viên hoặc Cố vấn học tập gấp!'
-                        : '* Cảnh báo: Tỷ lệ vắng đã vượt quá 10%. Hãy đi học đầy đủ các buổi còn lại để đảm bảo tư cách dự thi.'}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="bg-emerald-950/60 border border-emerald-800 text-emerald-200 p-4 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-sm">
-              <div className="flex items-center gap-2.5 font-bold">
-                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                <span>BÁO CÁO CHUYÊN CẦN TỐT: Tất cả các môn học thuộc học kỳ đang học đều có tỷ lệ vắng dưới 10% số tiết!</span>
-              </div>
-              <span className="bg-emerald-800 text-emerald-100 text-[10px] font-bold px-2.5 py-1 rounded-lg shrink-0">
-                Chuyên cần đảm bảo
-              </span>
-            </div>
-          )}
-
-          {/* 2. THÔNG BÁO CÁC TIẾT KIỂM TRA */}
-          <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-950 border border-indigo-700/80 text-white p-5 rounded-2xl shadow-xl space-y-3">
-            <div className="flex items-center justify-between border-b border-indigo-800/80 pb-3">
-              <div className="flex items-center gap-2.5 font-bold text-sm md:text-base text-indigo-200 uppercase tracking-wider">
-                <BellRing className="w-5 h-5 text-amber-400 animate-bounce shrink-0" />
-                <span>THÔNG BÁO LỊCH KIỂM TRA</span>
-              </div>
-              <span className="bg-amber-500/20 text-amber-300 border border-amber-400/40 px-3 py-1 rounded-full text-xs font-bold">
-                {studentExamNotices.length > 0 ? `${studentExamNotices.length} bài kiểm tra sắp tới` : 'Lịch tuần học'}
-              </span>
-            </div>
-
-            {studentExamNotices.length === 0 ? (
-              <div className="p-4 bg-indigo-900/30 rounded-xl border border-indigo-800/50 text-xs text-indigo-300 flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Chưa có thông báo kiểm tra 15 phút hoặc giữa kỳ mới được lên lịch.</span>
+    <div className="space-y-4">
+      <div className="no-print">
+        <PageHeader
+          title={
+            isStudent
+              ? 'Tổng Quan Học Tập & Rèn Luyện'
+              : adminTab === 'QUICK_REPORT'
+              ? 'Xuất Báo Cáo Học Vụ'
+              : adminTab === 'CLASS_DRILLDOWN'
+              ? 'Kết Quả Theo Lớp'
+              : 'Tổng Quan Đào Tạo'
+          }
+          icon={BarChart3}
+          actions={
+            !isStudent ? (
+              <div
+                role="tablist"
+                aria-label="Chế độ xem tổng quan và báo cáo"
+                className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded border border-slate-200 dark:border-slate-700"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={adminTab === 'DASHBOARD'}
+                  onClick={() => {
+                    setAdminTab('DASHBOARD');
+                    setDrilldownClassCode(null);
+                    setDrilldownStudent(null);
+                  }}
+                  className={`px-3 py-1 rounded text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                    adminTab === 'DASHBOARD'
+                      ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 border border-slate-200 dark:border-slate-700'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  <span>Tổng quan</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={adminTab === 'CLASS_DRILLDOWN'}
+                  onClick={() => setAdminTab('CLASS_DRILLDOWN')}
+                  className={`px-3 py-1 rounded text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                    adminTab === 'CLASS_DRILLDOWN'
+                      ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 border border-slate-200 dark:border-slate-700'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <Building className="w-3.5 h-3.5" />
+                  <span>Kết quả theo lớp</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={adminTab === 'QUICK_REPORT'}
+                  onClick={() => setAdminTab('QUICK_REPORT')}
+                  className={`px-3 py-1 rounded text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                    adminTab === 'QUICK_REPORT'
+                      ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400 border border-slate-200 dark:border-slate-700'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Xuất báo cáo</span>
+                </button>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                {studentExamNotices.map((notice) => (
-                  <div
-                    key={notice.id}
-                    className="p-4 bg-indigo-900/40 hover:bg-indigo-900/60 rounded-xl border border-indigo-700/60 space-y-2.5 transition-all shadow-md flex flex-col justify-between"
-                  >
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span
-                          className={`px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${
-                            notice.loai === '15_PHUT'
-                              ? 'bg-amber-400 text-slate-950'
-                              : notice.loai === 'GIUA_KY'
-                              ? 'bg-purple-400 text-slate-950'
-                              : 'bg-blue-400 text-slate-950'
-                          }`}
-                        >
-                          {notice.loai === '15_PHUT' ? 'KT 15 Phút' : notice.loai === 'GIUA_KY' ? 'KT Giữa Kỳ' : 'Thông báo'}
-                        </span>
-                      </div>
+              <span className="text-xs text-slate-600 dark:text-slate-300 font-mono tabular-nums">
+                {activeSemester}
+              </span>
+            )
+          }
+        />
+      </div>
 
-                      <div className="font-extrabold text-sm text-white">{notice.tieuDe}</div>
-                      <div className="text-[11px] font-bold text-indigo-300">
-                        Môn: {notice.tenMH || notice.maMH} ({notice.maMH})
-                      </div>
-                      <p className="text-xs text-indigo-200 line-clamp-3 leading-relaxed">{notice.noiDung}</p>
-                    </div>
+      {combinedError && (
+        <ErrorBanner
+          message={combinedError}
+          onRetry={() => {
+            onRetryLoad?.();
+            fetchData();
+          }}
+        />
+      )}
 
-                    <div className="pt-2.5 border-t border-indigo-800/60 text-[11px] text-indigo-300 space-y-1">
-                      <div className="flex items-center gap-1 font-bold text-yellow-300">
-                        <Calendar className="w-3.5 h-3.5 shrink-0" />
-                        <span>Ngày kiểm tra: {notice.ngayKiemTra || 'Tuần tới'} (Tuần thứ {notice.tuanKiemTra || 'hiện tại'})</span>
-                      </div>
-                      <div className="flex items-center justify-between opacity-80 text-[10px] pt-0.5">
-                        <span>• GV: {notice.giangVienTao || 'Giảng viên phụ trách'}</span>
-                        <span className="italic text-indigo-400">Chuẩn bị bài đầy đủ</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+      {/* ========================================================================= */}
+      {/* STUDENT DASHBOARD                                                         */}
+      {/* ========================================================================= */}
+      {isStudent && (
+        <div className="space-y-4">
+          {studentAcademicSummary && (
+            <MetricStrip
+              metrics={[
+                {
+                  label: 'GPA Hệ 10',
+                  value:
+                    studentAcademicSummary.hasGrades && studentAcademicSummary.gpa10 !== null
+                      ? studentAcademicSummary.gpa10.toFixed(2)
+                      : 'Chưa có',
+                  dotColor: 'blue',
+                },
+                {
+                  label: 'GPA Hệ 4',
+                  value:
+                    studentAcademicSummary.hasGrades && studentAcademicSummary.gpa4 !== null
+                      ? studentAcademicSummary.gpa4.toFixed(2)
+                      : 'Chưa có',
+                  dotColor: 'slate',
+                },
+                {
+                  label: 'Tín chỉ đạt',
+                  value: `${studentAcademicSummary.passedCredits} / ${studentAcademicSummary.totalRegisteredCredits}`,
+                  dotColor: 'emerald',
+                },
+                {
+                  label: 'Học lực',
+                  value: studentAcademicSummary.academicStanding,
+                  dotColor: 'amber',
+                },
+                {
+                  label: 'Sinh viên',
+                  value: currentStudentObj?.hoTen || currentStudentCode || '—',
+                  dotColor: 'slate',
+                },
+              ]}
+            />
+          )}
+
+          {/* PHẦN 2: TÌNH TRẠNG CÁC MÔN HỌC */}
+          <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
+              <div className="flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
+                  Môn học kỳ {currentActiveSemester}{currentActiveYear ? ` (${currentActiveYear})` : ''}
+                </h2>
+                <StatusBadge label={`${studentActiveSemesterCourses.length} môn`} variant="neutral" />
+              </div>
+              <button
+                type="button"
+                onClick={() => onSwitchView?.('grades')}
+                className="text-xs font-semibold text-blue-700 dark:text-blue-400 hover:underline flex items-center gap-1 self-start sm:self-auto cursor-pointer"
+              >
+                <span>Bảng điểm chi tiết</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {studentActiveSemesterCourses.length === 0 ? (
+              <EmptyState message={`Chưa có dữ liệu môn học trong học kỳ ${currentActiveSemester}.`} />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 uppercase text-[11px] font-semibold tracking-wider border-b border-slate-200 dark:border-slate-800">
+                    <tr>
+                      <th className="py-2.5 px-3">Mã MH</th>
+                      <th className="py-2.5 px-3">Tên Môn Học</th>
+                      <th className="py-2.5 px-3 text-center">TC</th>
+                      <th className="py-2.5 px-3">Giảng Viên</th>
+                      <th className="py-2.5 px-3 text-center">Vắng</th>
+                      <th className="py-2.5 px-3 text-center">Điểm</th>
+                      <th className="py-2.5 px-3 text-center">Tình Trạng</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                    {studentActiveSemesterCourses.map((c) => {
+                      const hasGrade = Boolean(c.diem && typeof c.diem.diemTongKet10 === 'number');
+                      const isPassed = c.diem?.trangThai === 'PASSED' || (c.diem?.diemTongKet10 || 0) >= 4.0;
+                      const isDanger20 = c.absencePct >= 20;
+                      const isWarning10 = c.absencePct >= 10 && !isDanger20;
+
+                      return (
+                        <tr key={c.maMH} className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors">
+                          <td className="py-2.5 px-3 font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
+                            {c.maMH}
+                          </td>
+                          <td className="py-2.5 px-3 font-medium text-slate-900 dark:text-slate-100">
+                            {c.tenMH}
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                            {c.soTinChi}
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300">
+                            {c.giangVien}
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-mono tabular-nums">
+                            <StatusBadge
+                              label={`${c.missedPeriods}/${c.totalPeriods} (${c.absencePct.toFixed(0)}%)`}
+                              variant={isDanger20 ? 'danger' : isWarning10 ? 'warning' : 'neutral'}
+                            />
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-mono tabular-nums">
+                            {hasGrade ? (
+                              <span className="font-semibold text-slate-900 dark:text-slate-100">
+                                {c.diem!.diemTongKet10.toFixed(1)} ({c.diem!.diemChu})
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 dark:text-slate-500">Chưa có</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            {isDanger20 ? (
+                              <StatusBadge label="Cấm thi" variant="danger" dot />
+                            ) : isWarning10 ? (
+                              <StatusBadge label="Cảnh báo vắng" variant="warning" dot />
+                            ) : hasGrade ? (
+                              isPassed ? (
+                                <StatusBadge label="Đã đạt" variant="success" dot />
+                              ) : (
+                                <StatusBadge label="Chưa đạt" variant="danger" dot />
+                              )
+                            ) : (
+                              <StatusBadge label="Đang học" variant="info" dot />
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
 
-          {/* 3. BÁO CÁO TIẾN TRÌNH CÁC MÔN HỌC CHI TIẾT */}
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-4">
+          {/* GRID 2 CỘT: RÈN LUYỆN & HỌC PHÍ */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* RÈN LUYỆN THEO THÁNG */}
+            <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-4 flex flex-col justify-between">
               <div>
-                <h3 className="text-lg font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
-                  <BookOpen className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                  Tiến Trình Học Tập
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Tiến trình học tập
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {studentCourseProgressList.map((course) => (
-                <div
-                  key={course.maMH}
-                  className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-2xl p-4 space-y-3.5 hover:border-blue-400 dark:hover:border-blue-500 transition-all shadow-xs flex flex-col justify-between"
-                >
-                  <div className="space-y-1.5">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <span className="text-[10px] font-black font-mono px-2 py-0.5 bg-blue-100 dark:bg-blue-900/80 text-blue-700 dark:text-blue-300 rounded border border-blue-200 dark:border-blue-800 uppercase">
-                          {course.maMH}
-                        </span>
-                        <h4 className="font-extrabold text-sm text-slate-900 dark:text-white mt-1 leading-snug">
-                          {course.tenMH}
-                        </h4>
-                      </div>
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold shrink-0 border ${
-                          course.isDanger20
-                            ? 'bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300 border-red-300 dark:border-red-800'
-                            : course.isWarning10
-                            ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800'
-                            : 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
-                        }`}
-                      >
-                        {course.isDanger20 ? '🚨 Cấm thi (≥20%)' : course.isWarning10 ? '⚠️ Cảnh báo (>10%)' : '🟢 Bình thường'}
-                      </span>
-                    </div>
-
-                    <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                      Số tín chỉ: <strong className="text-slate-800 dark:text-slate-200">{course.soTinChi}</strong> ({course.totalPeriods} tiết) • GV: {course.giangVien}
-                    </div>
+                <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-200 dark:border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <Award className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                    <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
+                      Điểm rèn luyện
+                    </h2>
                   </div>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+                    Tháng {new Date().getMonth() + 1}/{new Date().getFullYear()}
+                  </span>
+                </div>
 
-                  {/* Attendance progress bar */}
-                  <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700/80 space-y-2">
-                    <div className="flex justify-between text-xs font-bold">
-                      <span className="text-slate-600 dark:text-slate-300">Tỷ lệ có mặt tại lớp:</span>
-                      <span className="text-blue-600 dark:text-blue-400 font-mono font-black">{course.attendanceRate.toFixed(1)}%</span>
-                    </div>
-
-                    <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          course.isDanger20 ? 'bg-red-500' : course.isWarning10 ? 'bg-amber-500' : 'bg-emerald-500'
-                        }`}
-                        style={{ width: `${Math.max(0, course.attendanceRate)}%` }}
+                {studentTrainingData.currentMonthRecord ? (
+                  <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded border border-slate-200 dark:border-slate-700 mb-3 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-slate-900 dark:text-slate-100 font-mono tabular-nums">
+                        Tháng {studentTrainingData.currentMonthRecord.thang}
+                      </span>
+                      <StatusBadge
+                        label={`${studentTrainingData.currentMonthRecord.diemRL} điểm · ${studentTrainingData.currentMonthRecord.xepLoai}`}
+                        variant={
+                          Number(studentTrainingData.currentMonthRecord.diemRL || 0) >= 80
+                            ? 'success'
+                            : Number(studentTrainingData.currentMonthRecord.diemRL || 0) >= 50
+                            ? 'info'
+                            : 'danger'
+                        }
                       />
                     </div>
-
-                    <div className="flex justify-between text-[11px] font-semibold text-slate-500 dark:text-slate-400 pt-0.5">
-                      <span>Đã vắng: <strong className="text-rose-600 dark:text-rose-400 font-mono">{course.missedPeriods} tiết</strong> ({course.absencePercentage.toFixed(1)}%)</span>
-                      <span>Tham gia: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{course.attendedPeriods} tiết</strong></span>
-                    </div>
-                  </div>
-
-                  {/* Component scores */}
-                  {course.gradeObj ? (
-                    <div className="pt-2 border-t border-slate-200 dark:border-slate-700/80 flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] text-slate-500 font-medium">Điểm TK:</span>
-                        <strong className="text-blue-600 dark:text-blue-400 font-black font-mono text-sm">
-                          {course.gradeObj.diemTongKet10} ({course.gradeObj.diemChu})
-                        </strong>
+                    {studentTrainingData.currentMonthRecord.nhanXet && (
+                      <p className="text-xs text-slate-700 dark:text-slate-300">
+                        {studentTrainingData.currentMonthRecord.nhanXet}
+                      </p>
+                    )}
+                    {studentTrainingData.currentMonthRecord.nguoiDanhGia && (
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                        {studentTrainingData.currentMonthRecord.nguoiDanhGia}
                       </div>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        course.gradeObj.trangThai === 'PASSED' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300' : 'bg-red-100 text-red-800'
-                      }`}>
-                        {course.gradeObj.trangThai === 'PASSED' ? 'ĐẠT MÔN' : 'CHƯA ĐẠT'}
-                      </span>
-                    </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded border border-slate-200 dark:border-slate-700 mb-3 flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                    <Info className="w-4 h-4 text-slate-400 shrink-0" />
+                    <span>
+                      Chưa có dữ liệu tháng {new Date().getMonth() + 1}/{new Date().getFullYear()}.
+                    </span>
+                  </div>
+                )}
+
+                <div>
+                  <h3 className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">
+                    Lịch sử gần đây
+                  </h3>
+                  {studentTrainingData.allRecords.length === 0 ? (
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Chưa có dữ liệu.</p>
                   ) : (
-                    <div className="pt-2 border-t border-slate-200 dark:border-slate-700/80 text-[11px] text-slate-400 italic">
-                      * Đang trong tiến trình học tập (Chưa tổng kết)
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                      {studentTrainingData.recentHistory.map((r, i) => (
+                        <div
+                          key={r.id || i}
+                          className="flex items-center justify-between p-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 text-xs"
+                        >
+                          <span className="font-mono tabular-nums text-slate-800 dark:text-slate-200">
+                            Tháng {r.thang}{r.nam ? `/${r.nam}` : ''}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
+                              {r.diemRL} điểm
+                            </span>
+                            <StatusBadge label={r.xepLoai || '—'} variant="neutral" />
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
-              ))}
+              </div>
+
+              <div className="pt-3 mt-3 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => onSwitchView?.('training')}
+                  className="w-full py-1.5 px-3 rounded text-xs font-semibold text-blue-700 dark:text-blue-400 border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <span>Điểm rèn luyện chi tiết</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* HỌC PHÍ & LỆ PHÍ */}
+            <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-4 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-200 dark:border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                    <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
+                      Học phí & Lệ phí
+                    </h2>
+                  </div>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                    {currentActiveSemester}
+                  </span>
+                </div>
+
+                {studentTuitionData.hasData ? (
+                  <div className="space-y-2.5 mb-3">
+                    <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded border border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                      <div>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium block">
+                          Tổng lệ phí đăng ký
+                        </span>
+                        <div className="text-base font-bold text-slate-900 dark:text-slate-100 font-mono tabular-nums mt-0.5">
+                          {studentTuitionData.totalFee > 0
+                            ? `${studentTuitionData.totalFee.toLocaleString('vi-VN')} VNĐ`
+                            : 'Chưa định mức'}
+                        </div>
+                      </div>
+                      <StatusBadge label={`${studentTuitionData.retakeItems.length} môn`} variant="info" />
+                    </div>
+
+                    <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                      {studentTuitionData.retakeItems.map((r) => (
+                        <div
+                          key={r.id}
+                          className="p-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 text-xs flex items-center justify-between gap-2"
+                        >
+                          <div className="min-w-0">
+                            <div className="font-semibold text-slate-900 dark:text-slate-100 truncate">
+                              {r.tenMH} ({r.maMH})
+                            </div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                              {r.loaiDangKy === 'THI_LAI' ? 'Thi lại' : 'Học lại'} · {r.hocKy || currentActiveSemester}
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
+                              {r.phiDiem ? `${r.phiDiem.toLocaleString('vi-VN')} đ` : '—'}
+                            </div>
+                            <StatusBadge
+                              label={r.trangThai === 'DA_DUYET' ? 'Đã duyệt' : 'Chờ duyệt'}
+                              variant={r.trangThai === 'DA_DUYET' ? 'success' : 'warning'}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded border border-slate-200 dark:border-slate-700 mb-3 flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Chưa có dữ liệu lệ phí phát sinh.</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-3 mt-3 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => onSwitchView?.('retakes')}
+                  className="w-full py-1.5 px-3 rounded text-xs font-semibold text-blue-700 dark:text-blue-400 border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <span>Thi lại & Học lại</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Prominent Top Section: Chỉ Số Đào Tạo & Rèn Luyện (DÀNH CHO QUẢN TRỊ / GIẢNG VIÊN) */}
-      {!isStudent && (
-        <div className="space-y-6">
-          {/* Prominent Top Section: Chỉ Số Đào Tạo & Rèn Luyện */}
-          <div className="bg-slate-900 rounded-2xl p-6 text-white shadow-lg border border-slate-800 space-y-5">
-        {/* Top bar with title and controls */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
-          <div className="flex items-center gap-3">
-            <div className="w-3.5 h-3.5 bg-blue-500 rounded-full animate-pulse shrink-0"></div>
-            <div>
-              <h3 className="text-base font-bold uppercase tracking-wider text-white">
-                Bảng Chỉ Số Đào Tạo & Rèn Luyện
-              </h3>
-            </div>
+      {/* ========================================================================= */}
+      {/* ADMIN DASHBOARD                                                           */}
+      {/* ========================================================================= */}
+      {!isStudent && adminTab === 'DASHBOARD' && (
+        <div className="space-y-4">
+          <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-3">
+            <DataToolbar
+              hasActiveFilters={hasAdminFilters}
+              onClearFilters={clearAdminFilters}
+              filters={
+                <>
+                  <select
+                    aria-label="Lọc theo học kỳ"
+                    value={filterSemester}
+                    onChange={(e) => setFilterSemester(e.target.value)}
+                    className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5 font-medium cursor-pointer"
+                  >
+                    <option value="ALL">Tất cả học kỳ</option>
+                    {availableSemesters.map((hk) => (
+                      <option key={hk.value} value={hk.value}>{hk.label}</option>
+                    ))}
+                  </select>
+
+                  <select
+                    aria-label="Lọc theo khoa"
+                    value={filterFaculty}
+                    onChange={(e) => {
+                      setFilterFaculty(e.target.value);
+                      setSelectedClassFilter('ALL');
+                    }}
+                    className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5 font-medium cursor-pointer"
+                  >
+                    <option value="ALL">Tất cả khoa</option>
+                    {uniqueFaculties.map((f) => (
+                      <option key={f} value={f}>{f}</option>
+                    ))}
+                  </select>
+
+                  <select
+                    aria-label="Lọc theo lớp"
+                    value={selectedClassFilter}
+                    onChange={(e) => setSelectedClassFilter(e.target.value)}
+                    className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5 font-medium cursor-pointer"
+                  >
+                    <option value="ALL">Tất cả lớp</option>
+                    {uniqueClasses.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+
+                  <select
+                    aria-label="Lọc theo tháng rèn luyện"
+                    value={filterMonth}
+                    onChange={(e) => setFilterMonth(e.target.value)}
+                    className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5 font-medium cursor-pointer"
+                  >
+                    {availableMonths.map((m) => (
+                      <option key={m} value={m}>Tháng {m}</option>
+                    ))}
+                  </select>
+                </>
+              }
+            />
           </div>
 
-          {/* Admin view switcher */}
-          {!isStudent && (
-            <div className="flex items-center gap-1.5 bg-slate-800/90 p-1 rounded-xl border border-slate-700 shrink-0">
-              <button
-                id="btn-view-overview"
-                onClick={() => setAdminViewMode('OVERVIEW')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                  adminViewMode === 'OVERVIEW'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                Tổng Quan Chỉ Số
-              </button>
-              <button
-                id="btn-view-class-list"
-                onClick={() => setAdminViewMode('CLASS_LIST')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                  adminViewMode === 'CLASS_LIST'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <List className="w-3.5 h-3.5" />
-                Chỉ Số Từng Lớp (List)
-              </button>
-            </div>
-          )}
-        </div>
+          <MetricStrip
+            metrics={[
+              {
+                label: 'Tổng sinh viên',
+                value: adminAcademicKPIs.totalStudents,
+                dotColor: 'slate',
+              },
+              {
+                label: 'Số lớp',
+                value: adminAcademicKPIs.totalClasses,
+                dotColor: 'slate',
+              },
+              {
+                label: 'Điểm TB (Hệ 10)',
+                value: adminAcademicKPIs.avgGPA10 !== null ? adminAcademicKPIs.avgGPA10.toFixed(2) : 'Chưa có',
+                dotColor: 'blue',
+              },
+              {
+                label: 'Tỷ lệ đạt',
+                value: adminAcademicKPIs.passRate !== null ? `${adminAcademicKPIs.passRate}%` : 'Chưa có',
+                dotColor: 'emerald',
+              },
+              {
+                label: 'Cần chú ý',
+                value: attentionStudentsList.length,
+                dotColor: 'rose',
+              },
+            ]}
+          />
 
-        {/* Filters bar: Semester, Month, Class */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/60">
-          {/* Select Semester */}
-          <div className="space-y-1">
-            <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1">
-              <Calendar className="w-3 h-3 text-blue-400" />
-              1. Học Kỳ
-            </label>
-            <select
-              id="select-index-semester"
-              value={filterSemester}
-              onChange={(e) => {
-                setFilterSemester(e.target.value);
-                setFilterMonth('ALL');
-              }}
-              className="w-full bg-slate-900 border border-slate-700 text-white text-xs font-semibold rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="ALL">Tất cả các học kỳ</option>
-              {availableReportSemesters.map((s) => (
-                <option key={s} value={s}>
-                  Học kỳ {s}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Select Month of Semester */}
-          <div className="space-y-1">
-            <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1">
-              <Calendar className="w-3 h-3 text-cyan-400" />
-              2. Tháng Của Học Kỳ
-            </label>
-            <select
-              id="select-index-month"
-              value={filterMonth}
-              onChange={(e) => setFilterMonth(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-700 text-white text-xs font-semibold rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="ALL">Tất cả các tháng</option>
-              {availableReportMonths.map((m) => (
-                <option key={m.value} value={m.value}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Select Class (For Admin / Teacher / Student) */}
-          <div className="space-y-1">
-            <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1">
-              <Building className="w-3 h-3 text-emerald-400" />
-              {isStudent ? '3. Lớp Học Của Bạn' : '3. Chọn Lớp Chuyên Ngành'}
-            </label>
-            {isStudent ? (
-              <div className="w-full bg-slate-900 border border-slate-700 text-blue-300 text-xs font-bold rounded-lg px-3 py-2 flex items-center justify-between">
-                <span className="truncate">
-                  {studentClassItem?.tenLop
-                    ? (studentClassItem.tenLop.startsWith('Lớp') ? studentClassItem.tenLop : `Lớp ${studentClassItem.maLop}`)
-                    : (studentClassCode ? `Lớp ${studentClassCode}` : 'Chưa phân lớp')}
-                </span>
-                <span className="text-[10px] bg-blue-950 text-blue-400 px-2 py-0.5 rounded border border-blue-800 shrink-0 ml-1">Lớp của tôi</span>
+          {/* RÈN LUYỆN THÁNG */}
+          <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 mb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <Award className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
+                  Điểm rèn luyện tháng {filterMonth}
+                </h2>
+                {adminTrainingOverview.hasData && (
+                  <StatusBadge label={`${adminTrainingOverview.totalEvaluated} SV`} variant="info" />
+                )}
               </div>
-            ) : (
-              <select
-                id="select-index-class"
-                value={selectedClassFilter}
-                onChange={(e) => setSelectedClassFilter(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 text-white text-xs font-semibold rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="ALL">Tất cả các lớp (Tổng số {totalClassesCount} lớp)</option>
-                {allClassesList.map((c) => (
-                  <option key={c.maLop} value={c.maLop}>
-                    {c.tenLop.startsWith('Lớp') ? c.tenLop : `Lớp ${c.maLop}`} ({c.siSo} SV)
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-        </div>
+              {adminTrainingOverview.hasData && adminTrainingOverview.avgScore !== null && (
+                <span className="text-xs font-medium text-slate-700 dark:text-slate-300 font-mono tabular-nums">
+                  Trung bình: <strong className="text-slate-900 dark:text-slate-100">{adminTrainingOverview.avgScore}</strong>
+                </span>
+              )}
+            </div>
 
-        {/* OVERVIEW METRICS MODE */}
-        {adminViewMode === 'OVERVIEW' || isStudent ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Card 1: Total Classes / Student Class */}
-            {isStudent ? (
-              <div className="p-4 bg-slate-800/80 rounded-xl border border-slate-700/80 flex flex-col justify-between hover:border-slate-600 transition-all">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-slate-400 uppercase font-bold tracking-wider">
-                    Lớp Học Của Bạn
+            {adminTrainingOverview.hasData ? (
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-xs">
+                <div className="p-3 rounded bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-center">
+                  <span className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300 uppercase block">Xuất sắc (≥90)</span>
+                  <span className="text-base font-bold text-emerald-900 dark:text-emerald-100 font-mono tabular-nums mt-1 block">
+                    {adminTrainingOverview.distribution.xuatSac}
                   </span>
-                  <div className="p-2 bg-blue-500/10 text-blue-400 rounded-lg">
-                    <Building className="w-4 h-4" />
-                  </div>
                 </div>
-                <div className="my-2">
-                  <div className="text-xl font-mono font-black text-white">
-                    {studentClassItem?.maLop || studentClassCode || 'N/A'}
-                  </div>
-                  <div className="text-xs text-blue-300 font-semibold truncate mt-0.5">
-                    {studentClassItem?.tenLop || (studentClassCode ? `Lớp ${studentClassCode}` : 'Chưa phân lớp')}
-                  </div>
-                  <div className="text-[11px] text-slate-400 mt-1">
-                    Sĩ số: <strong className="text-white font-mono">{studentClassItem?.siSo ?? 0} SV</strong> • Cố vấn: {studentClassItem?.covan || 'GVCN'}
-                  </div>
+                <div className="p-3 rounded bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-center">
+                  <span className="text-[11px] font-semibold text-blue-800 dark:text-blue-300 uppercase block">Tốt (80-89)</span>
+                  <span className="text-base font-bold text-blue-900 dark:text-blue-100 font-mono tabular-nums mt-1 block">
+                    {adminTrainingOverview.distribution.tot}
+                  </span>
                 </div>
-                <div className="text-[11px] font-semibold text-blue-400 flex items-center gap-1 mt-1">
-                  <span>Dữ liệu giới hạn theo lớp học của bạn</span>
+                <div className="p-3 rounded bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-center">
+                  <span className="text-[11px] font-semibold text-amber-800 dark:text-amber-300 uppercase block">Khá (70-79)</span>
+                  <span className="text-base font-bold text-amber-900 dark:text-amber-100 font-mono tabular-nums mt-1 block">
+                    {adminTrainingOverview.distribution.kha}
+                  </span>
+                </div>
+                <div className="p-3 rounded bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-center">
+                  <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 uppercase block">Trung bình (50-69)</span>
+                  <span className="text-base font-bold text-slate-900 dark:text-slate-100 font-mono tabular-nums mt-1 block">
+                    {adminTrainingOverview.distribution.trungBinh}
+                  </span>
+                </div>
+                <div className="p-3 rounded bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-center col-span-2 sm:col-span-1">
+                  <span className="text-[11px] font-semibold text-rose-800 dark:text-rose-300 uppercase block">Yếu / Kém (&lt;50)</span>
+                  <span className="text-base font-bold text-rose-900 dark:text-rose-100 font-mono tabular-nums mt-1 block">
+                    {adminTrainingOverview.distribution.yeuKem}
+                  </span>
                 </div>
               </div>
             ) : (
-              <div className="p-4 bg-slate-800/80 rounded-xl border border-slate-700/80 flex flex-col justify-between hover:border-slate-600 transition-all">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-slate-400 uppercase font-bold tracking-wider">
-                    Tổng Số Lớp Chuyên Ngành
-                  </span>
-                  <div className="p-2 bg-blue-500/10 text-blue-400 rounded-lg">
-                    <Building className="w-4 h-4" />
-                  </div>
-                </div>
-                <div className="my-2">
-                  <div className="text-2xl font-mono font-black text-white">
-                    {totalClassesCount} Lớp
-                  </div>
-                  <div className="text-[11px] text-slate-400 mt-0.5">
-                    {selectedClassFilter === 'ALL'
-                      ? 'Tất cả khoa chuyên ngành'
-                      : `Đang lọc: ${selectedClassFilter}`}
-                  </div>
-                </div>
-                <button
-                  onClick={() => setAdminViewMode('CLASS_LIST')}
-                  className="text-[11px] font-semibold text-blue-400 hover:text-blue-300 flex items-center gap-1 mt-1 cursor-pointer"
-                >
-                  Xem danh sách chỉ số từng lớp <ChevronRight className="w-3 h-3" />
-                </button>
-              </div>
+              <EmptyState message={`Chưa có dữ liệu rèn luyện tháng ${filterMonth}.`} />
             )}
-
-            {/* Card 2: Điểm Rèn Luyện (Khá + Tốt + XS) */}
-            <div className="p-4 bg-slate-800/80 rounded-xl border border-slate-700/80 flex flex-col justify-between hover:border-slate-600 transition-all">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-slate-400 uppercase font-bold tracking-wider">
-                  Điểm Rèn Luyện
-                </span>
-                <div className="p-2 bg-emerald-500/10 text-emerald-400 rounded-lg">
-                  <GraduationCap className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="my-2">
-                <div className="text-2xl font-mono font-black text-emerald-400">
-                  {currentRenLuyenTotal}%
-                </div>
-                <div className="text-[11px] text-slate-400 mt-0.5 font-medium">
-                  Tổng % Đạt Khá, Tốt & Xuất Sắc
-                </div>
-              </div>
-              <button
-                id="btn-detail-ren-luyen"
-                onClick={() => {
-                  setModalTargetClass(activeClassItem || null);
-                  setActiveDetailModal('REN_LUYEN');
-                }}
-                className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 mt-1 cursor-pointer"
-              >
-                Xem chi tiết tỷ lệ từng loại <ChevronRight className="w-3 h-3" />
-              </button>
-            </div>
-
-            {/* Card 3: Đơn Thi Lại */}
-            <div className="p-4 bg-slate-800/80 rounded-xl border border-slate-700/80 flex flex-col justify-between hover:border-slate-600 transition-all">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-slate-400 uppercase font-bold tracking-wider">
-                  Thi Lại/Học Lại
-                </span>
-                <div className="p-2 bg-amber-500/10 text-amber-400 rounded-lg">
-                  <FileCheck className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="my-2">
-                <div className="text-2xl font-mono font-black text-amber-400">
-                  {currentDonThiLai} Sinh viên
-                </div>
-                <div className="text-[11px] text-slate-400 mt-0.5 font-medium">
-                  Tỷ lệ thi lại môn chuyên ngành
-                </div>
-              </div>
-              <button
-                id="btn-detail-thi-lai"
-                onClick={() => {
-                  setModalTargetClass(activeClassItem || null);
-                  setActiveDetailModal('THI_LAI');
-                }}
-                className="text-[11px] font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1 mt-1 cursor-pointer"
-              >
-                Xem chi tiết <ChevronRight className="w-3 h-3" />
-              </button>
-            </div>
-
-            {/* Card 4: Tỷ Lệ Qua Môn */}
-            <div className="p-4 bg-slate-800/80 rounded-xl border border-slate-700/80 flex flex-col justify-between hover:border-slate-600 transition-all">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-slate-400 uppercase font-bold tracking-wider">
-                  Tỷ Lệ Qua Môn
-                </span>
-                <div className="p-2 bg-cyan-500/10 text-cyan-400 rounded-lg">
-                  <TrendingUp className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="my-2">
-                <div className="text-2xl font-mono font-black text-cyan-400">
-                  {currentTyLeQuaMon}%
-                </div>
-                <div className="text-[11px] text-slate-400 mt-0.5 font-medium">
-                  Tỷ lệ sinh viên hoàn thành môn
-                </div>
-              </div>
-              <button
-                id="btn-detail-qua-mon"
-                onClick={() => {
-                  setModalTargetClass(activeClassItem || null);
-                  setActiveDetailModal('QUA_MON');
-                }}
-                className="text-[11px] font-semibold text-cyan-400 hover:text-cyan-300 flex items-center gap-1 mt-1 cursor-pointer"
-              >
-                Xem chi tiết phân bổ điểm số <ChevronRight className="w-3 h-3" />
-              </button>
-            </div>
           </div>
-        ) : (
-          /* CLASS LIST MODE (Dạng List Chỉ Số Từng Lớp Cho Role Admin) */
-          <div className="space-y-3 pt-2">
-            <div className="flex items-center justify-between text-xs text-slate-400 px-1 font-semibold">
-              <span>Danh Sách Chỉ Số Đào Tạo Theo Từng Lớp Chuyên Ngành ({dynamicClassMetrics.length} Lớp)</span>
-              <span>
-                Kỳ: {filterSemester} • {filterMonth === 'ALL' ? 'Tất cả tháng' : 'Tháng ' + filterMonth}
-              </span>
+
+          {/* DANH SÁCH SINH VIÊN CẦN CHÚ Ý */}
+          <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
+                  Sinh viên cần chú ý ({attentionStudentsList.length})
+                </h2>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3">
-              {dynamicClassMetrics.length === 0 ? (
-                <div className="p-8 text-center text-slate-400 text-xs bg-slate-800/50 rounded-xl border border-slate-700">
-                  Chưa có dữ liệu lớp học hoặc sinh viên nào được nhập vào hệ thống.
-                </div>
+            {attentionStudentsList.length === 0 ? (
+              students.length === 0 ? (
+                <EmptyState message="Chưa có dữ liệu sinh viên." />
               ) : (
-                dynamicClassMetrics.map((item) => (
-                <div
-                  key={item.maLop}
-                  className="bg-slate-800/90 border border-slate-700 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-blue-500/50 transition-all"
-                >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-bold text-white text-sm">{item.tenLop}</span>
-                      <span className="text-[11px] font-mono font-bold bg-blue-950 text-blue-300 px-2 py-0.5 rounded border border-blue-800">
-                        {item.maLop}
-                      </span>
-                      <span className="text-xs text-slate-400 font-medium">
-                        • Sĩ số: <strong className="text-white font-mono">{item.siSo} SV</strong>
-                      </span>
-                      <span className="text-xs text-slate-400 font-medium">
-                        • Khoa: <span className="text-slate-300">{item.khoa}</span>
-                      </span>
-                    </div>
-                    <div className="text-xs text-slate-400">Cố vấn học tập: {item.covan}</div>
-                  </div>
-
-                  {/* Class Key Metrics Grid */}
-                  <div className="flex items-center gap-4 flex-wrap shrink-0">
-                    {/* Điểm Rèn Luyện */}
-                    <div className="bg-slate-900/80 px-3 py-2 rounded-lg border border-slate-700/80 text-center min-w-[110px]">
-                      <div className="text-[10px] text-slate-400 uppercase font-bold">
-                        Đ.Rèn Luyện
-                      </div>
-                      <div className="text-sm font-bold font-mono text-emerald-400 mt-0.5">
-                        {item.renLuyenTotal}%
-                      </div>
-                      <div className="text-[9px] text-slate-500">Khá/Tốt/XS</div>
-                    </div>
-
-                    {/* Số Đơn Thi Lại */}
-                    <div className="bg-slate-900/80 px-3 py-2 rounded-lg border border-slate-700/80 text-center min-w-[90px]">
-                      <div className="text-[10px] text-slate-400 uppercase font-bold">Thi Lại</div>
-                      <div className="text-sm font-bold font-mono text-amber-400 mt-0.5">
-                        {item.donThiLai} SV
-                      </div>
-                      <div className="text-[9px] text-slate-500">Sinh viên</div>
-                    </div>
-
-                    {/* Tỷ lệ Qua Môn */}
-                    <div className="bg-slate-900/80 px-3 py-2 rounded-lg border border-slate-700/80 text-center min-w-[100px]">
-                      <div className="text-[10px] text-slate-400 uppercase font-bold">Qua Môn</div>
-                      <div className="text-sm font-bold font-mono text-cyan-400 mt-0.5">
-                        {item.tyLeQuaMon}%
-                      </div>
-                      <div className="text-[9px] text-slate-500">Đạt môn</div>
-                    </div>
-
-                    {/* View Details button for class */}
-                    <button
-                      onClick={() => {
-                        setModalTargetClass(item);
-                        setActiveDetailModal('CLASS_DETAIL');
-                      }}
-                      className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer"
-                    >
-                      Chi Tiết <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                <div className="p-4 text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>Không có trường hợp cảnh báo.</span>
                 </div>
-              )))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Main Bento Grid Layout */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-        {/* Academic Standing Breakdown Visual Bars */}
-        <div className="md:col-span-6 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <PieChart className="w-4 h-4 text-blue-600" />
-              Phân bổ Học lực Sinh viên (Thang GPA 4.0)
-            </h3>
-            <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
-              Tổng {totalSt} SV
-            </span>
-          </div>
-
-          <div className="space-y-2.5 pt-1">
-            {/* 1. Xuất sắc (3.60 - 4.00) */}
-            <div>
-              <div className="flex justify-between text-xs font-semibold mb-1">
-                <span className="text-purple-700 dark:text-purple-400">
-                  Xuất sắc (3.60 - 4.00): {standing.xuatSac} sinh viên
-                </span>
-                <span className="font-mono">
-                  {totalSt > 0 ? Math.round((standing.xuatSac / totalSt) * 100) : 0}%
-                </span>
-              </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
-                <div
-                  className="bg-purple-600 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${totalSt > 0 ? (standing.xuatSac / totalSt) * 100 : 0}%` }}
-                />
-              </div>
-            </div>
-
-            {/* 2. Giỏi (3.20 - 3.59) */}
-            <div>
-              <div className="flex justify-between text-xs font-semibold mb-1">
-                <span className="text-blue-700 dark:text-blue-400">
-                  Giỏi (3.20 - 3.59): {standing.gioi} sinh viên
-                </span>
-                <span className="font-mono">
-                  {totalSt > 0 ? Math.round((standing.gioi / totalSt) * 100) : 0}%
-                </span>
-              </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
-                <div
-                  className="bg-blue-600 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${totalSt > 0 ? (standing.gioi / totalSt) * 100 : 0}%` }}
-                />
-              </div>
-            </div>
-
-            {/* 3. Khá (2.80 - 3.19) */}
-            <div>
-              <div className="flex justify-between text-xs font-semibold mb-1">
-                <span className="text-emerald-700 dark:text-emerald-400">
-                  Khá (2.80 - 3.19): {standing.kha} sinh viên
-                </span>
-                <span className="font-mono">
-                  {totalSt > 0 ? Math.round((standing.kha / totalSt) * 100) : 0}%
-                </span>
-              </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
-                <div
-                  className="bg-emerald-500 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${totalSt > 0 ? (standing.kha / totalSt) * 100 : 0}%` }}
-                />
-              </div>
-            </div>
-
-            {/* 4. Trung bình Khá (2.40 - 2.79) */}
-            <div>
-              <div className="flex justify-between text-xs font-semibold mb-1">
-                <span className="text-indigo-700 dark:text-indigo-400">
-                  Trung bình Khá (2.40 - 2.79): {standing.tbk || 0} sinh viên
-                </span>
-                <span className="font-mono">
-                  {totalSt > 0 ? Math.round(((standing.tbk || 0) / totalSt) * 100) : 0}%
-                </span>
-              </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
-                <div
-                  className="bg-indigo-500 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${totalSt > 0 ? ((standing.tbk || 0) / totalSt) * 100 : 0}%` }}
-                />
-              </div>
-            </div>
-
-            {/* 5. Trung bình (2.00 - 2.39) */}
-            <div>
-              <div className="flex justify-between text-xs font-semibold mb-1">
-                <span className="text-amber-700 dark:text-amber-400">
-                  Trung bình (2.00 - 2.39): {standing.trungBinh} sinh viên
-                </span>
-                <span className="font-mono">
-                  {totalSt > 0 ? Math.round((standing.trungBinh / totalSt) * 100) : 0}%
-                </span>
-              </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
-                <div
-                  className="bg-amber-500 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${totalSt > 0 ? (standing.trungBinh / totalSt) * 100 : 0}%` }}
-                />
-              </div>
-            </div>
-
-            {/* 6. Yếu (1.00 - 1.99) */}
-            <div>
-              <div className="flex justify-between text-xs font-semibold mb-1">
-                <span className="text-orange-700 dark:text-orange-400">
-                  Yếu (1.00 - 1.99): {standing.yeu} sinh viên
-                </span>
-                <span className="font-mono">
-                  {totalSt > 0 ? Math.round((standing.yeu / totalSt) * 100) : 0}%
-                </span>
-              </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
-                <div
-                  className="bg-orange-500 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${totalSt > 0 ? (standing.yeu / totalSt) * 100 : 0}%` }}
-                />
-              </div>
-            </div>
-
-            {/* 7. Kém (< 1.00) */}
-            <div>
-              <div className="flex justify-between text-xs font-semibold mb-1">
-                <span className="text-rose-700 dark:text-rose-400">
-                  Kém (&lt; 1.00): {standing.kem || 0} sinh viên
-                </span>
-                <span className="font-mono">
-                  {totalSt > 0 ? Math.round(((standing.kem || 0) / totalSt) * 100) : 0}%
-                </span>
-              </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
-                <div
-                  className="bg-rose-500 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${totalSt > 0 ? ((standing.kem || 0) / totalSt) * 100 : 0}%` }}
-                />
-              </div>
-            </div>
-
-            {/* 8. Chưa có điểm môn học (GPA) */}
-            {standing.chuaCoDiem > 0 && (
-              <div>
-                <div className="flex justify-between text-xs font-semibold mb-1">
-                  <span className="text-slate-500 dark:text-slate-400">
-                    Chưa có điểm học tập (GPA): {standing.chuaCoDiem} sinh viên
-                  </span>
-                  <span className="font-mono text-slate-400">
-                    {totalSt > 0 ? Math.round((standing.chuaCoDiem / totalSt) * 100) : 0}%
-                  </span>
+              )
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 uppercase text-[11px] font-semibold tracking-wider border-b border-slate-200 dark:border-slate-800">
+                      <tr>
+                        <th className="py-2.5 px-3">Mã SV</th>
+                        <th className="py-2.5 px-3">Họ và Tên</th>
+                        <th className="py-2.5 px-3">Lớp</th>
+                        <th className="py-2.5 px-3">Khoa</th>
+                        <th className="py-2.5 px-3">Lý Do</th>
+                        <th className="py-2.5 px-3 text-center">Thao Tác</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {paginatedAttentionList.map((st) => (
+                        <tr key={st.maSV} className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors">
+                          <td className="py-2.5 px-3 font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{st.maSV}</td>
+                          <td className="py-2.5 px-3 font-medium text-slate-900 dark:text-slate-100">{st.hoTen}</td>
+                          <td className="py-2.5 px-3 font-mono text-slate-700 dark:text-slate-300">{st.lop}</td>
+                          <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300">{st.khoa}</td>
+                          <td className="py-2.5 px-3">
+                            <StatusBadge label={st.attentionReason} variant="danger" />
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const found = (students || []).find((s) => s.maSV === st.maSV);
+                                if (found) setDrilldownStudent(found);
+                              }}
+                              className="px-2 py-1 rounded text-xs font-semibold text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/60 transition-colors cursor-pointer"
+                            >
+                              Xem điểm
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
-                  <div
-                    className="bg-slate-400 h-full rounded-full transition-all duration-500"
-                    style={{ width: `${totalSt > 0 ? (standing.chuaCoDiem / totalSt) * 100 : 0}%` }}
+                <PaginationBar
+                  currentPage={attentionPage}
+                  pageSize={attentionPageSize}
+                  totalItems={attentionStudentsList.length}
+                  onPageChange={setAttentionPage}
+                  onPageSizeChange={setAttentionPageSize}
+                />
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* ADMIN CLASS DRILL-DOWN                                                    */}
+      {/* ========================================================================= */}
+      {!isStudent && adminTab === 'CLASS_DRILLDOWN' && (
+        <div className="space-y-4">
+          {!drilldownClassCode && (
+            <>
+              <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-3">
+                <DataToolbar
+                  searchValue={classSearchQuery}
+                  onSearchChange={setClassSearchQuery}
+                  searchPlaceholder="Tìm theo mã lớp hoặc khoa..."
+                  hasActiveFilters={Boolean(classSearchQuery) || hasAdminFilters}
+                  onClearFilters={() => {
+                    setClassSearchQuery('');
+                    clearAdminFilters();
+                  }}
+                  filters={
+                    <>
+                      <select
+                        aria-label="Lọc theo khoa"
+                        value={filterFaculty}
+                        onChange={(e) => {
+                          setFilterFaculty(e.target.value);
+                          setSelectedClassFilter('ALL');
+                        }}
+                        className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5 font-medium cursor-pointer"
+                      >
+                        <option value="ALL">Tất cả khoa</option>
+                        {uniqueFaculties.map((f) => (
+                          <option key={f} value={f}>{f}</option>
+                        ))}
+                      </select>
+
+                      <select
+                        aria-label="Lọc theo lớp"
+                        value={selectedClassFilter}
+                        onChange={(e) => setSelectedClassFilter(e.target.value)}
+                        className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5 font-medium cursor-pointer"
+                      >
+                        <option value="ALL">Tất cả lớp</option>
+                        {uniqueClasses.map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    </>
+                  }
+                />
+              </div>
+
+              {classMetricList.length === 0 ? (
+                <EmptyState message="Chưa có dữ liệu lớp học." />
+              ) : filteredClassMetrics.length === 0 ? (
+                <FilteredEmptyState
+                  onClearFilters={() => {
+                    setClassSearchQuery('');
+                    clearAdminFilters();
+                  }}
+                />
+              ) : (
+                <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 uppercase text-[11px] font-semibold tracking-wider border-b border-slate-200 dark:border-slate-800">
+                        <tr>
+                          <th className="py-2.5 px-3">Lớp</th>
+                          <th className="py-2.5 px-3">Khoa / Ngành</th>
+                          <th className="py-2.5 px-3 text-center">Sĩ Số</th>
+                          <th className="py-2.5 px-3 text-center">Điểm TB</th>
+                          <th className="py-2.5 px-3 text-center">Tỷ Lệ Đạt</th>
+                          <th className="py-2.5 px-3 text-center">Điểm RL TB</th>
+                          <th className="py-2.5 px-3 text-center">Cần Chú Ý</th>
+                          <th className="py-2.5 px-3 text-center">Thao Tác</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                        {paginatedClassList.map((c) => (
+                          <tr
+                            key={c.maLop}
+                            tabIndex={0}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setDrilldownClassCode(c.maLop);
+                                setSearchStudentQuery('');
+                              }
+                            }}
+                            className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                          >
+                            <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-slate-100 font-mono">
+                              {c.maLop}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-700 dark:text-slate-300">
+                              {c.khoa}
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
+                              {c.siSo}
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-mono tabular-nums">
+                              {c.diemTBHocTap > 0 ? (
+                                <strong className="text-slate-900 dark:text-slate-100">{c.diemTBHocTap.toFixed(2)}</strong>
+                              ) : (
+                                <span className="text-slate-400 dark:text-slate-500">Chưa có</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-mono tabular-nums">
+                              {c.tyLeQuaMon > 0 ? (
+                                <span className="font-semibold text-emerald-700 dark:text-emerald-400">{c.tyLeQuaMon}%</span>
+                              ) : (
+                                <span className="text-slate-400 dark:text-slate-500">Chưa có</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-mono tabular-nums font-semibold text-blue-700 dark:text-blue-400">
+                              {c.diemRLLopTB > 0 ? `${c.diemRLLopTB}` : 'Chưa có'}
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-mono tabular-nums">
+                              {c.soSVCandChuY > 0 ? (
+                                <StatusBadge label={`${c.soSVCandChuY} SV`} variant="danger" />
+                              ) : (
+                                <span className="text-emerald-700 dark:text-emerald-400">0</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDrilldownClassCode(c.maLop);
+                                  setSearchStudentQuery('');
+                                }}
+                                className="px-2.5 py-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/60 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                              >
+                                <span>Chi tiết</span>
+                                <ChevronRight className="w-3 h-3" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <PaginationBar
+                    currentPage={classPage}
+                    pageSize={classPageSize}
+                    totalItems={filteredClassMetrics.length}
+                    onPageChange={setClassPage}
+                    onPageSizeChange={setClassPageSize}
+                  />
+                </div>
+              )}
+            </>
+          )}
+
+          {/* LEVEL 2: DRILL-DOWN CHI TIẾT LỚP */}
+          {drilldownClassCode && drilldownClassObj && (
+            <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDrilldownClassCode(null);
+                      setDrilldownStudent(null);
+                    }}
+                    className="px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors flex items-center gap-1 text-xs font-semibold cursor-pointer whitespace-nowrap"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>Danh sách lớp</span>
+                  </button>
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 font-mono">
+                    {drilldownClassObj.maLop} · {drilldownClassObj.khoa}
+                  </h2>
+                </div>
+
+                <div className="w-full sm:w-64">
+                  <DataToolbar
+                    searchValue={searchStudentQuery}
+                    onSearchChange={setSearchStudentQuery}
+                    searchPlaceholder="Tìm theo Mã SV hoặc Họ tên..."
                   />
                 </div>
               </div>
-            )}
-          </div>
-        </div>
 
-        {/* Training Point Breakdown Visual Bars (Tỷ lệ rèn luyện) */}
-        <div className="md:col-span-6 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <GraduationCap className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-              Phân bổ Điểm Rèn Luyện Sinh Viên
-            </h3>
-            <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 rounded">
-              Tổng Khá, Tốt & XS: {currentRenLuyenTotal}%
-            </span>
-          </div>
-
-          <div className="space-y-3 pt-1">
-            {/* 1. Xuất sắc (90 - 100 điểm) */}
-            <div>
-              <div className="flex justify-between text-xs font-semibold mb-1">
-                <span className="text-purple-700 dark:text-purple-400">
-                  Xuất sắc (90 - 100 điểm)
-                </span>
-                <span className="font-mono text-purple-700 dark:text-purple-400 font-bold">
-                  {currentRenLuyenBreakdown.xuatSac}%
-                </span>
-              </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                <div
-                  className="bg-purple-600 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${currentRenLuyenBreakdown.xuatSac}%` }}
-                />
-              </div>
-            </div>
-
-            {/* 2. Tốt (80 - 89 điểm) */}
-            <div>
-              <div className="flex justify-between text-xs font-semibold mb-1">
-                <span className="text-blue-700 dark:text-blue-400">
-                  Tốt (80 - 89 điểm)
-                </span>
-                <span className="font-mono text-blue-700 dark:text-blue-400 font-bold">
-                  {currentRenLuyenBreakdown.tot}%
-                </span>
-              </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                <div
-                  className="bg-blue-600 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${currentRenLuyenBreakdown.tot}%` }}
-                />
-              </div>
-            </div>
-
-            {/* 3. Khá (70 - 79 điểm) */}
-            <div>
-              <div className="flex justify-between text-xs font-semibold mb-1">
-                <span className="text-emerald-700 dark:text-emerald-400">
-                  Khá (70 - 79 điểm)
-                </span>
-                <span className="font-mono text-emerald-700 dark:text-emerald-400 font-bold">
-                  {currentRenLuyenBreakdown.kha}%
-                </span>
-              </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                <div
-                  className="bg-emerald-500 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${currentRenLuyenBreakdown.kha}%` }}
-                />
-              </div>
-            </div>
-
-            {/* 4. Trung bình (50 - 69 điểm) */}
-            <div>
-              <div className="flex justify-between text-xs font-semibold mb-1">
-                <span className="text-amber-700 dark:text-amber-400">
-                  Trung bình (50 - 69 điểm)
-                </span>
-                <span className="font-mono text-amber-700 dark:text-amber-400 font-bold">
-                  {currentRenLuyenBreakdown.trungBinh}%
-                </span>
-              </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                <div
-                  className="bg-amber-500 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${currentRenLuyenBreakdown.trungBinh}%` }}
-                />
-              </div>
-            </div>
-
-            {/* 5. Yếu / Kém (< 50 điểm) */}
-            <div>
-              <div className="flex justify-between text-xs font-semibold mb-1">
-                <span className="text-rose-700 dark:text-rose-400">
-                  Yếu & Kém (&lt; 50 điểm)
-                </span>
-                <span className="font-mono text-rose-700 dark:text-rose-400 font-bold">
-                  {currentRenLuyenBreakdown.yeuKem}%
-                </span>
-              </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                <div
-                  className="bg-rose-500 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${currentRenLuyenBreakdown.yeuKem}%` }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
-            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-              Phạm vi: {activeClassItem ? (activeClassItem.tenLop.startsWith('Lớp') ? activeClassItem.tenLop : `Lớp ${activeClassItem.maLop}`) : 'Tất cả các lớp'}
-            </span>
-            <button
-              onClick={() => {
-                setModalTargetClass(activeClassItem || null);
-                setActiveDetailModal('REN_LUYEN');
-              }}
-              className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
-            >
-              Xem chi tiết <ChevronRight className="w-3 h-3" />
-            </button>
-          </div>
-        </div>
-
-        {/* Recent Grades Section for Student / Admin */}
-        <div className="md:col-span-12 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm flex flex-col">
-          <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-800/30">
-            <div>
-              <div className="flex items-center gap-2">
-                <BookOpen className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                <h3 className="font-bold text-slate-800 dark:text-white text-sm flex items-center gap-2 flex-wrap">
-                  <span>
-                    {isStudent
-                      ? `Bảng Điểm Môn Học Trong Thời Điểm Hiện Tại (Thời Gian Thực)`
-                      : 'Cập nhật điểm gần đây (Toàn Hệ Thống)'}
-                  </span>
-                  {isStudent && (
-                    <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800/80 shadow-xs">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                      Thời gian thực: {currentActiveSemester} ({currentActiveYear || '2025-2026'})
-                    </span>
-                  )}
-                </h3>
-              </div>
-              {isStudent && (
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
-                  Sinh viên:{' '}
-                  <strong className="text-slate-800 dark:text-slate-200">
-                    {currentStudent?.hoTen || currentStudentCode}
-                  </strong>{' '}
-                  ({currentStudentCode.toUpperCase()}) • Lớp: {currentStudent?.lop || 'Chuyên ngành'}
-                </p>
-              )}
-            </div>
-
-            {/* Quick Action to Full Historical Transcript in Bảng Điểm & GPA */}
-            {isStudent && onSwitchView && (
-              <button
-                onClick={() => onSwitchView('grades')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-bold transition-all cursor-pointer shadow-xs shrink-0"
-                title="Xem các học kỳ và năm học cũ trong Bảng Điểm & GPA"
-              >
-                <Award className="w-3.5 h-3.5" />
-                <span>Xem Bảng Điểm & GPA Cũ</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-
-          {/* Persistent Historical Grades Guidance Banner for Students */}
-          {isStudent && (
-            <div className="px-5 py-3.5 bg-indigo-50/70 dark:bg-indigo-950/30 border-b border-indigo-100 dark:border-indigo-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-2.5 text-indigo-900 dark:text-indigo-200">
-                <div className="w-7 h-7 rounded-lg bg-indigo-100 dark:bg-indigo-900/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
-                  <Award className="w-4 h-4" />
-                </div>
-                <div>
-                  <p className="font-bold text-slate-900 dark:text-white">
-                    Bảng điểm của các học kỳ, năm học cũ được lưu trữ tại mục &ldquo;Bảng Điểm & GPA&rdquo;
-                  </p>
-                  <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                    Trang tổng quan chỉ hiển thị điểm môn học trong thời điểm hiện tại ({currentActiveSemester} - {currentActiveYear || '2025-2026'}).
-                    {historicalOldGrades.length > 0 ? (
-                      <span className="font-semibold text-indigo-700 dark:text-indigo-300 ml-1">
-                        (Bạn có {historicalOldGrades.length} đầu điểm môn học cũ đã được lưu trữ an toàn).
-                      </span>
-                    ) : (
-                      <span className="text-slate-500 ml-1">
-                        (Toàn bộ điểm lịch sử và điểm tích lũy được bảo lưu tại Bảng điểm & GPA).
-                      </span>
-                    )}
-                  </p>
-                </div>
-              </div>
-              {onSwitchView && (
-                <button
-                  onClick={() => onSwitchView('grades')}
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 hover:underline cursor-pointer shrink-0"
-                >
-                  <span>Mở Bảng Điểm & GPA</span>
-                  <ChevronRight className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* List format of courses for student: strictly real-time current semester */}
-          {isStudent ? (
-            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {currentRealtimeGrades.length === 0 ? (
-                <div className="p-8 text-center space-y-3">
-                  <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto">
-                    <BookOpen className="w-6 h-6" />
-                  </div>
-                  <h4 className="text-sm font-bold text-slate-800 dark:text-white">
-                    Chưa có bảng điểm trong học kỳ hiện tại ({currentActiveSemester} - {currentActiveYear || '2025-2026'})
-                  </h4>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
-                    Các bảng điểm của các học kỳ, năm học cũ ({historicalOldGrades.length} môn học) được lưu trữ đầy đủ và có thể tra cứu bất cứ lúc nào trong mục &ldquo;Bảng Điểm & GPA&rdquo;.
-                  </p>
-                  {onSwitchView && (
-                    <button
-                      onClick={() => onSwitchView('grades')}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md transition-all cursor-pointer mt-1"
-                    >
-                      <Award className="w-4 h-4" />
-                      <span>Xem Bảng Điểm & GPA Cũ / Toàn Khóa</span>
-                    </button>
-                  )}
-                </div>
+              {drilldownClassStudents.length === 0 ? (
+                searchStudentQuery ? (
+                  <FilteredEmptyState onClearFilters={() => setSearchStudentQuery('')} />
+                ) : (
+                  <EmptyState message="Chưa có sinh viên trong lớp này." />
+                )
               ) : (
-                currentRealtimeGrades.map((item) => (
-                  <div
-                    key={item.id}
-                    className="p-4 hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors flex flex-col md:flex-row md:items-center justify-between gap-4"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5 shadow-xs">
-                        {item.maMH.slice(-3)}
-                      </div>
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-bold text-slate-900 dark:text-white text-sm">
-                            {item.tenMH || item.maMH}
-                          </span>
-                          <span className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-                            {item.maMH}
-                          </span>
-                          <span className="text-[11px] font-medium text-slate-500">
-                            • {item.soTinChi || 3} Tín chỉ
-                          </span>
-                          <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2.5 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                            <span>{item.hocKy} ({item.namHoc})</span>
-                          </span>
-                        </div>
-                        {/* Component Score Chips */}
-                        <div className="flex items-center gap-3 text-xs text-slate-600 dark:text-slate-400 flex-wrap pt-0.5">
-                          <span className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded font-medium">
-                            Chuyên cần (10%):{' '}
-                            <strong className="text-slate-900 dark:text-white font-mono">
-                              {item.diemChuyenCan}
-                            </strong>
-                          </span>
-                          <span className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded font-medium">
-                            Giữa kỳ (30%):{' '}
-                            <strong className="text-slate-900 dark:text-white font-mono">
-                              {item.diemGiuaKy}
-                            </strong>
-                          </span>
-                          <span className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded font-medium">
-                            Cuối kỳ (60%):{' '}
-                            <strong className="text-slate-900 dark:text-white font-mono">
-                              {item.diemCuoiKy}
-                            </strong>
-                          </span>
-                        </div>
-                      </div>
-                    </div>
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 uppercase text-[11px] font-semibold tracking-wider border-b border-slate-200 dark:border-slate-800">
+                        <tr>
+                          <th className="py-2.5 px-3">STT</th>
+                          <th className="py-2.5 px-3">Mã SV</th>
+                          <th className="py-2.5 px-3">Họ và Tên</th>
+                          <th className="py-2.5 px-3 text-center">Giới Tính</th>
+                          <th className="py-2.5 px-3">Ngày Sinh</th>
+                          <th className="py-2.5 px-3 text-center">Điểm TB</th>
+                          <th className="py-2.5 px-3 text-center">Môn Nợ</th>
+                          <th className="py-2.5 px-3 text-center">Điểm RL</th>
+                          <th className="py-2.5 px-3 text-center">Chuyên Cần</th>
+                          <th className="py-2.5 px-3 text-center">Thao Tác</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                        {paginatedDrilldownStudents.map((st, idx) => {
+                          const stGrades = (allGrades || []).filter((g) => g.maSV.toLowerCase() === st.maSV.toLowerCase());
+                          const totalC = stGrades.reduce((sum, g) => sum + (g.soTinChi || 3), 0);
+                          const sum10 = stGrades.reduce((sum, g) => sum + (g.diemTongKet10 || 0) * (g.soTinChi || 3), 0);
+                          const gpa10 = totalC > 0 ? (sum10 / totalC).toFixed(2) : 'Chưa có';
+                          const failedCount = stGrades.filter((g) => g.trangThai === 'FAILED' || (g.diemTongKet10 || 0) < 4.0).length;
 
-                    <div className="flex items-center gap-4 shrink-0 self-end md:self-center pt-2 md:pt-0 border-t md:border-t-0 border-slate-100 dark:border-slate-800 w-full md:w-auto justify-between md:justify-end">
-                      <div className="text-right">
-                        <div className="text-[11px] text-slate-400 font-medium">
-                          Điểm Tổng Kết
-                        </div>
-                        <div className="text-lg font-black font-mono text-blue-600 dark:text-blue-400 leading-none mt-0.5">
-                          {item.diemTongKet10}{' '}
-                          <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
-                            ({item.diemChu})
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-slate-500 font-medium mt-0.5">
-                          Thang 4: {item.diemThang4}
-                        </div>
-                      </div>
+                          const stRL = (trainingPoints || []).filter((r) => r.maSV && r.maSV.toLowerCase() === st.maSV.toLowerCase());
+                          const recentRL = stRL.length > 0 ? stRL[stRL.length - 1].diemRL : null;
 
-                      <div>
-                        {item.trangThai === 'PASSED' ? (
-                          <span className="px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 inline-flex items-center gap-1">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                            Đạt môn
-                          </span>
-                        ) : (
-                          <span className="px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-200 dark:border-rose-800 inline-flex items-center gap-1">
-                            <XCircle className="w-3.5 h-3.5 text-rose-600" />
-                            Chưa đạt
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          ) : (
-            /* Class-based Grade Management for ADMIN / LECTURER */
-            <div className="p-5 flex-1 flex flex-col space-y-4">
-              {selectedAdminClassCode === null ? (
-                /* LEVEL 1: LIST OF CLASSES */
-                <div className="space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
-                    <div>
-                      <h4 className="font-bold text-slate-800 dark:text-white text-xs uppercase tracking-wider flex items-center gap-2">
-                        <Folder className="w-4 h-4 text-blue-500" />
-                        Danh Sách Bảng Điểm Theo Từng Lớp Chuyên Ngành ({allClassesList.length} Lớp)
-                      </h4>
-                    </div>
-                  </div>
+                          const stAtt = (attendanceList || []).filter((a) => a.maSV?.toLowerCase() === st.maSV.toLowerCase());
+                          const missedPeriods = stAtt.reduce((sum, a) => sum + (a.soTietNghi || 0), 0);
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {allClassesList.map((classObj) => {
-                      const classStudents = (students || []).filter(s => s.lop === classObj.maLop);
-                      const studentCount = classStudents.length || classObj.siSo;
-                      const classSubjects = getSubjectsForClass(classObj.maLop);
-
-                      return (
-                        <div
-                          key={classObj.maLop}
-                          onClick={() => setSelectedAdminClassCode(classObj.maLop)}
-                          className="bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 hover:border-blue-500 dark:hover:border-blue-400 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden flex flex-col justify-between"
-                        >
-                          <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-blue-500/10 to-indigo-500/10 rounded-bl-full pointer-events-none" />
-
-                          <div>
-                            <div className="flex items-center justify-between gap-2 mb-2">
-                              <span className="px-2.5 py-1 rounded-lg text-xs font-black font-mono bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
-                                {classObj.maLop}
-                              </span>
-                              <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
-                                <FileSpreadsheet className="w-3 h-3" />
-                                {classSubjects.length} Môn học
-                              </span>
-                            </div>
-
-                            <h5 className="font-bold text-slate-900 dark:text-white text-sm group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                              {classObj.tenLop}
-                            </h5>
-
-                            <div className="text-xs text-slate-500 dark:text-slate-400 space-y-1 mt-2 font-medium">
-                              <div className="flex items-center justify-between">
-                                <span>Sĩ số sinh viên:</span>
-                                <strong className="text-slate-800 dark:text-slate-200 font-mono">{studentCount} SV</strong>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span>Khoa chuyên môn:</span>
-                                <span className="text-slate-700 dark:text-slate-300 truncate max-w-[140px]">{classObj.khoa}</span>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span>Cố vấn học tập:</span>
-                                <span className="text-slate-700 dark:text-slate-300 truncate max-w-[140px]">{classObj.covan}</span>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="pt-3 mt-3 border-t border-slate-100 dark:border-slate-700/60 flex items-center justify-between text-xs font-bold text-blue-600 dark:text-blue-400 group-hover:translate-x-0.5 transition-transform">
-                            <span>Bấm để mở file bảng điểm các môn</span>
-                            <ChevronRight className="w-4 h-4" />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : (
-                /* LEVEL 2: SUBJECT GRADE FILES FOR SELECTED CLASS */
-                <div className="space-y-4 animate-fade-in">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-blue-50/60 dark:bg-slate-800/80 rounded-xl border border-blue-100 dark:border-slate-700">
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => setSelectedAdminClassCode(null)}
-                        className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
-                      >
-                        <ArrowLeft className="w-3.5 h-3.5" />
-                        Tất cả các lớp
-                      </button>
-                      <div>
-                        <h4 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
-                          <span>Lớp: <span className="font-mono text-blue-600 dark:text-blue-400">{selectedAdminClassCode}</span></span>
-                          <span className="text-slate-400 font-normal">|</span>
-                          <span className="text-xs text-slate-600 dark:text-slate-300">
-                            {allClassesList.find(c => c.maLop === selectedAdminClassCode)?.tenLop || 'Danh Sách File Bảng Điểm Môn Học'}
-                          </span>
-                        </h4>
-                      </div>
-                    </div>
-
-                    <div className="relative w-full sm:w-64">
-                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-                      <input
-                        type="text"
-                        value={subjectSearchQuery}
-                        onChange={(e) => setSubjectSearchQuery(e.target.value)}
-                        placeholder="Tìm môn học (Tên hoặc mã)..."
-                        className="w-full pl-8 pr-3 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Course File Cards Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {getSubjectsForClass(selectedAdminClassCode).filter(
-                      (m) =>
-                        (m?.tenMH || '').toLowerCase().includes(subjectSearchQuery.toLowerCase()) ||
-                        (m?.maMH || '').toLowerCase().includes(subjectSearchQuery.toLowerCase())
-                    ).map((monHoc) => {
-                      const studentGrades = getSubjectGradeListForClass(selectedAdminClassCode, monHoc);
-                      const passedCount = studentGrades.filter((g) => g.trangThai === 'PASSED').length;
-                      const passPercent = studentGrades.length > 0 ? Math.round((passedCount / studentGrades.length) * 100) : 0;
-                      const avg10 = studentGrades.length > 0
-                        ? (studentGrades.reduce((sum, g) => sum + g.diemTongKet10, 0) / studentGrades.length).toFixed(1)
-                        : '0.0';
-
-                      const fileName = `BangDiem_${selectedAdminClassCode}_${monHoc.maMH}.xlsx`;
-                      const currentClassInfo = allClassesList.find(c => c.maLop === selectedAdminClassCode);
-
-                      return (
-                        <div
-                          key={monHoc.maMH}
-                          className="bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 rounded-2xl p-4 shadow-sm hover:border-emerald-500 dark:hover:border-emerald-400 transition-all flex flex-col justify-between"
-                        >
-                          <div>
-                            {/* File Header */}
-                            <div className="flex items-start justify-between gap-3 mb-3">
-                              <div className="flex items-center gap-2.5">
-                                <div className="p-2 bg-emerald-50 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 rounded-xl border border-emerald-200 dark:border-emerald-800/80 shrink-0">
-                                  <FileSpreadsheet className="w-5 h-5" />
-                                </div>
-                                <div>
-                                  <div className="text-[10px] font-mono font-semibold text-emerald-600 dark:text-emerald-400">
-                                    {fileName}
-                                  </div>
-                                  <h5 className="font-bold text-slate-900 dark:text-white text-sm mt-0.5 leading-snug">
-                                    {monHoc.tenMH}
-                                  </h5>
-                                </div>
-                              </div>
-                              <span className="text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded text-slate-600 dark:text-slate-300 shrink-0">
-                                {monHoc.maMH}
-                              </span>
-                            </div>
-
-                            {/* Info Stats */}
-                            <div className="grid grid-cols-3 gap-2 p-2.5 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-100 dark:border-slate-800 text-xs mb-3">
-                              <div>
-                                <span className="text-[10px] text-slate-400 block">Sĩ số bảng điểm</span>
-                                <strong className="text-slate-800 dark:text-slate-200 font-mono">{studentGrades.length} SV</strong>
-                              </div>
-                              <div>
-                                <span className="text-[10px] text-slate-400 block">Điểm TB Lớp</span>
-                                <strong className="text-blue-600 dark:text-blue-400 font-mono">{avg10} / 10</strong>
-                              </div>
-                              <div>
-                                <span className="text-[10px] text-slate-400 block">Tỷ lệ đạt</span>
-                                <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{passPercent}%</strong>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Action Buttons */}
-                          <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-700/60">
-                            <button
-                              onClick={() =>
-                                setSubjectGradeSheetModal({
-                                  maLop: selectedAdminClassCode,
-                                  tenLop: currentClassInfo?.tenLop || `Lớp ${selectedAdminClassCode}`,
-                                  monHoc,
-                                  studentGrades,
-                                })
-                              }
-                              className="flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900 border border-blue-200 dark:border-blue-800 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                              Xem Bảng Điểm
-                            </button>
-                            <button
-                              onClick={() => handleExportSubjectExcel(selectedAdminClassCode, monHoc, studentGrades)}
-                              className="px-3 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm shrink-0"
-                              title="Tải File Excel Bảng Điểm (.xlsx)"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                              Tải Excel
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* DETAILED METRICS MODAL */}
-      {activeDetailModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden text-slate-900 dark:text-white flex flex-col max-h-[90vh]">
-            {/* Modal Header */}
-            <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/40">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 rounded-xl">
-                  {activeDetailModal === 'REN_LUYEN' && <GraduationCap className="w-5 h-5" />}
-                  {activeDetailModal === 'THI_LAI' && <FileCheck className="w-5 h-5" />}
-                  {activeDetailModal === 'QUA_MON' && <TrendingUp className="w-5 h-5" />}
-                  {activeDetailModal === 'CLASS_DETAIL' && <Building className="w-5 h-5" />}
-                </div>
-                <div>
-                  <h3 className="font-bold text-base">
-                    {activeDetailModal === 'REN_LUYEN' && 'Chi Tiết Tỷ Lệ Điểm Rèn Luyện'}
-                    {activeDetailModal === 'THI_LAI' && 'Chi Tiết Thi Lại/Học Lại'}
-                    {activeDetailModal === 'QUA_MON' && 'Chi Tiết Phân Bổ Tỷ Lệ Qua Môn'}
-                    {activeDetailModal === 'CLASS_DETAIL' &&
-                      `Chỉ Số Chi Tiết: ${modalTargetClass?.tenLop || 'Lớp Chuyên Ngành'}`}
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">
-                    {modalTargetClass
-                      ? `${modalTargetClass.tenLop.startsWith('Lớp') ? modalTargetClass.tenLop : `Lớp ${modalTargetClass.maLop}`}`
-                      : `Phạm vi: ${selectedClassFilter === 'ALL' ? 'Tất cả các lớp' : selectedClassFilter}`}{' '}
-                    • Kỳ: {filterSemester} •{' '}
-                    {filterMonth === 'ALL' ? 'Tất cả tháng' : 'Tháng ' + filterMonth}
-                  </p>
-                </div>
-              </div>
-
-              <button
-                onClick={() => {
-                  setActiveDetailModal(null);
-                  setModalTargetClass(null);
-                }}
-                className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full text-slate-500 dark:text-slate-400 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 overflow-y-auto space-y-5 text-xs">
-              {/* 1. REN LUYEN BREAKDOWN */}
-              {activeDetailModal === 'REN_LUYEN' && (
-                <div className="space-y-4">
-                  <div className="p-4 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 rounded-xl flex items-center justify-between">
-                    <div>
-                      <div className="text-[11px] font-bold uppercase text-emerald-800 dark:text-emerald-300">
-                        Tổng % Đạt Loại Khá, Tốt & Xuất Sắc
-                      </div>
-                      <div className="text-2xl font-black font-mono text-emerald-600 dark:text-emerald-400 mt-0.5">
-                        {currentRenLuyenTotal}%
-                      </div>
-                    </div>
-                    <div className="text-right text-[11px] text-emerald-700 dark:text-emerald-300 font-medium">
-                      Bao gồm các mức điểm rèn luyện &ge; 70đ
-                    </div>
-                  </div>
-
-                  <div className="space-y-3 pt-2">
-                    <h4 className="font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-[11px]">
-                      Phân Bổ Tỷ Lệ Theo Từng Loại Rèn Luyện:
-                    </h4>
-
-                    {/* Xuất sắc */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between font-semibold">
-                        <span className="text-purple-600 dark:text-purple-400">
-                          1. Loại Xuất Sắc (90 - 100 điểm)
-                        </span>
-                        <span className="font-mono">{currentRenLuyenBreakdown.xuatSac}%</span>
-                      </div>
-                      <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                        <div
-                          className="bg-purple-600 h-full rounded-full"
-                          style={{ width: `${currentRenLuyenBreakdown.xuatSac}%` }}
-                        ></div>
-                      </div>
-                    </div>
-
-                    {/* Tốt */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between font-semibold">
-                        <span className="text-emerald-600 dark:text-emerald-400">
-                          2. Loại Tốt (80 - 89 điểm)
-                        </span>
-                        <span className="font-mono">{currentRenLuyenBreakdown.tot}%</span>
-                      </div>
-                      <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                        <div
-                          className="bg-emerald-500 h-full rounded-full"
-                          style={{ width: `${currentRenLuyenBreakdown.tot}%` }}
-                        ></div>
-                      </div>
-                    </div>
-
-                    {/* Khá */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between font-semibold">
-                        <span className="text-blue-600 dark:text-blue-400">
-                          3. Loại Khá (70 - 79 điểm)
-                        </span>
-                        <span className="font-mono">{currentRenLuyenBreakdown.kha}%</span>
-                      </div>
-                      <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                        <div
-                          className="bg-blue-500 h-full rounded-full"
-                          style={{ width: `${currentRenLuyenBreakdown.kha}%` }}
-                        ></div>
-                      </div>
-                    </div>
-
-                    {/* Trung bình */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between font-semibold">
-                        <span className="text-amber-600 dark:text-amber-400">
-                          4. Loại Trung Bình (50 - 69 điểm)
-                        </span>
-                        <span className="font-mono">{currentRenLuyenBreakdown.trungBinh}%</span>
-                      </div>
-                      <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                        <div
-                          className="bg-amber-500 h-full rounded-full"
-                          style={{ width: `${currentRenLuyenBreakdown.trungBinh}%` }}
-                        ></div>
-                      </div>
-                    </div>
-
-                    {/* Yếu / Kém */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between font-semibold">
-                        <span className="text-rose-600 dark:text-rose-400">
-                          5. Loại Yếu / Kém (&lt; 50 điểm)
-                        </span>
-                        <span className="font-mono">{currentRenLuyenBreakdown.yeuKem}%</span>
-                      </div>
-                      <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                        <div
-                          className="bg-rose-500 h-full rounded-full"
-                          style={{ width: `${currentRenLuyenBreakdown.yeuKem}%` }}
-                        ></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* 2. THI LAI BREAKDOWN */}
-              {activeDetailModal === 'THI_LAI' && (
-                <div className="space-y-4">
-                  <div className="p-4 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 rounded-xl flex items-center justify-between">
-                    <div>
-                      <div className="text-[11px] font-bold uppercase text-amber-800 dark:text-amber-300">
-                        Tổng Số Hồ Sơ / Đơn Đăng Ký Thi Lại
-                      </div>
-                      <div className="text-2xl font-black font-mono text-amber-600 dark:text-amber-400 mt-0.5">
-                        {currentDonThiLai} Hồ sơ
-                      </div>
-                    </div>
-                    <div className="text-right text-[11px] text-amber-700 dark:text-amber-300 font-medium">
-                      Trạng thái: Đã duyệt & Đang xử lý
-                    </div>
-                  </div>
-
-                  <div className="space-y-3">
-                    <h4 className="font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-[11px]">
-                      Danh Sách Các Môn Học Có Đơn Đăng Ký Thi Lại:
-                    </h4>
-
-                    <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
-                      <table className="w-full text-left">
-                        <thead className="bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 text-[10px] uppercase font-bold">
-                          <tr>
-                            <th className="p-3">Tên Môn Học</th>
-                            <th className="p-3">Số Lượng Đơn</th>
-                            <th className="p-3">Lý Do Đăng Ký</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
-                          {currentThiLaiBreakdown.map((item, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                              <td className="p-3 font-semibold text-slate-900 dark:text-white">
-                                {item.mon}
+                          return (
+                            <tr key={st.maSV} className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors">
+                              <td className="py-2.5 px-3 text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+                                {(drilldownPage - 1) * drilldownPageSize + idx + 1}
                               </td>
-                              <td className="p-3 font-mono font-bold text-amber-600">
-                                {item.soLuong} đơn
+                              <td className="py-2.5 px-3 font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{st.maSV}</td>
+                              <td className="py-2.5 px-3 font-medium text-slate-900 dark:text-slate-100">{st.hoTen}</td>
+                              <td className="py-2.5 px-3 text-center text-slate-700 dark:text-slate-300">{st.gioiTinh}</td>
+                              <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300 font-mono tabular-nums">{st.ngaySinh}</td>
+                              <td className="py-2.5 px-3 text-center font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
+                                {gpa10}
                               </td>
-                              <td className="p-3 text-slate-500 font-medium">{item.lyDo}</td>
+                              <td className="py-2.5 px-3 text-center font-mono tabular-nums">
+                                {failedCount > 0 ? (
+                                  <StatusBadge label={`Nợ ${failedCount}`} variant="danger" />
+                                ) : (
+                                  <span className="text-emerald-700 dark:text-emerald-400">0</span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-mono tabular-nums font-semibold">
+                                {recentRL !== null ? (
+                                  <span className={recentRL < 50 ? 'text-rose-700 dark:text-rose-400' : 'text-blue-700 dark:text-blue-400'}>
+                                    {recentRL}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400 dark:text-slate-500 font-normal">Chưa có</span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-mono tabular-nums">
+                                {missedPeriods > 0 ? (
+                                  <span className={missedPeriods >= 6 ? 'text-rose-700 dark:text-rose-400 font-semibold' : 'text-slate-700 dark:text-slate-300'}>
+                                    Vắng {missedPeriods}t
+                                  </span>
+                                ) : (
+                                  <span className="text-emerald-700 dark:text-emerald-400">Đầy đủ</span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => setDrilldownStudent(st)}
+                                  className="px-2 py-1 rounded text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/60 font-semibold cursor-pointer whitespace-nowrap"
+                                >
+                                  Xem điểm
+                                </button>
+                              </td>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
-                </div>
-              )}
-
-              {/* 3. QUA MON BREAKDOWN */}
-              {activeDetailModal === 'QUA_MON' && (
-                <div className="space-y-4">
-                  <div className="p-4 bg-cyan-50 dark:bg-cyan-950/40 border border-cyan-200 dark:border-cyan-800/80 rounded-xl flex items-center justify-between">
-                    <div>
-                      <div className="text-[11px] font-bold uppercase text-cyan-800 dark:text-cyan-300">
-                        Tỷ Lệ Qua Môn Trung Bình Toàn Khối
-                      </div>
-                      <div className="text-2xl font-black font-mono text-cyan-600 dark:text-cyan-400 mt-0.5">
-                        {currentTyLeQuaMon}%
-                      </div>
-                    </div>
-                    <div className="text-right text-[11px] text-cyan-700 dark:text-cyan-300 font-medium">
-                      Môn học hoàn thành tích lũy &ge; 5.0 (C trở lên)
-                    </div>
-                  </div>
-
-                  <div className="space-y-3 pt-2">
-                    <h4 className="font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-[11px]">
-                      Phân Bổ Tỷ Lệ Điểm Số Các Môn Học:
-                    </h4>
-
-                    {/* Loại A */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between font-semibold">
-                        <span className="text-emerald-600 dark:text-emerald-400">
-                          1. Loại A (8.5 - 10.0 / Xuất sắc)
-                        </span>
-                        <span className="font-mono">{currentQuaMonBreakdown.loaiA}%</span>
-                      </div>
-                      <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                        <div
-                          className="bg-emerald-500 h-full rounded-full"
-                          style={{ width: `${currentQuaMonBreakdown.loaiA}%` }}
-                        ></div>
-                      </div>
-                    </div>
-
-                    {/* Loại B */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between font-semibold">
-                        <span className="text-blue-600 dark:text-blue-400">
-                          2. Loại B (7.0 - 8.4 / Khá - Giỏi)
-                        </span>
-                        <span className="font-mono">{currentQuaMonBreakdown.loaiB}%</span>
-                      </div>
-                      <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                        <div
-                          className="bg-blue-500 h-full rounded-full"
-                          style={{ width: `${currentQuaMonBreakdown.loaiB}%` }}
-                        ></div>
-                      </div>
-                    </div>
-
-                    {/* Loại C */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between font-semibold">
-                        <span className="text-indigo-600 dark:text-indigo-400">
-                          3. Loại C (5.5 - 6.9 / Trung bình)
-                        </span>
-                        <span className="font-mono">{currentQuaMonBreakdown.loaiC}%</span>
-                      </div>
-                      <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                        <div
-                          className="bg-indigo-500 h-full rounded-full"
-                          style={{ width: `${currentQuaMonBreakdown.loaiC}%` }}
-                        ></div>
-                      </div>
-                    </div>
-
-                    {/* Loại D/F */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between font-semibold">
-                        <span className="text-rose-600 dark:text-rose-400">
-                          4. Loại D/F (&lt; 5.5 / Chưa đạt môn)
-                        </span>
-                        <span className="font-mono">{currentQuaMonBreakdown.loaiDF}%</span>
-                      </div>
-                      <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                        <div
-                          className="bg-rose-500 h-full rounded-full"
-                          style={{ width: `${currentQuaMonBreakdown.loaiDF}%` }}
-                        ></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* 4. CLASS DETAIL MODAL */}
-              {activeDetailModal === 'CLASS_DETAIL' && modalTargetClass && (
-                <div className="space-y-5">
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-center">
-                      <div className="text-[10px] text-slate-400 uppercase font-bold">Sĩ Số</div>
-                      <div className="text-lg font-bold font-mono text-slate-900 dark:text-white mt-0.5">
-                        {modalTargetClass.siSo} SV
-                      </div>
-                    </div>
-
-                    <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl border border-emerald-200 dark:border-emerald-800 text-center">
-                      <div className="text-[10px] text-emerald-600 dark:text-emerald-400 uppercase font-bold">
-                        Đ.Rèn Luyện
-                      </div>
-                      <div className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-0.5">
-                        {modalTargetClass.renLuyenTotal}%
-                      </div>
-                    </div>
-
-                    <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-800 text-center">
-                      <div className="text-[10px] text-amber-600 dark:text-amber-400 uppercase font-bold">
-                        Đơn Thi Lại
-                      </div>
-                      <div className="text-lg font-bold font-mono text-amber-600 dark:text-amber-400 mt-0.5">
-                        {modalTargetClass.donThiLai} Đơn
-                      </div>
-                    </div>
-
-                    <div className="p-3 bg-cyan-50 dark:bg-cyan-950/40 rounded-xl border border-cyan-200 dark:border-cyan-800 text-center">
-                      <div className="text-[10px] text-cyan-600 dark:text-cyan-400 uppercase font-bold">
-                        Tỷ Lệ Qua Môn
-                      </div>
-                      <div className="text-lg font-bold font-mono text-cyan-600 dark:text-cyan-400 mt-0.5">
-                        {modalTargetClass.tyLeQuaMon}%
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <h4 className="font-bold text-slate-800 dark:text-white text-xs uppercase tracking-wider">
-                      Phân Bổ Tỷ Lệ Điểm Rèn Luyện Lớp {modalTargetClass.maLop}:
-                    </h4>
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px] font-semibold text-center">
-                      <div className="p-2 bg-purple-50 dark:bg-purple-950/40 rounded-lg border border-purple-200 dark:border-purple-800">
-                        <span className="block text-purple-600 font-bold">Xuất sắc</span>
-                        <span className="font-mono text-slate-900 dark:text-white">
-                          {modalTargetClass.renLuyenBreakdown.xuatSac}%
-                        </span>
-                      </div>
-                      <div className="p-2 bg-emerald-50 dark:bg-emerald-950/40 rounded-lg border border-emerald-200 dark:border-emerald-800">
-                        <span className="block text-emerald-600 font-bold">Tốt</span>
-                        <span className="font-mono text-slate-900 dark:text-white">
-                          {modalTargetClass.renLuyenBreakdown.tot}%
-                        </span>
-                      </div>
-                      <div className="p-2 bg-blue-50 dark:bg-blue-950/40 rounded-lg border border-blue-200 dark:border-blue-800">
-                        <span className="block text-blue-600 font-bold">Khá</span>
-                        <span className="font-mono text-slate-900 dark:text-white">
-                          {modalTargetClass.renLuyenBreakdown.kha}%
-                        </span>
-                      </div>
-                      <div className="p-2 bg-amber-50 dark:bg-amber-950/40 rounded-lg border border-amber-200 dark:border-amber-800">
-                        <span className="block text-amber-600 font-bold">Trung bình</span>
-                        <span className="font-mono text-slate-900 dark:text-white">
-                          {modalTargetClass.renLuyenBreakdown.trungBinh}%
-                        </span>
-                      </div>
-                      <div className="p-2 bg-rose-50 dark:bg-rose-950/40 rounded-lg border border-rose-200 dark:border-rose-800 col-span-2 sm:col-span-1">
-                        <span className="block text-rose-600 font-bold">Yếu / Kém</span>
-                        <span className="font-mono text-slate-900 dark:text-white">
-                          {modalTargetClass.renLuyenBreakdown.yeuKem}%
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {modalTargetClass.thiLaiBreakdown.length > 0 && (
-                    <div className="space-y-2">
-                      <h4 className="font-bold text-slate-800 dark:text-white text-xs uppercase tracking-wider">
-                        Danh Sách Môn Thi Lại Thuộc Lớp:
-                      </h4>
-                      <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
-                        {modalTargetClass.thiLaiBreakdown.map((item, i) => (
-                          <div key={i} className="p-3 flex items-center justify-between font-medium">
-                            <div>
-                              <span className="font-bold text-slate-900 dark:text-white">
-                                {item.mon}
-                              </span>
-                              <span className="text-slate-400 text-[11px] block">{item.lyDo}</span>
-                            </div>
-                            <span className="font-mono font-bold text-amber-600 bg-amber-50 dark:bg-amber-950 px-2.5 py-1 rounded-lg">
-                              {item.soLuong} đơn
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                  <PaginationBar
+                    currentPage={drilldownPage}
+                    pageSize={drilldownPageSize}
+                    totalItems={drilldownClassStudents.length}
+                    onPageChange={setDrilldownPage}
+                    onPageSizeChange={setDrilldownPageSize}
+                  />
+                </>
               )}
             </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 flex justify-end">
-              <button
-                onClick={() => {
-                  setActiveDetailModal(null);
-                  setModalTargetClass(null);
-                }}
-                className="px-4 py-2 bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 rounded-xl font-bold text-xs hover:opacity-90 transition-opacity cursor-pointer"
-              >
-                Đóng
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          )}
         </div>
       )}
 
-      {/* SUBJECT GRADE SHEET MODAL FOR ADMIN / LECTURER */}
-      {subjectGradeSheetModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-5xl shadow-2xl overflow-hidden text-slate-900 dark:text-white flex flex-col max-h-[90vh]">
-            {/* Modal Header */}
-            <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/80 dark:bg-slate-800/60">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 rounded-2xl border border-emerald-200 dark:border-emerald-800 shrink-0">
-                  <FileSpreadsheet className="w-6 h-6" />
+      {/* ========================================================================= */}
+      {/* QUICK REPORT GENERATOR                                                    */}
+      {/* ========================================================================= */}
+      {!isStudent && adminTab === 'QUICK_REPORT' && (
+        <div className="space-y-4">
+          <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-4 no-print">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div className="w-full sm:w-72 text-xs">
+                <label htmlFor="report-type" className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Loại báo cáo
+                </label>
+                <select
+                  id="report-type"
+                  value={reportType}
+                  onChange={(e) => setReportType(e.target.value as 'ACADEMIC' | 'TRAINING' | 'ATTENTION' | 'RETAKES_FEES')}
+                  className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-2 font-semibold cursor-pointer"
+                >
+                  <option value="ACADEMIC">Kết quả Học tập & GPA</option>
+                  <option value="TRAINING">Điểm Rèn luyện</option>
+                  <option value="ATTENTION">Sinh viên Cần chú ý</option>
+                  <option value="RETAKES_FEES">Thi lại, Học lại & Lệ phí</option>
+                </select>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportExcel}
+                  disabled={reportFilteredStudents.length === 0}
+                  className="px-3.5 py-1.5 rounded bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <span>Xuất Excel (.xlsx)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadPrintableHtml}
+                  disabled={reportFilteredStudents.length === 0}
+                  className="px-3.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50 text-slate-800 dark:text-slate-100 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <Download className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
+                  <span>Tải bản in (HTML)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePrint}
+                  disabled={reportFilteredStudents.length === 0}
+                  className="px-3.5 py-1.5 rounded bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>In Báo Cáo (A4)</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                  Cấu hình văn bản & Chữ ký (A4)
+                </span>
+                <label className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={showReportSignatures}
+                    onChange={(e) => setShowReportSignatures(e.target.checked)}
+                    className="rounded border-slate-300 dark:border-slate-600 text-blue-700"
+                  />
+                  <span>Hiển thị phần ký tên</span>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 text-xs">
+                <div>
+                  <label htmlFor="report-unit-name" className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Đơn vị ban hành
+                  </label>
+                  <input
+                    id="report-unit-name"
+                    type="text"
+                    value={reportUnitName}
+                    onChange={(e) => setReportUnitName(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5"
+                  />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                      BangDiem_{subjectGradeSheetModal.maLop}_{subjectGradeSheetModal.monHoc.maMH}.xlsx
-                    </span>
-                    <span className="text-xs font-semibold text-slate-500">
-                      Lớp: <strong className="text-slate-900 dark:text-white font-mono">{subjectGradeSheetModal.tenLop.startsWith('Lớp') ? subjectGradeSheetModal.tenLop : `Lớp ${subjectGradeSheetModal.maLop}`}</strong>
-                    </span>
-                  </div>
-                  <h3 className="font-extrabold text-base text-slate-900 dark:text-white mt-1">
-                    BẢNG ĐIỂM CHI TIẾT MÔN: {subjectGradeSheetModal.monHoc.tenMH} ({subjectGradeSheetModal.monHoc.maMH})
-                  </h3>
+                  <label htmlFor="report-doc-code" className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Số hiệu văn bản
+                  </label>
+                  <input
+                    id="report-doc-code"
+                    type="text"
+                    value={reportDocumentCode}
+                    onChange={(e) => setReportDocumentCode(e.target.value)}
+                    placeholder="Để trống nếu không có"
+                    className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="reporter-title" className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Chức danh người lập
+                  </label>
+                  <input
+                    id="reporter-title"
+                    type="text"
+                    disabled={!showReportSignatures}
+                    value={reporterTitle}
+                    onChange={(e) => setReporterTitle(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 disabled:opacity-50 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="reporter-name" className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Tên người báo cáo
+                  </label>
+                  <input
+                    id="reporter-name"
+                    type="text"
+                    disabled={!showReportSignatures}
+                    value={reporterName}
+                    onChange={(e) => setReporterName(e.target.value)}
+                    placeholder="Để trống hoặc tự nhập"
+                    className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 disabled:opacity-50 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="manager-title" className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Chức danh trưởng phòng
+                  </label>
+                  <input
+                    id="manager-title"
+                    type="text"
+                    disabled={!showReportSignatures}
+                    value={managerTitle}
+                    onChange={(e) => setManagerTitle(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 disabled:opacity-50 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="manager-name" className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Tên trưởng phòng
+                  </label>
+                  <input
+                    id="manager-name"
+                    type="text"
+                    disabled={!showReportSignatures}
+                    value={managerName}
+                    onChange={(e) => setManagerName(e.target.value)}
+                    placeholder="Để trống hoặc tự nhập"
+                    className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 disabled:opacity-50 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5"
+                  />
                 </div>
               </div>
+            </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+            {printNotice && (
+              <div
+                role="status"
+                className="flex items-start justify-between gap-2 p-2.5 rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-xs text-blue-900 dark:text-blue-200"
+              >
+                <div className="flex items-start gap-2">
+                  <Info className="w-4 h-4 shrink-0 mt-0.5 text-blue-700 dark:text-blue-400" />
+                  <span>{printNotice}</span>
+                </div>
                 <button
-                  onClick={() =>
-                    handleExportSubjectExcel(
-                      subjectGradeSheetModal.maLop,
-                      subjectGradeSheetModal.monHoc,
-                      subjectGradeSheetModal.studentGrades
-                    )
-                  }
-                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                  type="button"
+                  onClick={() => setPrintNotice(null)}
+                  aria-label="Đóng thông báo in"
+                  className="p-0.5 rounded text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900 cursor-pointer shrink-0"
                 >
-                  <Download className="w-4 h-4" />
-                  Xuất File Excel (.xlsx)
-                </button>
-                <button
-                  onClick={() => setSubjectGradeSheetModal(null)}
-                  className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full transition-colors cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
+                  <X className="w-3.5 h-3.5" />
                 </button>
               </div>
-            </div>
+            )}
+          </div>
 
-            {/* Sub-toolbar: Search Student in Grade Sheet */}
-            <div className="p-3 bg-slate-100/60 dark:bg-slate-800/30 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-              <div className="relative flex-1 max-w-sm">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  type="text"
-                  value={modalStudentSearch}
-                  onChange={(e) => setModalStudentSearch(e.target.value)}
-                  placeholder="Lọc danh sách theo Mã SV hoặc Họ tên..."
-                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+          <ReportView
+            ref={printPageRef}
+            title={reportDocumentTitle}
+            subtitle={`Phạm vi: ${reportScopeFaculty === 'ALL' ? 'Toàn trường' : reportScopeFaculty} · ${
+              reportScopeClass === 'ALL' ? 'Tất cả lớp' : `Lớp ${reportScopeClass}`
+            } · Học kỳ: ${reportScopeSemester === 'ALL' ? 'Tất cả học kỳ' : reportScopeSemester}`}
+            unitName={reportUnitName}
+            documentCode={reportDocumentCode || undefined}
+            filters={reportViewFilters}
+            hasActiveFilters={hasActiveReportFilters}
+            onResetFilters={resetReportFilters}
+            filterSummary={`Số sinh viên: ${reportFilteredStudents.length}`}
+            isEmpty={reportFilteredStudents.length === 0}
+            emptyMessage="Chưa có dữ liệu phù hợp để lập báo cáo."
+            signatures={{
+              show: showReportSignatures,
+              leftTitle: reporterTitle,
+              leftNote: reporterTitle ? '(Ký và ghi rõ họ tên)' : '',
+              leftName: reporterName,
+              rightTitle: managerTitle,
+              rightNote: managerTitle ? '(Ký, đóng dấu và ghi rõ họ tên)' : '',
+              rightName: managerName,
+            }}
+          >
+              <div>
+                {reportType === 'ACADEMIC' && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse border border-slate-300 dark:border-slate-700 text-xs text-left">
+                      <thead className="bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 border-b border-slate-300 dark:border-slate-700">
+                        <tr>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center w-10">STT</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2">Mã SV</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2">Họ và Tên</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2">Lớp</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center">Số Môn</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center">Tín Chỉ Đạt</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center">Điểm TB (10)</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center">Trạng Thái</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reportFilteredStudents.map((st, i) => {
+                          const stGrades = (allGrades || []).filter((g) => {
+                            if (g.maSV.toLowerCase() !== st.maSV.toLowerCase()) return false;
+                            if (reportScopeSemester !== 'ALL' && g.hocKy !== reportScopeSemester) return false;
+                            return true;
+                          });
+
+                          const totalC = stGrades.reduce((sum, g) => sum + (g.soTinChi || 3), 0);
+                          const sum10 = stGrades.reduce((sum, g) => sum + (g.diemTongKet10 || 0) * (g.soTinChi || 3), 0);
+                          const gpa10 = totalC > 0 ? (sum10 / totalC).toFixed(2) : '-';
+                          const passedC = stGrades
+                            .filter((g) => g.trangThai === 'PASSED' || (g.diemTongKet10 || 0) >= 4.0)
+                            .reduce((sum, g) => sum + (g.soTinChi || 3), 0);
+
+                          return (
+                            <tr key={st.maSV}>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center font-mono tabular-nums">{i + 1}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 font-mono font-semibold">{st.maSV}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2">{st.hoTen}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 font-mono">{st.lop}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center font-mono tabular-nums">{stGrades.length}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center font-mono tabular-nums">{passedC}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center font-mono tabular-nums font-semibold">{gpa10}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center">{st.trangThai}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {reportType === 'TRAINING' && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse border border-slate-300 dark:border-slate-700 text-xs text-left">
+                      <thead className="bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 border-b border-slate-300 dark:border-slate-700">
+                        <tr>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center w-10">STT</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2">Mã SV</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2">Họ và Tên</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2">Lớp</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center">Tháng</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center">Điểm RL</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center">Xếp Loại</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2">Nhận Xét</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reportFilteredStudents.map((st, i) => {
+                          const targetMonth = Number(reportScopeMonth);
+                          const stRL = (trainingPoints || []).find((r) => {
+                            if (r.maSV?.toLowerCase() !== st.maSV.toLowerCase()) return false;
+                            if (!isNaN(targetMonth) && r.thang !== targetMonth) return false;
+                            return true;
+                          });
+
+                          return (
+                            <tr key={st.maSV}>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center font-mono tabular-nums">{i + 1}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 font-mono font-semibold">{st.maSV}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2">{st.hoTen}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 font-mono">{st.lop}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center font-mono tabular-nums">{reportScopeMonth}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center font-mono tabular-nums font-semibold">
+                                {stRL ? `${stRL.diemRL}` : 'Chưa có'}
+                              </td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center">
+                                {stRL ? stRL.xepLoai : 'Chưa đánh giá'}
+                              </td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-[11px] text-slate-600 dark:text-slate-300">
+                                {stRL ? stRL.nhanXet || '-' : '-'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {reportType === 'ATTENTION' && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse border border-slate-300 dark:border-slate-700 text-xs text-left">
+                      <thead className="bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 border-b border-slate-300 dark:border-slate-700">
+                        <tr>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center w-10">STT</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2">Mã SV</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2">Họ và Tên</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2">Lớp</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center">Môn Nợ</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center">Tiết Vắng</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center">Điểm RL</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2">Lý Do</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reportAttentionRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={8} className="border border-slate-300 dark:border-slate-700 p-4 text-center text-slate-500 dark:text-slate-400">
+                              Không có sinh viên cần chú ý trong phạm vi đã chọn.
+                            </td>
+                          </tr>
+                        ) : (
+                          reportAttentionRows.map((a, i) => (
+                            <tr key={a.maSV}>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center font-mono tabular-nums">{i + 1}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 font-mono font-semibold">{a.maSV}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2">{a.hoTen}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 font-mono">{a.lop}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center font-mono tabular-nums font-semibold text-rose-700 dark:text-rose-400">
+                                {a.failedSubjectsCount}
+                              </td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center font-mono tabular-nums">
+                                {a.missedPeriodsTotal}
+                              </td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center font-mono tabular-nums">
+                                {a.trainingScoreRecent ?? 'Chưa có'}
+                              </td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-rose-800 dark:text-rose-300 font-semibold text-[11px]">
+                                {a.attentionReason}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {reportType === 'RETAKES_FEES' && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse border border-slate-300 dark:border-slate-700 text-xs text-left">
+                      <thead className="bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 border-b border-slate-300 dark:border-slate-700">
+                        <tr>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center w-10">STT</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2">Mã SV</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2">Họ Tên SV</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2">Môn Đăng Ký</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center">Hình Thức</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-right">Lệ Phí (VNĐ)</th>
+                          <th className="border border-slate-300 dark:border-slate-700 p-2 text-center">Trạng Thái</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reportRetakeRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="border border-slate-300 dark:border-slate-700 p-4 text-center text-slate-500 dark:text-slate-400">
+                              Không có đơn thi lại / học lại trong phạm vi đã chọn.
+                            </td>
+                          </tr>
+                        ) : (
+                          reportRetakeRows.map((r, i) => (
+                            <tr key={r.id}>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center font-mono tabular-nums">{i + 1}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 font-mono font-semibold">{r.maSV}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2">{r.hoTenSV || r.maSV}</td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2">
+                                {r.tenMH} ({r.maMH})
+                              </td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center">
+                                {r.loaiDangKy === 'THI_LAI' ? 'Thi Lại' : 'Học Lại'}
+                              </td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-right font-mono tabular-nums font-semibold">
+                                {r.phiDiem ? `${r.phiDiem.toLocaleString('vi-VN')} đ` : 'Chờ định mức'}
+                              </td>
+                              <td className="border border-slate-300 dark:border-slate-700 p-2 text-center">
+                                {r.trangThai === 'DA_DUYET' ? 'Đã duyệt' : 'Chờ duyệt'}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
+            </ReportView>
+        </div>
+      )}
 
-              <div className="flex items-center gap-3 font-semibold text-slate-600 dark:text-slate-300 flex-wrap">
-                <span>Tổng sĩ số: <strong className="text-slate-900 dark:text-white font-mono">{subjectGradeSheetModal.studentGrades.length} SV</strong></span>
-                <span>•</span>
-                <span className="text-emerald-600">
-                  Số SV đạt: <strong className="font-mono">{subjectGradeSheetModal.studentGrades.filter(g => g.trangThai === 'PASSED').length}</strong>
-                </span>
-                <span>•</span>
-                <span className="text-rose-600">
-                  Số SV rớt: <strong className="font-mono">{subjectGradeSheetModal.studentGrades.filter(g => g.trangThai === 'FAILED').length}</strong>
+      {/* ========================================================================= */}
+      {/* MODAL: BẢNG ĐIỂM CHI TIẾT SINH VIÊN (DRILL-DOWN LEVEL 3)                  */}
+      {/* ========================================================================= */}
+      {drilldownStudent && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setDrilldownStudent(null)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 max-w-2xl w-full p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  Bảng Điểm: {drilldownStudent.hoTen} ({drilldownStudent.maSV})
+                </h3>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                  {drilldownStudent.lop} · {drilldownStudent.khoa}
                 </span>
               </div>
-            </div>
-
-            {/* Table Body */}
-            <div className="flex-1 overflow-y-auto p-4">
-              <table className="w-full text-xs text-left border-collapse">
-                <thead className="bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 text-[10px] uppercase font-bold sticky top-0 z-10">
-                  <tr>
-                    <th className="p-3 border-b border-slate-200 dark:border-slate-700">STT</th>
-                    <th className="p-3 border-b border-slate-200 dark:border-slate-700">Mã SV</th>
-                    <th className="p-3 border-b border-slate-200 dark:border-slate-700">Họ và Tên</th>
-                    <th className="p-3 border-b border-slate-200 dark:border-slate-700 text-center">CC (10%)</th>
-                    <th className="p-3 border-b border-slate-200 dark:border-slate-700 text-center">GK (30%)</th>
-                    <th className="p-3 border-b border-slate-200 dark:border-slate-700 text-center">CK (60%)</th>
-                    <th className="p-3 border-b border-slate-200 dark:border-slate-700 text-center">Điểm TK (10)</th>
-                    <th className="p-3 border-b border-slate-200 dark:border-slate-700 text-center">Điểm HS4</th>
-                    <th className="p-3 border-b border-slate-200 dark:border-slate-700 text-center">Điểm Chữ</th>
-                    <th className="p-3 border-b border-slate-200 dark:border-slate-700 text-right">Trạng Thái</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
-                  {subjectGradeSheetModal.studentGrades
-                    .filter(
-                      (g) =>
-                        g.hoTen.toLowerCase().includes(modalStudentSearch.toLowerCase()) ||
-                        g.maSV.toLowerCase().includes(modalStudentSearch.toLowerCase())
-                    )
-                    .map((item, idx) => (
-                      <tr key={item.maSV} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                        <td className="p-3 font-mono font-medium text-slate-400">{idx + 1}</td>
-                        <td className="p-3 font-mono font-semibold text-blue-600 dark:text-blue-400">
-                          {item.maSV}
-                        </td>
-                        <td className="p-3 font-bold text-slate-900 dark:text-white">
-                          {item.hoTen}
-                        </td>
-                        <td className="p-3 text-center font-mono">{item.diemChuyenCan}</td>
-                        <td className="p-3 text-center font-mono">{item.diemGiuaKy}</td>
-                        <td className="p-3 text-center font-mono">{item.diemCuoiKy}</td>
-                        <td className="p-3 text-center font-mono font-black text-blue-600 dark:text-blue-400 text-sm">
-                          {item.diemTongKet10}
-                        </td>
-                        <td className="p-3 text-center font-mono font-semibold">{item.diemThang4}</td>
-                        <td className="p-3 text-center font-bold">{item.diemChu}</td>
-                        <td className="p-3 text-right">
-                          {item.trangThai === 'PASSED' ? (
-                            <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                              ĐẠT
-                            </span>
-                          ) : (
-                            <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
-                              KHÔNG ĐẠT
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 flex items-center justify-between">
-              <span className="text-xs text-slate-500 font-medium">
-                Dữ liệu bảng điểm đã sẵn sàng để xem trực tiếp hoặc xuất file Excel chuẩn.
-              </span>
               <button
-                onClick={() => setSubjectGradeSheetModal(null)}
-                className="px-5 py-2 bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 rounded-xl font-bold text-xs hover:opacity-90 transition-opacity cursor-pointer"
+                type="button"
+                aria-label="Đóng bảng điểm"
+                onClick={() => setDrilldownStudent(null)}
+                className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded">
+              {allGrades.filter((g) => g.maSV.toLowerCase() === drilldownStudent.maSV.toLowerCase()).length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-500 dark:text-slate-400">
+                  Chưa có dữ liệu điểm số.
+                </div>
+              ) : (
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700 sticky top-0">
+                    <tr>
+                      <th className="py-2 px-3 font-semibold">Mã MH</th>
+                      <th className="py-2 px-3 font-semibold">Tên Môn Học</th>
+                      <th className="py-2 px-2 text-center font-semibold">TC</th>
+                      <th className="py-2 px-2 text-center font-semibold">CC</th>
+                      <th className="py-2 px-2 text-center font-semibold">GK</th>
+                      <th className="py-2 px-2 text-center font-semibold">CK</th>
+                      <th className="py-2 px-2 text-center font-semibold">Tổng 10</th>
+                      <th className="py-2 px-2 text-center font-semibold">Chữ</th>
+                      <th className="py-2 px-3 text-center font-semibold">Kết Quả</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                    {allGrades
+                      .filter((g) => g.maSV.toLowerCase() === drilldownStudent.maSV.toLowerCase())
+                      .map((g) => (
+                        <tr key={g.id} className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20">
+                          <td className="py-2 px-3 font-mono font-semibold text-slate-900 dark:text-slate-100">{g.maMH}</td>
+                          <td className="py-2 px-3 text-slate-900 dark:text-slate-100">{g.tenMH || g.maMH}</td>
+                          <td className="py-2 px-2 text-center font-mono tabular-nums">{g.soTinChi || 3}</td>
+                          <td className="py-2 px-2 text-center font-mono tabular-nums">{g.diemChuyenCan}</td>
+                          <td className="py-2 px-2 text-center font-mono tabular-nums">{g.diemGiuaKy}</td>
+                          <td className="py-2 px-2 text-center font-mono tabular-nums">{g.diemCuoiKy}</td>
+                          <td className="py-2 px-2 text-center font-mono tabular-nums font-bold text-blue-700 dark:text-blue-400">
+                            {g.diemTongKet10}
+                          </td>
+                          <td className="py-2 px-2 text-center font-mono font-semibold">{g.diemChu}</td>
+                          <td className="py-2 px-3 text-center">
+                            <StatusBadge
+                              label={g.trangThai === 'PASSED' || (g.diemTongKet10 || 0) >= 4.0 ? 'ĐẠT' : 'HỎNG'}
+                              variant={g.trangThai === 'PASSED' || (g.diemTongKet10 || 0) >= 4.0 ? 'success' : 'danger'}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setDrilldownStudent(null)}
+                className="px-4 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold cursor-pointer"
               >
                 Đóng
               </button>
