@@ -28,6 +28,11 @@ import {
   User,
 } from '../types';
 import {
+  isSameClass,
+  normalizeClassName,
+  normalizeFacultyName,
+} from '../utils/classHelper';
+import {
   getAllAuditLogs,
   getAllMigrationConflicts,
   getAllSinhVien,
@@ -2493,8 +2498,19 @@ export async function runStudentListBuilder(params: {
         (sv.soDienThoai || '').toLowerCase().includes(searchLower);
       if (!hit) return false;
     }
-    if (f.khoa?.trim() && sv.khoa !== f.khoa.trim()) return false;
-    if (f.lop?.trim() && sv.lop !== f.lop.trim()) return false;
+    if (f.khoa?.trim()) {
+      const targetKhoa = normalizeFacultyName(f.khoa.trim()).toLowerCase();
+      const svKhoa = normalizeFacultyName(sv.khoa, sv.lop).toLowerCase();
+      if (svKhoa !== targetKhoa) return false;
+    }
+    if (f.lop?.trim()) {
+      const targetLop = f.lop.trim();
+      if (targetLop === '__UNASSIGNED__') {
+        if (normalizeClassName(sv.lop)) return false;
+      } else if (!isSameClass(sv.lop, targetLop)) {
+        return false;
+      }
+    }
     if (f.trangThai?.trim() && sv.trangThai !== f.trangThai.trim()) return false;
     if (f.gioiTinh?.trim() && sv.gioiTinh !== f.gioiTinh.trim()) return false;
 

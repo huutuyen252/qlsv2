@@ -57,7 +57,7 @@ export const ReportView = forwardRef<HTMLDivElement, ReportViewProps>(
       systemName = 'Hệ thống Quản trị Học vụ - TDNU EduAdmin',
       schoolName = 'TRƯỜNG ĐẠI HỌC TRẦN ĐẠI NGHĨA',
       unitName = 'PHÒNG ĐÀO TẠO VÀ QUẢN LÝ SINH VIÊN',
-      logoUrl = '/logo-truong.png',
+      logoUrl = '/logo-truong.svg',
       location = 'TP. Hồ Chí Minh',
       reportDate,
       documentCode,

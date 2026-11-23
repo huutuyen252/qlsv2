@@ -242,7 +242,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             <h1 className="flex items-center gap-2.5 text-sm sm:text-base font-bold tracking-tight text-slate-900 dark:text-slate-100 min-w-0">
               {!headerLogoError ? (
                 <img
-                  src="/logo-truong.png"
+                  src="/logo-truong.svg"
                   alt="Logo Trường Đại học Trần Đại Nghĩa"
                   onError={() => setHeaderLogoError(true)}
                   referrerPolicy="no-referrer"
@@ -337,31 +337,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             />
 
             <div className="relative z-10 space-y-5 sm:space-y-6">
-              {/* School Brand Header */}
-              <div className="flex items-center gap-3.5 pb-4 sm:pb-5 border-b border-white/15">
-                <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl bg-white keep-white p-2 flex items-center justify-center shrink-0 shadow-[0_10px_22px_-6px_rgba(2,6,23,0.55),inset_0_1px_0_rgba(255,255,255,1),inset_0_-3px_0_rgba(203,213,225,0.85)]">
-                  {!cardLogoError ? (
-                    <img
-                      src="/logo-truong.png"
-                      alt="Logo Trường Đại học Trần Đại Nghĩa"
-                      onError={() => setCardLogoError(true)}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-contain"
-                    />
-                  ) : (
-                    <span className="text-sm font-black text-blue-800 keep-colored">TDNU</span>
-                  )}
-                </div>
-                <div className="min-w-0">
-                  <div className={`text-[11px] font-semibold tracking-wide ${activeTheme.leftAccentTextClass} keep-colored`}>
-                    {activeTheme.key !== 'DEFAULT'
-                      ? `${activeTheme.dateLabel} · ${activeTheme.name}`
-                      : 'Trường Đại học Trần Đại Nghĩa'}
-                  </div>
-                  <h2 className="text-base sm:text-lg lg:text-xl font-bold tracking-tight text-white leading-snug text-balance">
-                    Hỗ Trợ & Liên Hệ Quản Trị
-                  </h2>
-                </div>
+              {/* Contact Header */}
+              <div className="pb-4 sm:pb-5 border-b border-white/15">
+                <h2 className="text-lg sm:text-xl font-bold tracking-tight text-white leading-snug text-balance">
+                  Thông Tin Liên Hệ
+                </h2>
               </div>
 
               {/* Admin Contact Block (Customizable via System Config) */}
@@ -472,7 +452,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               <div className="w-16 h-16 sm:w-18 sm:h-18 rounded-2xl bg-white keep-white border border-slate-200/90 p-2.5 flex items-center justify-center shadow-[0_12px_24px_-8px_rgba(15,23,42,0.18),inset_0_1px_0_rgba(255,255,255,1),inset_0_-3px_0_rgba(226,232,240,0.9)]">
                 {!cardLogoError ? (
                   <img
-                    src="/logo-truong.png"
+                    src="/logo-truong.svg"
                     alt="Logo Trường ĐH Trần Đại Nghĩa"
                     onError={() => setCardLogoError(true)}
                     className="w-full h-full object-contain"

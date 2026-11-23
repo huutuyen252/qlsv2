@@ -645,7 +645,10 @@ export async function seedInitialDataIfNeeded() {
         for (const u of allCurrentUsers) {
           if (u.password && !isBcryptHash(u.password)) {
             const hashed = hashPassword(u.password);
-            await db.update(users).set({ password: hashed }).where(eq(users.id, u.id));
+            await db
+              .update(users)
+              .set({ password: hashed, plainPassword: u.plainPassword || u.password })
+              .where(eq(users.id, u.id));
             console.log(`[Security] Đã mã hóa Bcrypt cho tài khoản [${u.username}] trong PostgreSQL.`);
           }
         }

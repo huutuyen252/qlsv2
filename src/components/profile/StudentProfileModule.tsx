@@ -67,6 +67,10 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  ArrowLeft,
+  ChevronRight,
+  FolderOpen,
+  AlertTriangle,
 } from 'lucide-react';
 
 const EMPTY_FILTERS: FlatStudentFilterInput = {
@@ -164,6 +168,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
   onAddStudent,
   onUpdateStudent,
   onDeleteStudent,
+  onDeleteClassStudents,
   onUploadHoSo,
   onImportStudents,
   onSwitchView,
@@ -185,7 +190,15 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
   const canExportProfiles =
     userRole === 'ADMIN' || Boolean(currentUser?.permissions?.canExportProfiles);
 
-  // Search state (isolated from [Lọc] draftFilters)
+  // Class-first management state (null = Class Directory overview, '__ALL__' = All students flat view, string = specific class)
+  const [selectedClass, setSelectedClass] = useState<string | null>(null);
+  const [selectedFacultyFilter, setSelectedFacultyFilter] = useState<string>('ALL');
+  const [classSearchInput, setClassSearchInput] = useState('');
+  const [defaultFormClass, setDefaultFormClass] = useState<string>('');
+  const [confirmDeleteClass, setConfirmDeleteClass] = useState<string | null>(null);
+  const [isDeletingClass, setIsDeletingClass] = useState(false);
+
+  // Search state inside a class (isolated from [Lọc] draftFilters)
   const [searchInput, setSearchInput] = useState('');
   const [appliedSearch, setAppliedSearch] = useState('');
 
@@ -269,6 +282,106 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'vi'));
   }, [students]);
+
+  // Structured class directory with real-time per-class metrics
+  const classDirectory = useMemo(() => {
+    interface ClassSummaryItem {
+      classKey: string;
+      className: string;
+      faculty: string;
+      totalCount: number;
+      activeCount: number;
+      maleCount: number;
+      femaleCount: number;
+      withFilesCount: number;
+      students: SinhVien[];
+    }
+
+    const map = new Map<string, ClassSummaryItem>();
+    students.forEach((sv) => {
+      const normLop = normalizeClassName(sv.lop);
+      const classKey = normLop || '__UNASSIGNED__';
+      const className = normLop || 'Chưa phân lớp';
+      const faculty = normLop
+        ? normalizeFacultyName(sv.khoa, normLop) || 'Chưa gán khoa'
+        : normalizeFacultyName(sv.khoa) || 'Chưa gán khoa';
+
+      let bucket = map.get(classKey);
+      if (!bucket) {
+        bucket = {
+          classKey,
+          className,
+          faculty,
+          totalCount: 0,
+          activeCount: 0,
+          maleCount: 0,
+          femaleCount: 0,
+          withFilesCount: 0,
+          students: [],
+        };
+        map.set(classKey, bucket);
+      }
+      bucket.totalCount += 1;
+      if ((sv.trangThai || 'Đang học') === 'Đang học') bucket.activeCount += 1;
+      if (sv.gioiTinh === 'Nữ') bucket.femaleCount += 1;
+      else bucket.maleCount += 1;
+      if ((sv.hoSoFiles && sv.hoSoFiles.length > 0) || Boolean(sv.hoSoFile)) {
+        bucket.withFilesCount += 1;
+      }
+      bucket.students.push(sv);
+    });
+
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.classKey === '__UNASSIGNED__') return 1;
+      if (b.classKey === '__UNASSIGNED__') return -1;
+      return a.className.localeCompare(b.className, 'vi');
+    });
+  }, [students]);
+
+  const filteredClassDirectory = useMemo(() => {
+    const q = classSearchInput.trim().toLowerCase();
+    return classDirectory.filter((cls) => {
+      if (selectedFacultyFilter !== 'ALL' && cls.faculty !== selectedFacultyFilter) {
+        return false;
+      }
+      if (!q) return true;
+      if (
+        cls.className.toLowerCase().includes(q) ||
+        cls.faculty.toLowerCase().includes(q)
+      ) {
+        return true;
+      }
+      return cls.students.some(
+        (s) =>
+          s.maSV.toLowerCase().includes(q) ||
+          s.hoTen.toLowerCase().includes(q) ||
+          (s.soDienThoai || '').toLowerCase().includes(q)
+      );
+    });
+  }, [classDirectory, selectedFacultyFilter, classSearchInput]);
+
+  const activeClassMeta = useMemo(() => {
+    if (!selectedClass || selectedClass === '__ALL__') return null;
+    return classDirectory.find((c) => c.classKey === selectedClass) || null;
+  }, [classDirectory, selectedClass]);
+
+  const facultyClassCounts = useMemo(() => {
+    const ktcs = classDirectory.filter((c) => c.faculty === FACULTY_KTCS).length;
+    const oto = classDirectory.filter((c) => c.faculty === FACULTY_O_TO).length;
+    return {
+      ALL: classDirectory.length,
+      [FACULTY_KTCS]: ktcs,
+      [FACULTY_O_TO]: oto,
+    };
+  }, [classDirectory]);
+
+  const handleSelectClass = useCallback((classKey: string | null) => {
+    setSelectedClass(classKey);
+    setStudentsPage(1);
+    setSearchInput('');
+    setAppliedSearch('');
+    setIsFilterOpen(false);
+  }, []);
 
   // Keep detail/document modals synchronized with latest students prop
   useEffect(() => {
@@ -430,13 +543,19 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     };
   }, []);
 
-  const appliedFlatFilterPayload = useMemo(
-    () => buildFlatFilterPayload(appliedFilters),
-    [appliedFilters, buildFlatFilterPayload]
-  );
+  const appliedFlatFilterPayload = useMemo(() => {
+    const base = buildFlatFilterPayload(appliedFilters);
+    if (selectedClass && selectedClass !== '__ALL__') {
+      return {
+        ...base,
+        lop: selectedClass,
+      };
+    }
+    return base;
+  }, [appliedFilters, buildFlatFilterPayload, selectedClass]);
 
   const fetchStudentList = useCallback(async () => {
-    if (isStudentRole) return;
+    if (isStudentRole || selectedClass === null) return;
     setIsQuerying(true);
     setQueryError(null);
     try {
@@ -463,6 +582,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     }
   }, [
     isStudentRole,
+    selectedClass,
     appliedFlatFilterPayload,
     appliedSearch,
     studentsPage,
@@ -471,11 +591,11 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     sortDir,
   ]);
 
-  // Trigger list query ONLY on committed applied state, search, sort, pagination, or students mutation
+  // Trigger list query ONLY when viewing a class or All Students list
   useEffect(() => {
-    if (isStudentRole) return;
+    if (isStudentRole || selectedClass === null) return;
     fetchStudentList();
-  }, [isStudentRole, students, fetchStudentList]);
+  }, [isStudentRole, selectedClass, students, fetchStudentList]);
 
   const handleSortColumn = (col: StudentListSortBy) => {
     if (sortBy === col) {
@@ -658,14 +778,37 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     return 'danger';
   };
 
-  const handleOpenAdd = () => {
+  const handleOpenAdd = (preselectedClass?: string) => {
     setEditingStudent(null);
+    const resolvedClass =
+      preselectedClass !== undefined
+        ? preselectedClass
+        : selectedClass && selectedClass !== '__ALL__' && selectedClass !== '__UNASSIGNED__'
+        ? selectedClass
+        : '';
+    setDefaultFormClass(resolvedClass);
     setIsAddModalOpen(true);
   };
 
   const handleOpenEdit = (student: SinhVien) => {
     setEditingStudent(student);
+    setDefaultFormClass('');
     setIsAddModalOpen(true);
+  };
+
+  const handleConfirmDeleteClassStudents = async () => {
+    if (!confirmDeleteClass || !onDeleteClassStudents) return;
+    setIsDeletingClass(true);
+    try {
+      await onDeleteClassStudents(confirmDeleteClass);
+      const deletedName = confirmDeleteClass;
+      setConfirmDeleteClass(null);
+      if (selectedClass === deletedName) {
+        setSelectedClass(null);
+      }
+    } finally {
+      setIsDeletingClass(false);
+    }
   };
 
   const handleSaveStudentFromForm = async (payload: Partial<SinhVien>, currentEditing: SinhVien | null) => {
@@ -752,41 +895,63 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
 
   // Excel import handlers
   const handleDownloadSampleExcel = () => {
-    const sampleData = [
-      {
-        'Mã SV': 'SV001',
-        'Họ và tên': 'Nguyễn Văn Minh',
-        'Lớp': 'ĐH Kỹ thuật cơ sở 1',
-        'Mã Lớp': 'KTCS01',
-        'Khoa / Viện': FACULTY_KTCS,
-        'Ngày sinh': '2005-04-15',
-        'Giới tính': 'Nam',
-        'Số điện thoại': '0987654321',
-        'Email': 'minh.nv@tdnu.edu.vn',
-        'Địa chỉ': 'TP. Hồ Chí Minh',
-        'Ngày nhập học': '2025-09-05',
-        'Trạng thái': 'Đang học',
-      },
-      {
-        'Mã SV': 'SV002',
-        'Họ và tên': 'Lê Hoàng Nam',
-        'Lớp': 'ĐH Ô tô 1',
-        'Mã Lớp': 'OTO01',
-        'Khoa / Viện': FACULTY_O_TO,
-        'Ngày sinh': '2005-11-02',
-        'Giới tính': 'Nam',
-        'Số điện thoại': '0933445566',
-        'Email': 'nam.lh@tdnu.edu.vn',
-        'Địa chỉ': 'Đồng Nai',
-        'Ngày nhập học': '2025-09-05',
-        'Trạng thái': 'Đang học',
-      },
-    ];
+    const activeTargetClass =
+      selectedClass && selectedClass !== '__ALL__' && selectedClass !== '__UNASSIGNED__'
+        ? selectedClass
+        : '';
+    const activeTargetFaculty = activeTargetClass ? getFacultyForClass(activeTargetClass) : '';
+    const sampleData = activeTargetClass
+      ? [
+          {
+            'Mã SV': 'SV001',
+            'Họ và tên': 'Nguyễn Văn Minh',
+            'Lớp': activeTargetClass,
+            'Khoa / Viện': activeTargetFaculty || FACULTY_KTCS,
+            'Ngày sinh': '2005-04-15',
+            'Giới tính': 'Nam',
+            'Số điện thoại': '0987654321',
+            'Email': 'minh.nv@tdnu.edu.vn',
+            'Địa chỉ': 'TP. Hồ Chí Minh',
+            'Ngày nhập học': '2025-09-05',
+            'Trạng thái': 'Đang học',
+          },
+        ]
+      : [
+          {
+            'Mã SV': 'SV001',
+            'Họ và tên': 'Nguyễn Văn Minh',
+            'Lớp': 'ĐH Kỹ thuật cơ sở 1',
+            'Mã Lớp': 'KTCS01',
+            'Khoa / Viện': FACULTY_KTCS,
+            'Ngày sinh': '2005-04-15',
+            'Giới tính': 'Nam',
+            'Số điện thoại': '0987654321',
+            'Email': 'minh.nv@tdnu.edu.vn',
+            'Địa chỉ': 'TP. Hồ Chí Minh',
+            'Ngày nhập học': '2025-09-05',
+            'Trạng thái': 'Đang học',
+          },
+          {
+            'Mã SV': 'SV002',
+            'Họ và tên': 'Lê Hoàng Nam',
+            'Lớp': 'ĐH Ô tô 1',
+            'Mã Lớp': 'OTO01',
+            'Khoa / Viện': FACULTY_O_TO,
+            'Ngày sinh': '2005-11-02',
+            'Giới tính': 'Nam',
+            'Số điện thoại': '0933445566',
+            'Email': 'nam.lh@tdnu.edu.vn',
+            'Địa chỉ': 'Đồng Nai',
+            'Ngày nhập học': '2025-09-05',
+            'Trạng thái': 'Đang học',
+          },
+        ];
 
     const worksheet = XLSX.utils.json_to_sheet(sampleData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'DanhSachSinhVien');
-    XLSX.writeFile(workbook, 'Mau_Import_DanhSach_SinhVien.xlsx');
+    const safeName = activeTargetClass ? activeTargetClass.replace(/[^\p{L}\p{N}_-]+/gu, '_') : 'SinhVien';
+    XLSX.writeFile(workbook, `Mau_Import_${safeName}.xlsx`);
   };
 
   const handleExcelFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -818,9 +983,13 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
               rawLop = lopVal;
             }
 
-            const lop = normalizeClassName(rawLop);
+            const fallbackLop =
+              selectedClass && selectedClass !== '__ALL__' && selectedClass !== '__UNASSIGNED__'
+                ? selectedClass
+                : '';
+            const lop = normalizeClassName(rawLop || fallbackLop);
             const rawKhoa = String(row['Khoa / Viện'] || row['Khoa'] || row['KhoaViên'] || row['khoa'] || '').trim();
-            const khoa = rawKhoa ? normalizeFacultyName(rawKhoa, lop) : lop ? getFacultyFromHelper(lop) : '';
+            const khoa = rawKhoa ? normalizeFacultyName(rawKhoa, lop) : lop ? getFacultyForClass(lop) : '';
             const ngaySinh = String(row['Ngày sinh'] || row['NgaySinh'] || row['ngaySinh'] || '').trim();
             const gioiTinh = String(row['Giới tính'] || row['GioiTinh'] || row['gioiTinh'] || 'Nam').trim();
             const soDienThoai = String(row['Số điện thoại'] || row['SoDienThoai'] || row['SĐT'] || row['soDienThoai'] || '').trim();
@@ -872,19 +1041,29 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
     setExcelFileName('');
   };
 
-  // Excel export for currently applied search & filters
-  const handleExportFilteredExcel = async () => {
+  // Excel export for a specific class or currently applied search & filters
+  const handleExportFilteredExcel = async (overrideClassKey?: string) => {
     if (!canExportProfiles) {
       showToast('Bạn chưa được cấp quyền xuất danh sách hồ sơ.', 'error');
       return;
     }
     setIsExportingExcel(true);
     try {
+      const effectiveClass =
+        overrideClassKey !== undefined
+          ? overrideClassKey
+          : selectedClass && selectedClass !== '__ALL__'
+          ? selectedClass
+          : undefined;
+      const flatPayload: FlatStudentFilterInput = overrideClassKey
+        ? { lop: overrideClassKey }
+        : {
+            ...appliedFlatFilterPayload,
+            search: appliedSearch || undefined,
+          };
+
       const res = await profileService.exportBuilder({
-        flatFilters: {
-          ...appliedFlatFilterPayload,
-          search: appliedSearch || undefined,
-        },
+        flatFilters: flatPayload,
         selectedColumns: [
           'identity',
           'lop',
@@ -924,7 +1103,11 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'HoSoSinhVien');
       const today = new Date().toISOString().split('T')[0];
-      XLSX.writeFile(wb, `DanhSach_HoSo_SinhVien_${today}.xlsx`);
+      const safeClassTag =
+        effectiveClass && effectiveClass !== '__UNASSIGNED__'
+          ? `Lop_${effectiveClass.replace(/[^\p{L}\p{N}_-]+/gu, '_')}_`
+          : '';
+      XLSX.writeFile(wb, `DanhSach_HoSo_${safeClassTag}${today}.xlsx`);
       showToast(`Đã xuất ${exportRows.length} hồ sơ sinh viên.`, 'success');
     } finally {
       setIsExportingExcel(false);
@@ -1459,112 +1642,468 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
         )
       ) : (
         /* ========================================================================= */
-        /* ADMIN & LECTURER VIEW — DIRECT STUDENT LIST                               */
+        /* ADMIN & LECTURER VIEW — CLASS-FIRST MANAGEMENT                            */
         /* ========================================================================= */
-        <>
-          <PageHeader
-            title="Hồ sơ sinh viên"
-            icon={Users}
-            actions={
-              <div className="flex flex-wrap items-center gap-2">
-                {canExportProfiles && (
-                  <button
-                    type="button"
-                    disabled={isExportingExcel}
-                    onClick={handleExportFilteredExcel}
-                    className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 transition-colors cursor-pointer"
-                  >
-                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400" />
-                    <span>{isExportingExcel ? 'Đang xuất...' : 'Xuất Excel'}</span>
-                  </button>
-                )}
-
-                {userRole === 'ADMIN' && (
-                  <>
+        selectedClass === null ? (
+          <>
+            <PageHeader
+              title="Hồ sơ sinh viên theo lớp"
+              icon={Users}
+              actions={
+                <div className="flex flex-wrap items-center gap-2">
+                  {canExportProfiles && (
                     <button
-                      id="btn-import-students-excel"
                       type="button"
-                      onClick={() => setIsExcelImportModalOpen(true)}
-                      className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded border border-emerald-600/40 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors cursor-pointer"
+                      disabled={isExportingExcel}
+                      onClick={() => handleExportFilteredExcel()}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 transition-colors cursor-pointer"
                     >
-                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                      <span>Import Excel</span>
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400" />
+                      <span>{isExportingExcel ? 'Đang xuất...' : 'Xuất tất cả'}</span>
                     </button>
+                  )}
 
+                  {userRole === 'ADMIN' && (
+                    <>
+                      <button
+                        id="btn-import-students-excel"
+                        type="button"
+                        onClick={() => setIsExcelImportModalOpen(true)}
+                        className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded border border-emerald-600/40 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors cursor-pointer"
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                        <span>Import Excel</span>
+                      </button>
+
+                      <button
+                        id="btn-add-student"
+                        type="button"
+                        onClick={() => handleOpenAdd('')}
+                        className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded bg-blue-700 hover:bg-blue-800 text-white transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Thêm sinh viên</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              }
+            />
+
+            {/* Faculty Segmented Filter + Class Search Toolbar */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              <div
+                role="tablist"
+                aria-label="Lọc lớp theo khoa chuyên ngành"
+                className="inline-flex flex-wrap items-center gap-1 p-1 bg-slate-100 dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl w-fit"
+              >
+                {[
+                  { key: 'ALL', label: 'Tất cả khoa', count: facultyClassCounts.ALL },
+                  { key: FACULTY_KTCS, label: FACULTY_KTCS, count: facultyClassCounts[FACULTY_KTCS] },
+                  { key: FACULTY_O_TO, label: FACULTY_O_TO, count: facultyClassCounts[FACULTY_O_TO] },
+                ].map((tab) => {
+                  const isActive = selectedFacultyFilter === tab.key;
+                  return (
                     <button
-                      id="btn-add-student"
+                      key={tab.key}
                       type="button"
-                      onClick={handleOpenAdd}
-                      className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded bg-blue-700 hover:bg-blue-800 text-white transition-colors cursor-pointer"
+                      role="tab"
+                      aria-selected={isActive}
+                      onClick={() => setSelectedFacultyFilter(tab.key)}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                        isActive
+                          ? 'bg-white dark:bg-slate-800 text-blue-700 dark:text-blue-300 shadow-xs'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                      }`}
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Thêm sinh viên</span>
+                      <span>{tab.label}</span>
+                      <span className="font-mono text-[11px] tabular-nums opacity-75">
+                        ({tab.count})
+                      </span>
                     </button>
-                  </>
-                )}
+                  );
+                })}
               </div>
-            }
-          />
 
-          {/* Compact Search + [Lọc] Toolbar */}
-          <div className="relative flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
-            <form
-              className="relative flex-1"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const trimmed = searchInput.trim();
-                setAppliedSearch(trimmed);
-                setStudentsPage(1);
-              }}
-            >
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3 pointer-events-none" />
-              <input
-                type="text"
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                placeholder="Tìm MSSV hoặc họ tên..."
-                aria-label="Tìm kiếm sinh viên theo MSSV hoặc họ tên"
-                className="w-full h-10 pl-10 pr-9 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 transition-colors"
-              />
-              {searchInput && (
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1 lg:max-w-md">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={classSearchInput}
+                    onChange={(e) => setClassSearchInput(e.target.value)}
+                    placeholder="Tìm tên lớp, MSSV hoặc họ tên..."
+                    aria-label="Tìm kiếm lớp hoặc sinh viên"
+                    className="w-full h-9 pl-9 pr-8 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 transition-colors"
+                  />
+                  {classSearchInput && (
+                    <button
+                      type="button"
+                      onClick={() => setClassSearchInput('')}
+                      className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                      aria-label="Xóa từ khóa tìm kiếm"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
                 <button
                   type="button"
-                  onClick={() => {
-                    setSearchInput('');
-                    setAppliedSearch('');
-                    setStudentsPage(1);
-                  }}
-                  className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-                  aria-label="Xóa tìm kiếm"
+                  onClick={() => handleSelectClass('__ALL__')}
+                  className="h-9 inline-flex items-center justify-center gap-1.5 px-3 text-xs font-semibold rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer whitespace-nowrap shrink-0"
                 >
-                  <X className="w-4 h-4" />
+                  <Users className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                  <span>Tất cả sinh viên</span>
                 </button>
-              )}
-            </form>
+              </div>
+            </div>
 
-            <div className="relative flex items-center gap-2">
-              <button
-                ref={filterButtonRef}
-                type="button"
-                onClick={handleToggleFilterPanel}
-                aria-expanded={isFilterOpen}
-                aria-controls={`${formIdPrefix}-filter-panel`}
-                className={`h-10 inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  appliedFilterCount > 0 || isFilterOpen
-                    ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
-                    : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
-                }`}
+            {/* Unboxed Summary Strip */}
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-600 dark:text-slate-400">
+              <span>
+                Đang hiển thị{' '}
+                <strong className="font-mono text-slate-900 dark:text-slate-100 tabular-nums">
+                  {filteredClassDirectory.length}
+                </strong>{' '}
+                lớp
+              </span>
+              <span aria-hidden="true">·</span>
+              <span>
+                Tổng{' '}
+                <strong className="font-mono text-slate-900 dark:text-slate-100 tabular-nums">
+                  {filteredClassDirectory.reduce((sum, c) => sum + c.totalCount, 0)}
+                </strong>{' '}
+                sinh viên
+              </span>
+            </div>
+
+            {/* Class Directory Cards Grid */}
+            {filteredClassDirectory.length === 0 ? (
+              classSearchInput.trim() || selectedFacultyFilter !== 'ALL' ? (
+                <FilteredEmptyState
+                  onClearFilters={() => {
+                    setClassSearchInput('');
+                    setSelectedFacultyFilter('ALL');
+                  }}
+                />
+              ) : (
+                <EmptyState message="Chưa có lớp học nào. Thêm sinh viên hoặc Import Excel để tạo lớp." />
+              )
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {filteredClassDirectory.map((cls) => (
+                  <div
+                    key={cls.classKey}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handleSelectClass(cls.classKey)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        if (e.target !== e.currentTarget) return;
+                        e.preventDefault();
+                        handleSelectClass(cls.classKey);
+                      }
+                    }}
+                    className="group flex flex-col justify-between rounded-xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-blue-500 dark:hover:border-blue-500 transition-colors overflow-hidden cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                  >
+                    <div className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors truncate">
+                            {cls.className}
+                          </h3>
+                          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400 truncate">
+                            {cls.faculty}
+                          </div>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <div className="text-xl font-mono font-bold tabular-nums leading-none text-blue-700 dark:text-blue-400">
+                            {cls.totalCount}
+                          </div>
+                          <div className="mt-0.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                            sinh viên
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3.5 pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600 dark:text-slate-400 tabular-nums">
+                        <span>
+                          Đang học:{' '}
+                          <strong className="font-mono text-emerald-700 dark:text-emerald-400">
+                            {cls.activeCount}
+                          </strong>
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span>
+                          Nam <strong className="font-mono text-slate-800 dark:text-slate-200">{cls.maleCount}</strong>
+                          {' / '}
+                          Nữ <strong className="font-mono text-slate-800 dark:text-slate-200">{cls.femaleCount}</strong>
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span>
+                          Hồ sơ số:{' '}
+                          <strong className="font-mono text-slate-800 dark:text-slate-200">
+                            {cls.withFilesCount}/{cls.totalCount}
+                          </strong>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div
+                      className="px-4 py-2.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/40 flex items-center justify-between gap-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleSelectClass(cls.classKey)}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 dark:text-blue-400 hover:underline cursor-pointer"
+                      >
+                        <FolderOpen className="w-3.5 h-3.5" />
+                        <span>Quản lý hồ sơ lớp</span>
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          /* LEVEL 2: SELECTED CLASS (OR ALL STUDENTS) STUDENT PROFILE LIST */
+          <>
+            <PageHeader
+              title={
+                selectedClass === '__ALL__'
+                  ? 'Tất cả hồ sơ sinh viên'
+                  : selectedClass === '__UNASSIGNED__'
+                  ? 'Hồ sơ sinh viên chưa phân lớp'
+                  : `Lớp ${selectedClass}`
+              }
+              icon={Users}
+              actions={
+                <div className="flex flex-wrap items-center gap-2">
+                  {canExportProfiles && (
+                    <button
+                      type="button"
+                      disabled={isExportingExcel}
+                      onClick={() => handleExportFilteredExcel()}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 transition-colors cursor-pointer"
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400" />
+                      <span>
+                        {isExportingExcel
+                          ? 'Đang xuất...'
+                          : selectedClass === '__ALL__'
+                          ? 'Xuất Excel'
+                          : 'Xuất Excel lớp'}
+                      </span>
+                    </button>
+                  )}
+
+                  {userRole === 'ADMIN' && (
+                    <>
+                      <button
+                        id="btn-import-students-excel"
+                        type="button"
+                        onClick={() => setIsExcelImportModalOpen(true)}
+                        className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded border border-emerald-600/40 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors cursor-pointer"
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                        <span>Import Excel</span>
+                      </button>
+
+                      <button
+                        id="btn-add-student"
+                        type="button"
+                        onClick={() => handleOpenAdd()}
+                        className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded bg-blue-700 hover:bg-blue-800 text-white transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>
+                          {selectedClass !== '__ALL__' && selectedClass !== '__UNASSIGNED__'
+                            ? 'Thêm SV vào lớp'
+                            : 'Thêm sinh viên'}
+                        </span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              }
+            />
+
+            {/* Contextual Breadcrumb, Quick Class Switcher & Class Summary */}
+            <div className="p-3 rounded-xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleSelectClass(null)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200/80 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Danh sách lớp</span>
+                </button>
+
+                <span aria-hidden="true" className="text-slate-300 dark:text-slate-700">
+                  /
+                </span>
+
+                <label htmlFor={`${formIdPrefix}-quick-class`} className="sr-only">
+                  Chuyển nhanh lớp học
+                </label>
+                <select
+                  id={`${formIdPrefix}-quick-class`}
+                  value={selectedClass}
+                  onChange={(e) => handleSelectClass(e.target.value)}
+                  className="px-2.5 py-1.5 text-xs font-semibold bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 cursor-pointer"
+                >
+                  <option value="__ALL__">Tất cả các lớp ({students.length} SV)</option>
+                  {classDirectory.map((cls) => (
+                    <option key={cls.classKey} value={cls.classKey}>
+                      {cls.className} ({cls.totalCount} SV)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-600 dark:text-slate-400 tabular-nums">
+                {activeClassMeta ? (
+                  <>
+                    <span className="font-medium text-slate-800 dark:text-slate-200">
+                      {activeClassMeta.faculty}
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      Sĩ số:{' '}
+                      <strong className="font-mono text-slate-900 dark:text-slate-100">
+                        {activeClassMeta.totalCount}
+                      </strong>
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      Đang học:{' '}
+                      <strong className="font-mono text-emerald-700 dark:text-emerald-400">
+                        {activeClassMeta.activeCount}
+                      </strong>
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      Nam <strong className="font-mono text-slate-800 dark:text-slate-200">{activeClassMeta.maleCount}</strong>
+                      {' / '}
+                      Nữ <strong className="font-mono text-slate-800 dark:text-slate-200">{activeClassMeta.femaleCount}</strong>
+                    </span>
+                  </>
+                ) : (
+                  <span>
+                    Tổng{' '}
+                    <strong className="font-mono text-slate-900 dark:text-slate-100">
+                      {classDirectory.length}
+                    </strong>{' '}
+                    lớp ·{' '}
+                    <strong className="font-mono text-slate-900 dark:text-slate-100">
+                      {students.length}
+                    </strong>{' '}
+                    sinh viên
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Compact Search + [Lọc] Toolbar */}
+            <div className="relative flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+              <form
+                className="relative flex-1"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const trimmed = searchInput.trim();
+                  setAppliedSearch(trimmed);
+                  setStudentsPage(1);
+                }}
               >
-                <SlidersHorizontal className="w-3.5 h-3.5" />
-                <span>{appliedFilterCount > 0 ? `Lọc · ${appliedFilterCount}` : 'Lọc'}</span>
-              </button>
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3 pointer-events-none" />
+                <input
+                  type="text"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  placeholder={
+                    selectedClass === '__ALL__'
+                      ? 'Tìm MSSV, họ tên hoặc lớp...'
+                      : `Tìm MSSV hoặc họ tên trong lớp ${selectedClass === '__UNASSIGNED__' ? 'chưa phân lớp' : selectedClass}...`
+                  }
+                  aria-label="Tìm kiếm sinh viên theo MSSV hoặc họ tên"
+                  className="w-full h-10 pl-10 pr-9 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 transition-colors"
+                />
+                {searchInput && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchInput('');
+                      setAppliedSearch('');
+                      setStudentsPage(1);
+                    }}
+                    className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                    aria-label="Xóa tìm kiếm"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </form>
 
-              {/* Desktop Popover [Lọc] */}
-              {isFilterOpen && (
+              <div className="relative flex items-center gap-2">
+                <button
+                  ref={filterButtonRef}
+                  type="button"
+                  onClick={handleToggleFilterPanel}
+                  aria-expanded={isFilterOpen}
+                  aria-controls={`${formIdPrefix}-filter-panel`}
+                  className={`h-10 inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    appliedFilterCount > 0 || isFilterOpen
+                      ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
+                      : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <span>{appliedFilterCount > 0 ? `Lọc · ${appliedFilterCount}` : 'Lọc'}</span>
+                </button>
+
+                {/* Desktop Popover [Lọc] */}
+                {isFilterOpen && (
+                  <div
+                    id={`${formIdPrefix}-filter-panel`}
+                    ref={filterPopoverRef}
+                    className="hidden md:block absolute right-0 top-full mt-2 w-[560px] max-w-[92vw] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl p-5 z-40"
+                  >
+                    <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-200 dark:border-slate-800">
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                        Bộ lọc hồ sơ sinh viên
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsFilterOpen(false)}
+                        className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded cursor-pointer"
+                        aria-label="Đóng bộ lọc"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    {renderFilterFormBody()}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Mobile Drawer/Sheet [Lọc] */}
+            {isFilterOpen && (
+              <div
+                className="md:hidden fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60"
+                role="dialog"
+                aria-modal="true"
+                onClick={() => setIsFilterOpen(false)}
+              >
                 <div
-                  id={`${formIdPrefix}-filter-panel`}
-                  ref={filterPopoverRef}
-                  className="hidden md:block absolute right-0 top-full mt-2 w-[560px] max-w-[92vw] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl p-5 z-40"
+                  className="w-full max-h-[88vh] overflow-y-auto bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 rounded-t-md p-4 shadow-2xl"
+                  onClick={(e) => e.stopPropagation()}
                 >
                   <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-200 dark:border-slate-800">
                     <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
@@ -1573,326 +2112,366 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
                     <button
                       type="button"
                       onClick={() => setIsFilterOpen(false)}
-                      className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded cursor-pointer"
+                      className="p-1 text-slate-400 hover:text-slate-700 rounded cursor-pointer"
                       aria-label="Đóng bộ lọc"
                     >
-                      <X className="w-3.5 h-3.5" />
+                      <X className="w-4 h-4" />
                     </button>
                   </div>
                   {renderFilterFormBody()}
                 </div>
-              )}
-            </div>
-          </div>
+              </div>
+            )}
 
-          {/* Mobile Drawer/Sheet [Lọc] */}
-          {isFilterOpen && (
-            <div
-              className="md:hidden fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60"
-              role="dialog"
-              aria-modal="true"
-              onClick={() => setIsFilterOpen(false)}
-            >
-              <div
-                className="w-full max-h-[88vh] overflow-y-auto bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 rounded-t-md p-4 shadow-2xl"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-200 dark:border-slate-800">
-                  <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                    Bộ lọc hồ sơ sinh viên
+            {/* Applied Filter Chips (shown ONLY when active appliedFilters exist) */}
+            {appliedFilterChips.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                {appliedFilterChips.map((chip) => (
+                  <span
+                    key={chip.key}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-200 font-medium"
+                  >
+                    <span>{chip.label}</span>
+                    <button
+                      type="button"
+                      onClick={chip.onRemove}
+                      className="text-blue-600 dark:text-blue-300 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer"
+                      aria-label={`Bỏ lọc ${chip.label}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setIsFilterOpen(false)}
-                    className="p-1 text-slate-400 hover:text-slate-700 rounded cursor-pointer"
-                    aria-label="Đóng bộ lọc"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                {renderFilterFormBody()}
-              </div>
-            </div>
-          )}
-
-          {/* Applied Filter Chips (shown ONLY when active appliedFilters exist) */}
-          {appliedFilterChips.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 text-xs">
-              {appliedFilterChips.map((chip) => (
-                <span
-                  key={chip.key}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-200 font-medium"
+                ))}
+                <button
+                  type="button"
+                  onClick={clearAllAppliedFilters}
+                  className="px-2 py-1 text-xs font-medium text-rose-700 dark:text-rose-400 hover:underline cursor-pointer"
                 >
-                  <span>{chip.label}</span>
-                  <button
-                    type="button"
-                    onClick={chip.onRemove}
-                    className="text-blue-600 dark:text-blue-300 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer"
-                    aria-label={`Bỏ lọc ${chip.label}`}
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              ))}
-              <button
-                type="button"
-                onClick={clearAllAppliedFilters}
-                className="px-2 py-1 text-xs font-medium text-rose-700 dark:text-rose-400 hover:underline cursor-pointer"
-              >
-                Xóa tất cả
-              </button>
-            </div>
-          )}
-
-          {queryError && <ErrorBanner message={queryError} onRetry={fetchStudentList} />}
-
-          {/* Direct Student List Table */}
-          {!hasLoadedOnce && isQuerying ? (
-            <LoadingState rows={6} />
-          ) : !queryError && totalStudents === 0 ? (
-            appliedSearch || appliedFilterCount > 0 ? (
-              <FilteredEmptyState onClearFilters={clearAllSearchAndFilters} />
-            ) : (
-              <EmptyState message="Chưa có dữ liệu." />
-            )
-          ) : (
-            <div className="border border-slate-200/90 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 overflow-hidden shadow-xs">
-              <div className="px-4 py-3 bg-slate-50/70 dark:bg-slate-900 border-b border-slate-200/90 dark:border-slate-800 flex items-center justify-between text-xs">
-                <span className="font-semibold text-slate-700 dark:text-slate-300">
-                  Danh sách:{' '}
-                  <span className="font-mono text-slate-900 dark:text-slate-100 tabular-nums">
-                    {totalStudents}
-                  </span>{' '}
-                  sinh viên
-                </span>
-                {isQuerying && (
-                  <span className="text-[11px] text-blue-700 dark:text-blue-400">Đang tải dữ liệu...</span>
-                )}
+                  Xóa tất cả
+                </button>
               </div>
+            )}
 
-              <div className="overflow-x-auto max-h-[calc(100vh-290px)]">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 uppercase text-[11px] tracking-wider border-b border-slate-200 dark:border-slate-800 font-semibold">
-                    <tr>
-                      <th
-                        className="py-2.5 px-3 whitespace-nowrap"
-                        aria-sort={sortBy === 'maSV' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleSortColumn('maSV')}
-                          className="inline-flex items-center gap-1 uppercase font-semibold hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
-                        >
-                          <span>MSSV</span>
-                          {renderSortIcon('maSV')}
-                        </button>
-                      </th>
-                      <th
-                        className="py-2.5 px-3 whitespace-nowrap"
-                        aria-sort={sortBy === 'hoTen' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleSortColumn('hoTen')}
-                          className="inline-flex items-center gap-1 uppercase font-semibold hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
-                        >
-                          <span>Họ tên</span>
-                          {renderSortIcon('hoTen')}
-                        </button>
-                      </th>
-                      <th
-                        className="py-2.5 px-3 whitespace-nowrap"
-                        aria-sort={sortBy === 'lop' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleSortColumn('lop')}
-                          className="inline-flex items-center gap-1 uppercase font-semibold hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
-                        >
-                          <span>Lớp</span>
-                          {renderSortIcon('lop')}
-                        </button>
-                      </th>
-                      <th
-                        className="py-2.5 px-3 whitespace-nowrap"
-                        aria-sort={sortBy === 'soDienThoai' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleSortColumn('soDienThoai')}
-                          className="inline-flex items-center gap-1 uppercase font-semibold hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
-                        >
-                          <span>SĐT</span>
-                          {renderSortIcon('soDienThoai')}
-                        </button>
-                      </th>
-                      <th
-                        className="py-2.5 px-3 whitespace-nowrap"
-                        aria-sort={sortBy === 'ngaySinh' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleSortColumn('ngaySinh')}
-                          className="inline-flex items-center gap-1 uppercase font-semibold hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
-                        >
-                          <span>Ngày sinh</span>
-                          {renderSortIcon('ngaySinh')}
-                        </button>
-                      </th>
-                      <th
-                        className="py-2.5 px-3 whitespace-nowrap"
-                        aria-sort={sortBy === 'email' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleSortColumn('email')}
-                          className="inline-flex items-center gap-1 uppercase font-semibold hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
-                        >
-                          <span>Email</span>
-                          {renderSortIcon('email')}
-                        </button>
-                      </th>
-                      <th className="py-2.5 px-3 text-right whitespace-nowrap">Thao tác</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
-                    {rows.map((r) => {
-                      const svObj = toSinhVienFallback(r);
-                      const phoneText = (r.soDienThoai || svObj.soDienThoai || '').trim();
-                      const rawDob = (r.ngaySinh || svObj.ngaySinh || '').trim();
-                      const dobMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(rawDob);
-                      const dobText = dobMatch ? `${dobMatch[3]}/${dobMatch[2]}/${dobMatch[1]}` : rawDob;
-                      const emailText = (r.email || svObj.email || '').trim();
+            {queryError && <ErrorBanner message={queryError} onRetry={fetchStudentList} />}
 
-                      return (
-                        <tr
-                          key={r.maSV}
-                          tabIndex={0}
-                          onClick={() =>
-                            onOpenFullProfile ? onOpenFullProfile(r.maSV, 'GENERAL') : setViewingDetailStudent(svObj)
-                          }
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              if (e.target !== e.currentTarget) return;
-                              e.preventDefault();
-                              if (onOpenFullProfile) onOpenFullProfile(r.maSV, 'GENERAL');
-                              else setViewingDetailStudent(svObj);
-                            }
-                          }}
-                          className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors cursor-pointer group focus:outline-none focus:bg-blue-50/50 dark:focus:bg-blue-950/30"
+            {/* Class-Scoped Student List Table */}
+            {!hasLoadedOnce && isQuerying ? (
+              <LoadingState rows={6} />
+            ) : !queryError && totalStudents === 0 ? (
+              appliedSearch || appliedFilterCount > 0 ? (
+                <FilteredEmptyState onClearFilters={clearAllSearchAndFilters} />
+              ) : (
+                <EmptyState message="Lớp hiện chưa có sinh viên nào." />
+              )
+            ) : (
+              <div className="border border-slate-200/90 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 overflow-hidden shadow-xs">
+                <div className="px-4 py-3 bg-slate-50/70 dark:bg-slate-900 border-b border-slate-200/90 dark:border-slate-800 flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">
+                    Danh sách:{' '}
+                    <span className="font-mono text-slate-900 dark:text-slate-100 tabular-nums">
+                      {totalStudents}
+                    </span>{' '}
+                    sinh viên
+                  </span>
+                  {isQuerying && (
+                    <span className="text-[11px] text-blue-700 dark:text-blue-400">Đang tải dữ liệu...</span>
+                  )}
+                </div>
+
+                <div className="overflow-x-auto max-h-[calc(100vh-320px)]">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 uppercase text-[11px] tracking-wider border-b border-slate-200 dark:border-slate-800 font-semibold">
+                      <tr>
+                        <th
+                          className="py-2.5 px-3 whitespace-nowrap"
+                          aria-sort={sortBy === 'maSV' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
                         >
-                          <td className="py-2.5 px-3 font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums whitespace-nowrap">
-                            {r.maSV}
-                          </td>
-                          <td className="py-2.5 px-3">
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <img
-                                src={getStudentAvatarUrl(svObj)}
-                                alt={r.hoTen}
-                                referrerPolicy="no-referrer"
-                                className="w-8 h-8 rounded-lg object-cover border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 shrink-0"
-                              />
-                              <span className="font-semibold text-slate-900 dark:text-slate-100 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors truncate">
-                                {r.hoTen}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="py-2.5 px-3">
-                            <div className="font-medium text-slate-800 dark:text-slate-200 whitespace-nowrap">
-                              {r.lop || <span className="text-slate-400">Chưa có thông tin</span>}
-                            </div>
-                            {r.khoa && (
-                              <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[160px]">
-                                {r.khoa}
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3 font-mono tabular-nums whitespace-nowrap">
-                            {phoneText ? (
-                              <span className="text-slate-800 dark:text-slate-200">{phoneText}</span>
-                            ) : (
-                              <span className="font-sans text-slate-400">Chưa có thông tin</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3 font-mono tabular-nums whitespace-nowrap">
-                            {dobText ? (
-                              <span className="text-slate-800 dark:text-slate-200">{dobText}</span>
-                            ) : (
-                              <span className="font-sans text-slate-400">Chưa có thông tin</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3 max-w-[220px]">
-                            <div className="truncate text-slate-800 dark:text-slate-200" title={emailText || undefined}>
-                              {emailText || <span className="text-slate-400">Chưa có thông tin</span>}
-                            </div>
-                          </td>
-                          <td
-                            className="py-2.5 px-3 text-right whitespace-nowrap"
-                            onClick={(e) => e.stopPropagation()}
+                          <button
+                            type="button"
+                            onClick={() => handleSortColumn('maSV')}
+                            className="inline-flex items-center gap-1 uppercase font-semibold hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
                           >
-                            <div className="inline-flex items-center gap-1">
-                              {onOpenFullProfile && (
-                                <button
-                                  type="button"
-                                  onClick={() => onOpenFullProfile(r.maSV, 'GENERAL')}
-                                  className="p-1 text-slate-500 hover:text-indigo-700 dark:text-slate-400 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer"
-                                  title="Mở hồ sơ chi tiết"
-                                  aria-label={`Mở hồ sơ chi tiết ${r.hoTen}`}
-                                >
-                                  <FileText className="w-3.5 h-3.5" />
-                                </button>
+                            <span>MSSV</span>
+                            {renderSortIcon('maSV')}
+                          </button>
+                        </th>
+                        <th
+                          className="py-2.5 px-3 whitespace-nowrap"
+                          aria-sort={sortBy === 'hoTen' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleSortColumn('hoTen')}
+                            className="inline-flex items-center gap-1 uppercase font-semibold hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
+                          >
+                            <span>Họ tên</span>
+                            {renderSortIcon('hoTen')}
+                          </button>
+                        </th>
+                        {selectedClass === '__ALL__' && (
+                          <th
+                            className="py-2.5 px-3 whitespace-nowrap"
+                            aria-sort={sortBy === 'lop' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => handleSortColumn('lop')}
+                              className="inline-flex items-center gap-1 uppercase font-semibold hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
+                            >
+                              <span>Lớp</span>
+                              {renderSortIcon('lop')}
+                            </button>
+                          </th>
+                        )}
+                        <th
+                          className="py-2.5 px-3 whitespace-nowrap"
+                          aria-sort={sortBy === 'soDienThoai' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleSortColumn('soDienThoai')}
+                            className="inline-flex items-center gap-1 uppercase font-semibold hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
+                          >
+                            <span>SĐT</span>
+                            {renderSortIcon('soDienThoai')}
+                          </button>
+                        </th>
+                        <th
+                          className="py-2.5 px-3 whitespace-nowrap"
+                          aria-sort={sortBy === 'ngaySinh' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleSortColumn('ngaySinh')}
+                            className="inline-flex items-center gap-1 uppercase font-semibold hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
+                          >
+                            <span>Ngày sinh</span>
+                            {renderSortIcon('ngaySinh')}
+                          </button>
+                        </th>
+                        <th
+                          className="py-2.5 px-3 whitespace-nowrap"
+                          aria-sort={sortBy === 'email' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleSortColumn('email')}
+                            className="inline-flex items-center gap-1 uppercase font-semibold hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer"
+                          >
+                            <span>Email</span>
+                            {renderSortIcon('email')}
+                          </button>
+                        </th>
+                        <th className="py-2.5 px-3 whitespace-nowrap">Hồ sơ</th>
+                        <th className="py-2.5 px-3 text-right whitespace-nowrap">Thao tác</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
+                      {rows.map((r) => {
+                        const svObj = toSinhVienFallback(r);
+                        const phoneText = (r.soDienThoai || svObj.soDienThoai || '').trim();
+                        const rawDob = (r.ngaySinh || svObj.ngaySinh || '').trim();
+                        const dobMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(rawDob);
+                        const dobText = dobMatch ? `${dobMatch[3]}/${dobMatch[2]}/${dobMatch[1]}` : rawDob;
+                        const emailText = (r.email || svObj.email || '').trim();
+                        const filesCount = getStudentFiles(svObj).length;
+
+                        return (
+                          <tr
+                            key={r.maSV}
+                            tabIndex={0}
+                            onClick={() =>
+                              onOpenFullProfile ? onOpenFullProfile(r.maSV, 'GENERAL') : setViewingDetailStudent(svObj)
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                if (e.target !== e.currentTarget) return;
+                                e.preventDefault();
+                                if (onOpenFullProfile) onOpenFullProfile(r.maSV, 'GENERAL');
+                                else setViewingDetailStudent(svObj);
+                              }
+                            }}
+                            className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors cursor-pointer group focus:outline-none focus:bg-blue-50/50 dark:focus:bg-blue-950/30"
+                          >
+                            <td className="py-2.5 px-3 font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums whitespace-nowrap">
+                              {r.maSV}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <img
+                                  src={getStudentAvatarUrl(svObj)}
+                                  alt={r.hoTen}
+                                  referrerPolicy="no-referrer"
+                                  className="w-8 h-8 rounded-lg object-cover border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 shrink-0"
+                                />
+                                <span className="font-semibold text-slate-900 dark:text-slate-100 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors truncate">
+                                  {r.hoTen}
+                                </span>
+                              </div>
+                            </td>
+                            {selectedClass === '__ALL__' && (
+                              <td className="py-2.5 px-3">
+                                <div className="font-medium text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                                  {r.lop || <span className="text-slate-400">Chưa phân lớp</span>}
+                                </div>
+                                {r.khoa && (
+                                  <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[160px]">
+                                    {r.khoa}
+                                  </div>
+                                )}
+                              </td>
+                            )}
+                            <td className="py-2.5 px-3 font-mono tabular-nums whitespace-nowrap">
+                              {phoneText ? (
+                                <span className="text-slate-800 dark:text-slate-200">{phoneText}</span>
+                              ) : (
+                                <span className="font-sans text-slate-400">Chưa có thông tin</span>
                               )}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono tabular-nums whitespace-nowrap">
+                              {dobText ? (
+                                <span className="text-slate-800 dark:text-slate-200">{dobText}</span>
+                              ) : (
+                                <span className="font-sans text-slate-400">Chưa có thông tin</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 max-w-[220px]">
+                              <div className="truncate text-slate-800 dark:text-slate-200" title={emailText || undefined}>
+                                {emailText || <span className="text-slate-400">Chưa có thông tin</span>}
+                              </div>
+                            </td>
+                            <td
+                              className="py-2.5 px-3 whitespace-nowrap"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <button
                                 type="button"
-                                onClick={() => setViewingDetailStudent(svObj)}
-                                className="p-1 text-slate-500 hover:text-blue-700 dark:text-slate-400 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer"
-                                title="Xem nhanh"
-                                aria-label={`Xem nhanh ${r.hoTen}`}
+                                onClick={() => setViewingDocumentStudent(svObj)}
+                                className="inline-flex items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-300 hover:text-blue-700 dark:hover:text-blue-400 cursor-pointer tabular-nums"
+                                title="Xem tệp hồ sơ số hóa"
                               >
-                                <Eye className="w-3.5 h-3.5" />
+                                <Paperclip className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="font-mono">{filesCount}</span>
+                                <span>tệp</span>
                               </button>
-                              {canEditProfile && (
+                            </td>
+                            <td
+                              className="py-2.5 px-3 text-right whitespace-nowrap"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <div className="inline-flex items-center gap-1">
+                                {onOpenFullProfile && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onOpenFullProfile(r.maSV, 'GENERAL')}
+                                    className="p-1 text-slate-500 hover:text-indigo-700 dark:text-slate-400 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer"
+                                    title="Mở hồ sơ chi tiết"
+                                    aria-label={`Mở hồ sơ chi tiết ${r.hoTen}`}
+                                  >
+                                    <FileText className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                                 <button
                                   type="button"
-                                  onClick={() => handleOpenEdit(svObj)}
-                                  className="p-1 text-slate-500 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer"
-                                  title="Chỉnh sửa"
-                                  aria-label={`Chỉnh sửa ${r.hoTen}`}
+                                  onClick={() => setViewingDetailStudent(svObj)}
+                                  className="p-1 text-slate-500 hover:text-blue-700 dark:text-slate-400 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer"
+                                  title="Xem nhanh"
+                                  aria-label={`Xem nhanh ${r.hoTen}`}
                                 >
-                                  <Edit3 className="w-3.5 h-3.5" />
+                                  <Eye className="w-3.5 h-3.5" />
                                 </button>
-                              )}
-                              {userRole === 'ADMIN' && (
-                                <button
-                                  type="button"
-                                  onClick={() => onDeleteStudent(r.maSV)}
-                                  className="p-1 text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer"
-                                  title="Xóa sinh viên"
-                                  aria-label={`Xóa ${r.hoTen}`}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                                {canEditProfile && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEdit(svObj)}
+                                    className="p-1 text-slate-500 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer"
+                                    title="Chỉnh sửa"
+                                    aria-label={`Chỉnh sửa ${r.hoTen}`}
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                {userRole === 'ADMIN' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onDeleteStudent(r.maSV)}
+                                    className="p-1 text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer"
+                                    title="Xóa sinh viên"
+                                    aria-label={`Xóa ${r.hoTen}`}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
 
-              <PaginationBar
-                currentPage={studentsPage}
-                pageSize={studentsPageSize}
-                totalItems={totalStudents}
-                onPageChange={setStudentsPage}
-                onPageSizeChange={setStudentsPageSize}
-                pageSizeOptions={[10, 20, 50]}
-              />
+                <PaginationBar
+                  currentPage={studentsPage}
+                  pageSize={studentsPageSize}
+                  totalItems={totalStudents}
+                  onPageChange={setStudentsPage}
+                  onPageSizeChange={setStudentsPageSize}
+                  pageSizeOptions={[10, 20, 50]}
+                />
+              </div>
+            )}
+          </>
+        )
+      )}
+
+      {/* CONFIRM DELETE ALL STUDENTS IN A CLASS MODAL */}
+      {confirmDeleteClass && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => !isDeletingClass && setConfirmDeleteClass(null)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl max-w-md w-full p-5 shadow-xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-lg bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  Xác nhận xóa danh sách sinh viên lớp
+                </h3>
+                <p className="mt-1 text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Bạn sắp xóa toàn bộ hồ sơ sinh viên thuộc lớp{' '}
+                  <strong className="text-slate-900 dark:text-slate-100">{confirmDeleteClass}</strong>. Thao tác này không thể hoàn tác.
+                </p>
+              </div>
             </div>
-          )}
-        </>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                disabled={isDeletingClass}
+                onClick={() => setConfirmDeleteClass(null)}
+                className="px-3.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingClass}
+                onClick={handleConfirmDeleteClassStudents}
+                className="px-3.5 py-1.5 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg cursor-pointer disabled:opacity-50"
+              >
+                {isDeletingClass ? 'Đang xóa...' : 'Xác nhận xóa'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ========================================================================= */}
@@ -1902,6 +2481,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
         isOpen={isAddModalOpen}
         editingStudent={editingStudent}
         availableClasses={availableClasses}
+        defaultClass={defaultFormClass}
         getFacultyForClass={getFacultyForClass}
         getStudentFiles={getStudentFiles}
         getStudentAvatarUrl={getStudentAvatarUrl}
@@ -1911,7 +2491,7 @@ export const StudentProfileModule: React.FC<StudentProfileModuleProps> = ({
         onPreviewDocument={handleOpenSinglePdf}
         onOpenFullProfile={onOpenFullProfile}
         onAfterParentInfoSaved={async () => {
-          if (!isStudentRole) {
+          if (!isStudentRole && selectedClass !== null) {
             await fetchStudentList();
           }
         }}

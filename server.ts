@@ -286,6 +286,45 @@ async function startServer() {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
+  app.post('/api/users/reveal-passwords', requirePortalRoles('ADMIN'), async (req: PortalAuthRequest, res: Response) => {
+    try {
+      const rawIds = req.body?.userIds;
+      let requestedIds: Set<string> | null = null;
+      if (rawIds !== undefined) {
+        if (!Array.isArray(rawIds) || !rawIds.every((id) => typeof id === 'string' && id.trim().length > 0)) {
+          return res.status(400).json({ success: false, message: 'Danh sách mã tài khoản không hợp lệ.' });
+        }
+        requestedIds = new Set(rawIds.map((id) => id.trim()));
+      }
+      const userList = await getAllUsers();
+      const targetUsers = requestedIds
+        ? userList.filter((u: any) => requestedIds!.has(u.id))
+        : userList;
+      const passwords: Record<string, string> = {};
+      for (const u of targetUsers) {
+        passwords[u.id] = resolvePlainPassword(u as any);
+      }
+      try {
+        await createAuditLog({
+          user: req.authUser?.username || 'admin',
+          role: 'ADMIN',
+          action: 'VIEW_PASSWORD',
+          target: requestedIds && requestedIds.size === 1
+            ? `User ID: ${Array.from(requestedIds)[0]}`
+            : `Danh sách người dùng (${targetUsers.length} tài khoản)`,
+          details: `Quản trị viên xem mật khẩu ${requestedIds ? `${targetUsers.length} tài khoản được chọn` : 'toàn bộ tài khoản hệ thống'}`,
+          status: 'SUCCESS',
+          ip: getReqIp(req),
+        });
+      } catch {
+        // ignore audit log write error
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json({ success: true, data: passwords });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message || 'Không thể tải mật khẩu người dùng' });
+    }
+  });
   app.post('/api/users', requirePortalRoles('ADMIN'), async (req: Request, res: Response) => {
     try {
       const { username, fullName, role, email, password, plainPassword, studentCode, faculty, permissions } = req.body;
@@ -653,6 +692,7 @@ async function startServer() {
               fullName: st.hoTen.trim(),
               email: st.email || `${st.maSV.trim().toLowerCase()}@tdnu.edu.vn`,
               password: hashPassword('123456'),
+              plainPassword: '123456',
               studentCode: st.maSV.trim(),
               faculty: normKhoa,
               role: 'STUDENT',

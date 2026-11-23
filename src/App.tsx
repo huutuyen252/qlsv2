@@ -25,6 +25,7 @@ import { AdminBackupModule } from './components/admin/AdminBackupModule';
 import { AdminAuditLogsModule } from './components/admin/AdminAuditLogsModule';
 import { getAcademicPeriod } from './utils/academicCalendar';
 import { parseRouteFromPath, getRouteMeta, updateBrowserUrl } from './utils/navigation';
+import { normalizeClassName } from './utils/classHelper';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
@@ -557,11 +558,14 @@ export default function App() {
   };
 
   const handleDeleteClassStudents = async (lop: string) => {
-    const studentsInClass = students.filter((s) => s.lop === lop);
+    const targetNorm = normalizeClassName(lop).toLowerCase();
+    const studentsInClass = students.filter(
+      (s) => normalizeClassName(s.lop).toLowerCase() === targetNorm
+    );
     for (const s of studentsInClass) {
       await apiService.deleteStudent(s.maSV);
     }
-    showToast(`Đã xóa toàn bộ ${studentsInClass.length} sinh viên trong lớp ${lop}. Lớp học vẫn được giữ lại.`);
+    showToast(`Đã xóa toàn bộ ${studentsInClass.length} sinh viên trong lớp ${lop}.`);
     loadAllData();
   };
 

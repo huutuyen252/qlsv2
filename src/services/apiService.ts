@@ -98,6 +98,20 @@ export const apiService = {
       return { success: false, data: [] };
     }
   },
+  async revealUserPasswords(
+    userIds?: string[]
+  ): Promise<{ success: boolean; data: Record<string, string>; message?: string }> {
+    try {
+      const res = await authFetch(`${API_BASE}/users/reveal-passwords`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(userIds && userIds.length > 0 ? { userIds } : {}),
+      });
+      return await res.json();
+    } catch {
+      return { success: false, data: {}, message: 'Không thể tải mật khẩu người dùng từ máy chủ' };
+    }
+  },
   async createUser(userData: Partial<User>): Promise<{ success: boolean; message: string; data?: User }> {
     try {
       const res = await authFetch(`${API_BASE}/users`, {

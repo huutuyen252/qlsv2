@@ -44,6 +44,7 @@ import {
   UnlockIcon,
 } from '../common/ActionIcons';
 import { resolvePlainPassword } from '../../utils/security';
+import { apiService } from '../../services/apiService';
 
 interface UserManagementModuleProps {
   currentUser: User | null;
@@ -74,7 +75,10 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
 
   // Visibility & Interaction States
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
+  const [revealedPasswords, setRevealedPasswords] = useState<Record<string, string>>({});
   const [showAllPasswords, setShowAllPasswords] = useState<boolean>(false);
+  const [isLoadingPasswords, setIsLoadingPasswords] = useState<boolean>(false);
+  const [loadingPasswordUserId, setLoadingPasswordUserId] = useState<string | null>(null);
   const [copiedUserId, setCopiedUserId] = useState<string | null>(null);
 
   // Search & Filters
@@ -168,16 +172,88 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
   };
 
   const getUserPasswordDisplay = (user: User) => {
+    if (revealedPasswords[user.id]) return revealedPasswords[user.id];
     if (!user.plainPassword && !user.password) return '••••••••';
     return resolvePlainPassword(user);
+  };
+
+  const handleToggleShowAllPasswords = async () => {
+    if (showAllPasswords) {
+      setShowAllPasswords(false);
+      setVisiblePasswords({});
+      setRevealedPasswords({});
+      return;
+    }
+    setIsLoadingPasswords(true);
+    try {
+      const res = await apiService.revealUserPasswords();
+      if (res.success && res.data) {
+        setRevealedPasswords(res.data);
+        setShowAllPasswords(true);
+      }
+    } finally {
+      setIsLoadingPasswords(false);
+    }
+  };
+
+  const handleToggleRowPassword = async (user: User) => {
+    const currentlyVisible = showAllPasswords || Boolean(visiblePasswords[user.id]);
+    if (currentlyVisible) {
+      if (showAllPasswords) {
+        const nextVisible: Record<string, boolean> = {};
+        users.forEach((u) => {
+          if (u.id !== user.id) nextVisible[u.id] = true;
+        });
+        setShowAllPasswords(false);
+        setVisiblePasswords(nextVisible);
+      } else {
+        setVisiblePasswords((prev) => ({ ...prev, [user.id]: false }));
+      }
+      setRevealedPasswords((prev) => {
+        const next = { ...prev };
+        delete next[user.id];
+        return next;
+      });
+      return;
+    }
+
+    if (revealedPasswords[user.id] || user.plainPassword || user.password) {
+      setVisiblePasswords((prev) => ({ ...prev, [user.id]: true }));
+      return;
+    }
+
+    setLoadingPasswordUserId(user.id);
+    try {
+      const res = await apiService.revealUserPasswords([user.id]);
+      if (res.success && res.data && res.data[user.id]) {
+        setRevealedPasswords((prev) => ({ ...prev, [user.id]: res.data[user.id] }));
+        setVisiblePasswords((prev) => ({ ...prev, [user.id]: true }));
+      }
+    } finally {
+      setLoadingPasswordUserId(null);
+    }
+  };
+
+  const handleCopyPassword = async (user: User) => {
+    let pwd = revealedPasswords[user.id] || (user.plainPassword || user.password ? resolvePlainPassword(user) : '');
+    if (!pwd) {
+      const res = await apiService.revealUserPasswords([user.id]);
+      if (res.success && res.data && res.data[user.id]) {
+        pwd = res.data[user.id];
+      }
+    }
+    if (!pwd) return;
+    navigator.clipboard.writeText(pwd);
+    setCopiedUserId(user.id);
+    setTimeout(() => setCopiedUserId(null), 1500);
   };
 
   const handleOpenEditModal = (user: User) => {
     setEditingUser(user);
     setEditUsername(user.username);
     setEditFullName(user.fullName);
-    const hasPlain = Boolean(user.plainPassword || user.password);
-    setEditPassword(hasPlain ? resolvePlainPassword(user) : '');
+    const knownPlain = revealedPasswords[user.id] || (user.plainPassword || user.password ? resolvePlainPassword(user) : '');
+    setEditPassword(knownPlain);
     setShowEditPassword(false);
     setEditEmail(user.email || '');
     setEditFaculty(user.faculty || '');
@@ -237,6 +313,13 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
       }
     } else {
       await onUpdateRole(editingUser.id, editRole, editPermissions);
+    }
+
+    if (updatedData.plainPassword && (showAllPasswords || visiblePasswords[editingUser.id])) {
+      setRevealedPasswords((prev) => ({
+        ...prev,
+        [editingUser.id]: updatedData.plainPassword as string,
+      }));
     }
 
     setEditModalSuccess('Đã cập nhật thông tin tài khoản và mật khẩu thành công!');
@@ -382,15 +465,22 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
           <button
             type="button"
-            onClick={() => setShowAllPasswords(!showAllPasswords)}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded border transition-colors cursor-pointer ${
+            disabled={isLoadingPasswords}
+            onClick={handleToggleShowAllPasswords}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded border transition-colors cursor-pointer disabled:opacity-60 ${
               showAllPasswords
                 ? 'bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-950/70 dark:border-amber-800 dark:text-amber-300'
                 : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-750'
             }`}
           >
             {showAllPasswords ? <EyeOff className="w-3.5 h-3.5 text-amber-600" /> : <Eye className="w-3.5 h-3.5" />}
-            <span>{showAllPasswords ? 'Ẩn tất cả Mật khẩu' : 'Hiện tất cả Mật khẩu'}</span>
+            <span>
+              {isLoadingPasswords
+                ? 'Đang tải mật khẩu...'
+                : showAllPasswords
+                ? 'Ẩn tất cả Mật khẩu'
+                : 'Hiện tất cả Mật khẩu'}
+            </span>
           </button>
           <select
             id="select-filter-role"
@@ -477,14 +567,10 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
                           </span>
                           <button
                             type="button"
-                            onClick={() =>
-                              setVisiblePasswords((prev) => ({
-                                ...prev,
-                                [user.id]: !prev[user.id],
-                              }))
-                            }
-                            className="p-1 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100 rounded transition-colors cursor-pointer"
-                            title={visiblePasswords[user.id] ? 'Ẩn mật khẩu' : 'Xem mật khẩu'}
+                            disabled={loadingPasswordUserId === user.id}
+                            onClick={() => handleToggleRowPassword(user)}
+                            className="p-1 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100 rounded transition-colors cursor-pointer disabled:opacity-50"
+                            title={isPassVisible ? 'Ẩn mật khẩu' : 'Xem mật khẩu'}
                           >
                             {isPassVisible ? (
                               <EyeOffIcon className="w-3.5 h-3.5 text-amber-500" />
@@ -494,11 +580,7 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
                           </button>
                           <button
                             type="button"
-                            onClick={() => {
-                              navigator.clipboard.writeText(currentPasswordStr);
-                              setCopiedUserId(user.id);
-                              setTimeout(() => setCopiedUserId(null), 1500);
-                            }}
+                            onClick={() => handleCopyPassword(user)}
                             className="p-1 text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-300 rounded transition-colors cursor-pointer"
                             title="Sao chép mật khẩu"
                           >

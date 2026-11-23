@@ -26,6 +26,7 @@ interface StudentProfileFormProps {
   isOpen: boolean;
   editingStudent: SinhVien | null;
   availableClasses: string[];
+  defaultClass?: string;
   getFacultyForClass: (lop: string) => string;
   getStudentFiles: (sv: SinhVien) => HoSoFile[];
   getStudentAvatarUrl: (student: Partial<SinhVien>) => string;
@@ -61,6 +62,7 @@ export const StudentProfileForm: React.FC<StudentProfileFormProps> = ({
   isOpen,
   editingStudent,
   availableClasses,
+  defaultClass,
   getFacultyForClass,
   getStudentFiles,
   getStudentAvatarUrl,
@@ -139,20 +141,23 @@ export const StudentProfileForm: React.FC<StudentProfileFormProps> = ({
           if (active) setLoadingParentInfo(false);
         });
     } else {
-      const initialClass = availableClasses[0] || '';
+      const normDefault = defaultClass && defaultClass !== '__UNASSIGNED__' ? normalizeClassName(defaultClass) : '';
+      const initialClass = normDefault || availableClasses[0] || '';
       setFormData({
         ...EMPTY_STUDENT_FORM,
         lop: initialClass,
         khoa: initialClass ? getFacultyForClass(initialClass) : '',
       });
-      setIsCustomClassInput(availableClasses.length === 0);
+      setIsCustomClassInput(
+        Boolean(initialClass && !availableClasses.includes(initialClass)) || availableClasses.length === 0
+      );
       setLoadingParentInfo(false);
     }
 
     return () => {
       active = false;
     };
-  }, [isOpen, editingStudent, availableClasses, getFacultyForClass, getStudentFiles]);
+  }, [isOpen, editingStudent, availableClasses, defaultClass, getFacultyForClass, getStudentFiles]);
 
   if (!isOpen) return null;
 
