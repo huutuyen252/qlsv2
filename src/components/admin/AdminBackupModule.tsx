@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { apiService } from '../../services/apiService';
 import { PageHeader } from '../common/PageHeader';
+import { HOLIDAY_THEME_OPTIONS, HolidayThemeKey } from '../../utils/holidayTheme';
 
 interface AdminBackupModuleProps {
   showToast: (msg: string) => void;
@@ -34,8 +35,16 @@ interface SystemConfig {
   schoolName: string;
   schoolCode: string;
   campusAddress: string;
+  adminName: string;
+  adminUnit: string;
   contactEmail: string;
   hotline: string;
+  supportHours: string;
+  facebookUrl: string;
+  tiktokUrl: string;
+  zaloUrl: string;
+  holidayThemeMode: HolidayThemeKey;
+  holidayBannerText: string;
   absenceWarningThreshold: number; // % e.g. 10
   absenceBanThreshold: number; // % e.g. 20
   minPassGrade10: number; // e.g. 4.0
@@ -51,8 +60,16 @@ const DEFAULT_CONFIG: SystemConfig = {
   schoolName: 'Trường Đại học Trần Đại Nghĩa (TDNU)',
   schoolCode: 'TDNU',
   campusAddress: '189 Nguyễn Oanh, Phường 10, Quận Gò Vấp, TP. Hồ Chí Minh',
-  contactEmail: 'daotao@tdnu.edu.vn',
+  adminName: 'Dương Hữu Tuyến',
+  adminUnit: 'Quản trị hệ thống · Phòng Đào tạo',
+  contactEmail: 'admin@tdnu.edu.vn',
   hotline: '028.3894.1234',
+  supportHours: 'Thứ 2 – Thứ 6 · 07:30 – 17:00',
+  facebookUrl: 'https://www.facebook.com',
+  tiktokUrl: 'https://www.tiktok.com',
+  zaloUrl: 'https://zalo.me/02838941234',
+  holidayThemeMode: 'AUTO',
+  holidayBannerText: '',
   absenceWarningThreshold: 10,
   absenceBanThreshold: 20,
   minPassGrade10: 4.0,
@@ -89,23 +106,45 @@ export const AdminBackupModule: React.FC<AdminBackupModuleProps> = ({
   const [isDangerModalOpen, setIsDangerModalOpen] = useState<boolean>(false);
   const [confirmDeleteInput, setConfirmDeleteInput] = useState<string>('');
 
+  useEffect(() => {
+    let active = true;
+    apiService.getSystemConfig().then((res) => {
+      if (active && res.success && res.data) {
+        setConfig((prev) => {
+          const merged = { ...prev, ...res.data };
+          try {
+            localStorage.setItem('app_system_config', JSON.stringify(merged));
+          } catch {
+            // ignore
+          }
+          return merged;
+        });
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Save system configuration
-  const handleSaveConfig = () => {
+  const handleSaveConfig = async () => {
     setIsSavingConfig(true);
     try {
       localStorage.setItem('app_system_config', JSON.stringify(config));
-      showToast('Đã lưu cấu hình hệ thống thành công!');
+      await apiService.updateSystemConfig(config);
+      showToast('Đã lưu cấu hình hệ thống & thông tin liên hệ đăng nhập thành công!');
     } catch {
-      showToast('Lỗi khi lưu cấu hình vào bộ nhớ trình duyệt!');
+      showToast('Lỗi khi lưu cấu hình hệ thống!');
     } finally {
       setTimeout(() => setIsSavingConfig(false), 300);
     }
   };
 
-  const handleResetDefaultConfig = () => {
+  const handleResetDefaultConfig = async () => {
     setConfig(DEFAULT_CONFIG);
     try {
       localStorage.setItem('app_system_config', JSON.stringify(DEFAULT_CONFIG));
+      await apiService.updateSystemConfig(DEFAULT_CONFIG);
       showToast('Đã khôi phục thông số cấu hình mặc định!');
     } catch {
       showToast('Lỗi khi khôi phục cấu hình!');
@@ -354,9 +393,34 @@ export const AdminBackupModule: React.FC<AdminBackupModuleProps> = ({
                   </div>
                 </div>
 
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
+                      Tên Quản trị viên (Trang đăng nhập)
+                    </label>
+                    <input
+                      type="text"
+                      value={config.adminName}
+                      onChange={(e) => setConfig({ ...config, adminName: e.target.value })}
+                      className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
+                      Chức danh / Đơn vị quản trị
+                    </label>
+                    <input
+                      type="text"
+                      value={config.adminUnit}
+                      onChange={(e) => setConfig({ ...config, adminUnit: e.target.value })}
+                      className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
-                    Email liên hệ Phòng Đào tạo / Giáo vụ
+                    Email liên hệ Quản trị viên / Phòng Đào tạo
                   </label>
                   <input
                     type="email"
@@ -364,6 +428,57 @@ export const AdminBackupModule: React.FC<AdminBackupModuleProps> = ({
                     onChange={(e) => setConfig({ ...config, contactEmail: e.target.value })}
                     className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
+                    Giờ làm việc / Hỗ trợ
+                  </label>
+                  <input
+                    type="text"
+                    value={config.supportHours}
+                    onChange={(e) => setConfig({ ...config, supportHours: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
+                      Link Facebook
+                    </label>
+                    <input
+                      type="url"
+                      value={config.facebookUrl}
+                      onChange={(e) => setConfig({ ...config, facebookUrl: e.target.value })}
+                      placeholder="https://facebook.com/..."
+                      className="w-full px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
+                      Link TikTok
+                    </label>
+                    <input
+                      type="url"
+                      value={config.tiktokUrl}
+                      onChange={(e) => setConfig({ ...config, tiktokUrl: e.target.value })}
+                      placeholder="https://tiktok.com/..."
+                      className="w-full px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
+                      Link Zalo
+                    </label>
+                    <input
+                      type="url"
+                      value={config.zaloUrl}
+                      onChange={(e) => setConfig({ ...config, zaloUrl: e.target.value })}
+                      placeholder="https://zalo.me/..."
+                      className="w-full px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -376,6 +491,44 @@ export const AdminBackupModule: React.FC<AdminBackupModuleProps> = ({
                     onChange={(e) => setConfig({ ...config, campusAddress: e.target.value })}
                     className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
+                      Chủ đề ngày lễ kỷ niệm (Trang đăng nhập)
+                    </label>
+                    <select
+                      value={config.holidayThemeMode}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          holidayThemeMode: e.target.value as HolidayThemeKey,
+                        })
+                      }
+                      className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      {HOLIDAY_THEME_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
+                      Dòng chữ chạy kỷ niệm tùy chỉnh (để trống để tự động theo ngày lễ)
+                    </label>
+                    <input
+                      type="text"
+                      value={config.holidayBannerText}
+                      onChange={(e) => setConfig({ ...config, holidayBannerText: e.target.value })}
+                      placeholder="VD: Chào mừng Ngày Nhà giáo Việt Nam 20/11..."
+                      maxLength={260}
+                      className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
                 </div>
               </div>
             </div>

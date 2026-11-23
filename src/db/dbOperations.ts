@@ -48,6 +48,18 @@ let memoryNghiLe: any[] = [];
 let memoryAuditLogs: any[] = [];
 let memoryIdMapping: any[] = [];
 let memoryMigrationConflictLog: any[] = [];
+let memorySystemConfig: Record<string, any> = {
+  adminName: 'Dương Hữu Tuyến',
+  adminUnit: 'Quản trị hệ thống · Phòng Đào tạo',
+  hotline: '028.3894.1234',
+  contactEmail: 'admin@tdnu.edu.vn',
+  supportHours: 'Thứ 2 – Thứ 6 · 07:30 – 17:00',
+  facebookUrl: 'https://www.facebook.com',
+  tiktokUrl: 'https://www.tiktok.com',
+  zaloUrl: 'https://zalo.me/02838941234',
+  holidayThemeMode: 'AUTO',
+  holidayBannerText: '',
+};
 
 export function saveToDisk() {
   try {
@@ -68,6 +80,7 @@ export function saveToDisk() {
       memoryAuditLogs,
       memoryIdMapping,
       memoryMigrationConflictLog,
+      memorySystemConfig,
     };
     fs.writeFileSync(DATA_STORE_PATH, JSON.stringify(payload, null, 2), 'utf-8');
   } catch (err) {
@@ -105,6 +118,9 @@ export function loadFromDisk() {
       if (Array.isArray(data.memoryAuditLogs)) memoryAuditLogs = data.memoryAuditLogs;
       if (Array.isArray(data.memoryIdMapping)) memoryIdMapping = data.memoryIdMapping;
       if (Array.isArray(data.memoryMigrationConflictLog)) memoryMigrationConflictLog = data.memoryMigrationConflictLog;
+      if (data.memorySystemConfig && typeof data.memorySystemConfig === 'object') {
+        memorySystemConfig = { ...memorySystemConfig, ...data.memorySystemConfig };
+      }
       console.log(`[Storage] Loaded persistent store: ${memorySinhVien.length} SV, ${memoryDiemDanh.length} điểm danh, ${memoryThongBaoKiemTra.length} thông báo KT, ${memoryAuditLogs.length} audit logs, ${memoryIdMapping.length} ID mappings`);
     }
 
@@ -1767,6 +1783,12 @@ export async function getAllAuditLogs(limit: number = 300): Promise<any[]> {
           status: row.status,
           ip: row.ip,
           createdAt: row.created_at,
+          actorUserId: row.actor_user_id,
+          entityType: row.entity_type,
+          entityId: row.entity_id,
+          beforeJson: row.before_json,
+          afterJson: row.after_json,
+          reason: row.reason,
         }));
       }
     } catch (e) {
@@ -1785,6 +1807,12 @@ export async function createAuditLog(entry: {
   details: string;
   status?: string;
   ip?: string;
+  actorUserId?: string;
+  entityType?: string;
+  entityId?: string;
+  beforeJson?: any;
+  afterJson?: any;
+  reason?: string;
 }): Promise<any> {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -1799,14 +1827,20 @@ export async function createAuditLog(entry: {
   const newLog = {
     id: entry.id || `LOG-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     timestamp: formattedTime,
-    user: entry.user || 'admin',
-    role: entry.role || 'ADMIN',
+    user: entry.user || 'system',
+    role: entry.role || 'SYSTEM',
     action: entry.action || 'OPERATION',
     target: entry.target || 'Hệ thống',
     details: entry.details || '',
     status: entry.status || 'SUCCESS',
     ip: entry.ip || '127.0.0.1',
     createdAt: now.toISOString(),
+    actorUserId: entry.actorUserId || null,
+    entityType: entry.entityType || null,
+    entityId: entry.entityId || null,
+    beforeJson: entry.beforeJson ?? null,
+    afterJson: entry.afterJson ?? null,
+    reason: entry.reason || null,
   };
 
   memoryAuditLogs.unshift(newLog);
@@ -1818,10 +1852,30 @@ export async function createAuditLog(entry: {
   if (pool) {
     try {
       await pool.query(
-        `INSERT INTO "audit_logs" ("id", "timestamp", "user", "role", "action", "target", "details", "status", "ip", "created_at")
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `INSERT INTO "audit_logs" (
+           "id", "timestamp", "user", "role", "action", "target", "details", "status", "ip", "created_at",
+           "actor_user_id", "entity_type", "entity_id", "before_json", "after_json", "reason"
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16)
          ON CONFLICT ("id") DO NOTHING`,
-        [newLog.id, newLog.timestamp, newLog.user, newLog.role, newLog.action, newLog.target, newLog.details, newLog.status, newLog.ip, newLog.createdAt]
+        [
+          newLog.id,
+          newLog.timestamp,
+          newLog.user,
+          newLog.role,
+          newLog.action,
+          newLog.target,
+          newLog.details,
+          newLog.status,
+          newLog.ip,
+          newLog.createdAt,
+          newLog.actorUserId,
+          newLog.entityType,
+          newLog.entityId,
+          newLog.beforeJson !== null ? JSON.stringify(newLog.beforeJson) : null,
+          newLog.afterJson !== null ? JSON.stringify(newLog.afterJson) : null,
+          newLog.reason,
+        ]
       );
     } catch (e) {
       console.warn('[DB] Error writing audit log to postgres:', e);
@@ -2053,4 +2107,15 @@ export async function executeDataBackfill(batchTag: string = 'BATCH_20261108_APP
     idMappingsCount: memoryIdMapping.length,
   };
 }
+
+export function getSystemConfig(): Record<string, any> {
+  return { ...memorySystemConfig };
+}
+
+export function updateSystemConfig(partial: Record<string, any>): Record<string, any> {
+  memorySystemConfig = { ...memorySystemConfig, ...partial };
+  saveToDisk();
+  return { ...memorySystemConfig };
+}
+
 

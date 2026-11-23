@@ -3,6 +3,7 @@ import { SinhVien, Diem, RenLuyen, ThiLaiHocLai } from '../../types';
 import { getCohortForClass } from '../../utils/classHelper';
 import { triggerPrintWithFallback } from '../../utils/printHelper';
 import { StatusBadge, EmptyState } from '../common';
+import type { ProfileTabKey } from './StudentFullProfileView';
 import {
   X,
   User,
@@ -39,6 +40,7 @@ interface StudentDetailDrawerProps {
     fileName: string,
     student: { hoTen: string; maSV: string; lop?: string }
   ) => void;
+  onOpenFullProfile?: (maSV: string, tab?: ProfileTabKey) => void;
 }
 
 export const StudentDetailDrawer: React.FC<StudentDetailDrawerProps> = ({
@@ -51,6 +53,7 @@ export const StudentDetailDrawer: React.FC<StudentDetailDrawerProps> = ({
   retakes = [],
   activeSemester = '',
   onPreviewFile,
+  onOpenFullProfile,
 }) => {
   const [activeTab, setActiveTab] = useState<'PROFILE' | 'DOCUMENTS' | 'ACADEMIC'>('PROFILE');
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -143,14 +146,18 @@ export const StudentDetailDrawer: React.FC<StudentDetailDrawerProps> = ({
     }, 2000);
   };
 
-  const cleanName = encodeURIComponent(student.hoTen || student.maSV || 'SV');
-  const isFemale = student.gioiTinh === 'Nữ';
-  const avatarUrl =
-    student.avatar && student.avatar.trim()
-      ? student.avatar.trim()
-      : `https://ui-avatars.com/api/?name=${cleanName}&background=${
-          isFemale ? 'e11d48' : '1d4ed8'
-        }&color=fff&size=160&bold=true&font-size=0.4`;
+  const parts = (student.hoTen || student.maSV || 'SV').trim().split(/\s+/).filter(Boolean);
+  const initials =
+    parts.length === 0
+      ? 'SV'
+      : parts.length === 1
+      ? parts[0].slice(0, 2).toUpperCase()
+      : `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+  const fallbackBg = student.gioiTinh === 'Nữ' ? '#be123c' : '#1d4ed8';
+  const fallbackSvg = `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><rect width="128" height="128" rx="20" fill="${fallbackBg}"/><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" fill="#ffffff" font-family="Plus Jakarta Sans, Arial, sans-serif" font-size="48" font-weight="700">${initials}</text></svg>`
+  )}`;
+  const avatarUrl = student.avatar && student.avatar.trim() ? student.avatar.trim() : fallbackSvg;
 
   const allFiles: { id: string; customName: string; fileName: string; fileUrl: string; uploadedAt?: string }[] = [];
   if (Array.isArray(student.hoSoFiles) && student.hoSoFiles.length > 0) {
@@ -248,9 +255,10 @@ export const StudentDetailDrawer: React.FC<StudentDetailDrawerProps> = ({
               <img
                 src={avatarUrl}
                 alt={student.hoTen}
-                className="w-14 h-14 rounded object-cover border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 shrink-0"
+                referrerPolicy="no-referrer"
+                className="w-14 h-14 rounded-xl object-cover border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 shrink-0"
                 onError={(e) => {
-                  (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${cleanName}&background=1d4ed8&color=fff&size=120`;
+                  (e.target as HTMLImageElement).src = fallbackSvg;
                 }}
               />
               <div className="min-w-0 flex-1">
@@ -262,7 +270,7 @@ export const StudentDetailDrawer: React.FC<StudentDetailDrawerProps> = ({
                   <button
                     type="button"
                     onClick={() => handleCopy(student.maSV, 'MSSV')}
-                    className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-900 hover:bg-blue-100 dark:hover:bg-blue-950 transition-colors cursor-pointer"
+                    className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded-md border border-blue-200 dark:border-blue-900 hover:bg-blue-100 dark:hover:bg-blue-950 transition-colors cursor-pointer"
                     title="Sao chép MSSV"
                   >
                     <span className="tabular-nums">{student.maSV}</span>
@@ -273,7 +281,7 @@ export const StudentDetailDrawer: React.FC<StudentDetailDrawerProps> = ({
                     )}
                   </button>
 
-                  <StatusBadge label={student.trangThai || 'Đang học'} variant={statusVariant} dot />
+                  <StatusBadge label={student.trangThai || 'Đang học'} variant={statusVariant} />
 
                   {student.gioiTinh && (
                     <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
@@ -538,7 +546,7 @@ export const StudentDetailDrawer: React.FC<StudentDetailDrawerProps> = ({
                   <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded border border-slate-200 dark:border-slate-800">
                     <span className="text-[10px] text-slate-500 dark:text-slate-400 block mb-0.5">Khóa tuyển sinh</span>
                     <span className="font-bold text-slate-900 dark:text-slate-100 font-mono">
-                      {student.lop ? getCohortForClass(student.lop) : 'Chưa có dữ liệu'}
+                      {student.lop ? getCohortForClass(student.lop) || 'Chưa có dữ liệu' : 'Chưa có dữ liệu'}
                     </span>
                   </div>
 
@@ -594,19 +602,34 @@ export const StudentDetailDrawer: React.FC<StudentDetailDrawerProps> = ({
             >
               Đóng
             </button>
-            {onEdit && (
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  onEdit(student);
-                }}
-                className="px-3.5 py-1.5 text-xs font-medium text-white bg-blue-700 hover:bg-blue-800 rounded transition-colors flex items-center gap-1.5 cursor-pointer"
-              >
-                <Edit2 className="w-3.5 h-3.5" />
-                <span>Chỉnh sửa hồ sơ</span>
-              </button>
-            )}
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              {onOpenFullProfile && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenFullProfile(student.maSV, 'GENERAL');
+                  }}
+                  className="px-3.5 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-950 rounded border border-blue-200 dark:border-blue-800 transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Chi tiết hồ sơ</span>
+                </button>
+              )}
+              {onEdit && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onEdit(student);
+                  }}
+                  className="px-3.5 py-1.5 text-xs font-medium text-white bg-blue-700 hover:bg-blue-800 rounded transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                  <span>Chỉnh sửa hồ sơ</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

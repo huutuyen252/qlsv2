@@ -12,14 +12,21 @@ import React, { useEffect, useState, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { apiService } from '../../services/apiService';
 import { triggerPrintWithFallback, downloadPrintableHtml } from '../../utils/printHelper';
+import { SPECIALIZED_FACULTIES } from '../../utils/classHelper';
 import { ReportView, ReportFilterControl } from './ReportView';
+import { AdminOverviewDashboard } from './dashboard/AdminOverviewDashboard';
+import { LecturerOverviewDashboard } from './dashboard/LecturerOverviewDashboard';
+import { StudentOverviewDashboard } from './dashboard/StudentOverviewDashboard';
+import { ExportCurrentFilterRequest } from './dashboard/dashboardTypes';
 import {
   UserRole,
+  User,
   Diem,
   SinhVien,
   MonHoc,
   DiemDanh,
   ThoiKhoaBieu,
+  ThongBaoKiemTra,
   HocKy,
   NamHoc,
   ThiLaiHocLai,
@@ -58,6 +65,7 @@ import {
 
 interface ReportsModuleProps {
   userRole?: UserRole;
+  currentUser?: User | null;
   currentStudentCode?: string;
   activeSemester?: string;
   semesters?: HocKy[];
@@ -69,6 +77,7 @@ interface ReportsModuleProps {
   trainingPoints?: RenLuyen[];
   retakes?: ThiLaiHocLai[];
   onSwitchView?: (view: string) => void;
+  onOpenFullProfile?: (maSV: string) => void;
   initialTab?: 'DASHBOARD' | 'CLASS_DRILLDOWN' | 'QUICK_REPORT';
   isLoadingData?: boolean;
   loadError?: string | null;
@@ -90,6 +99,7 @@ interface ClassMetricItem {
 
 export const ReportsModule: React.FC<ReportsModuleProps> = ({
   userRole = 'STUDENT',
+  currentUser = null,
   currentStudentCode = '',
   activeSemester = getAcademicPeriod().code,
   semesters = [],
@@ -101,12 +111,14 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
   trainingPoints = [],
   retakes = [],
   onSwitchView,
+  onOpenFullProfile,
   initialTab = 'DASHBOARD',
   isLoadingData = false,
   loadError = null,
   onRetryLoad,
 }) => {
   const isStudent = userRole === 'STUDENT';
+  const isLecturer = userRole === 'LECTURER';
   const myStudentCode = (currentStudentCode || '').trim().toLowerCase();
 
   // Active semester breakdown
@@ -119,6 +131,10 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [allGrades, setAllGrades] = useState<Diem[]>(grades);
   const [attendanceList, setAttendanceList] = useState<DiemDanh[]>([]);
+  const [examNotices, setExamNotices] = useState<ThongBaoKiemTra[]>([]);
+  const [lastUpdatedLabel, setLastUpdatedLabel] = useState<string>(() =>
+    new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+  );
 
   // Navigation mode for Admin: 'DASHBOARD' | 'CLASS_DRILLDOWN' | 'QUICK_REPORT'
   const [adminTab, setAdminTab] = useState<'DASHBOARD' | 'CLASS_DRILLDOWN' | 'QUICK_REPORT'>(initialTab);
@@ -182,11 +198,13 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
     setLoading(true);
     setFetchError(null);
     try {
-      const [resAtt, resGrades] = await Promise.all([
+      const [resAtt, resGrades, resNotices] = await Promise.all([
         apiService.getAttendance(),
         grades.length > 0 ? Promise.resolve({ success: true, data: grades }) : apiService.getGrades(),
+        apiService.getExamNotices().catch(() => ({ success: false, data: [] as ThongBaoKiemTra[] })),
       ]);
       if (resAtt?.success && resAtt.data) setAttendanceList(resAtt.data);
+      if (resNotices?.success && resNotices.data) setExamNotices(resNotices.data);
       if (resGrades?.success && resGrades.data) {
         setAllGrades(resGrades.data);
       } else if (!resGrades?.success) {
@@ -196,11 +214,21 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
             : undefined;
         setFetchError(errMsg || 'Không thể tải dữ liệu điểm số.');
       }
+      setLastUpdatedLabel(new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }));
     } catch {
       setFetchError('Không thể kết nối máy chủ khi tải dữ liệu báo cáo.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleExportWithCurrentFilters = (req: ExportCurrentFilterRequest) => {
+    if (req.semester) setReportScopeSemester(req.semester);
+    if (req.faculty) setReportScopeFaculty(req.faculty);
+    if (req.className) setReportScopeClass(req.className);
+    if (req.month) setReportScopeMonth(req.month);
+    if (req.reportType) setReportType(req.reportType);
+    setAdminTab('QUICK_REPORT');
   };
 
   useEffect(() => {
@@ -225,11 +253,11 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
     };
   }, [grades, activeSemester]);
 
-  // Dynamic Faculties
+  // Dynamic Faculties (always includes the 2 specialized faculties)
   const uniqueFaculties = useMemo(() => {
-    const set = new Set<string>();
+    const set = new Set<string>(SPECIALIZED_FACULTIES);
     (students || []).forEach((s) => s.khoa && set.add(s.khoa));
-    return Array.from(set).sort();
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'vi'));
   }, [students]);
 
   // Dynamic Classes (scoped by faculty for dashboard & quick report)
@@ -1065,6 +1093,8 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
               ? 'Xuất Báo Cáo Học Vụ'
               : adminTab === 'CLASS_DRILLDOWN'
               ? 'Kết Quả Theo Lớp'
+              : isLecturer
+              ? 'Tổng Quan Giảng Dạy'
               : 'Tổng Quan Đào Tạo'
           }
           icon={BarChart3}
@@ -1142,544 +1172,64 @@ export const ReportsModule: React.FC<ReportsModuleProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* STUDENT DASHBOARD                                                         */}
+      {/* ROLE-SPECIFIC DASHBOARDS (STUDENT / LECTURER / ADMIN)                     */}
       {/* ========================================================================= */}
       {isStudent && (
-        <div className="space-y-4">
-          {studentAcademicSummary && (
-            <MetricStrip
-              metrics={[
-                {
-                  label: 'GPA Hệ 10',
-                  value:
-                    studentAcademicSummary.hasGrades && studentAcademicSummary.gpa10 !== null
-                      ? studentAcademicSummary.gpa10.toFixed(2)
-                      : 'Chưa có',
-                  dotColor: 'blue',
-                },
-                {
-                  label: 'GPA Hệ 4',
-                  value:
-                    studentAcademicSummary.hasGrades && studentAcademicSummary.gpa4 !== null
-                      ? studentAcademicSummary.gpa4.toFixed(2)
-                      : 'Chưa có',
-                  dotColor: 'slate',
-                },
-                {
-                  label: 'Tín chỉ đạt',
-                  value: `${studentAcademicSummary.passedCredits} / ${studentAcademicSummary.totalRegisteredCredits}`,
-                  dotColor: 'emerald',
-                },
-                {
-                  label: 'Học lực',
-                  value: studentAcademicSummary.academicStanding,
-                  dotColor: 'amber',
-                },
-                {
-                  label: 'Sinh viên',
-                  value: currentStudentObj?.hoTen || currentStudentCode || '—',
-                  dotColor: 'slate',
-                },
-              ]}
-            />
-          )}
-
-          {/* PHẦN 2: TÌNH TRẠNG CÁC MÔN HỌC */}
-          <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
-              <div className="flex items-center gap-2">
-                <BookOpen className="w-4 h-4 text-blue-700 dark:text-blue-400" />
-                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
-                  Môn học kỳ {currentActiveSemester}{currentActiveYear ? ` (${currentActiveYear})` : ''}
-                </h2>
-                <StatusBadge label={`${studentActiveSemesterCourses.length} môn`} variant="neutral" />
-              </div>
-              <button
-                type="button"
-                onClick={() => onSwitchView?.('grades')}
-                className="text-xs font-semibold text-blue-700 dark:text-blue-400 hover:underline flex items-center gap-1 self-start sm:self-auto cursor-pointer"
-              >
-                <span>Bảng điểm chi tiết</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            {studentActiveSemesterCourses.length === 0 ? (
-              <EmptyState message={`Chưa có dữ liệu môn học trong học kỳ ${currentActiveSemester}.`} />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left">
-                  <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 uppercase text-[11px] font-semibold tracking-wider border-b border-slate-200 dark:border-slate-800">
-                    <tr>
-                      <th className="py-2.5 px-3">Mã MH</th>
-                      <th className="py-2.5 px-3">Tên Môn Học</th>
-                      <th className="py-2.5 px-3 text-center">TC</th>
-                      <th className="py-2.5 px-3">Giảng Viên</th>
-                      <th className="py-2.5 px-3 text-center">Vắng</th>
-                      <th className="py-2.5 px-3 text-center">Điểm</th>
-                      <th className="py-2.5 px-3 text-center">Tình Trạng</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {studentActiveSemesterCourses.map((c) => {
-                      const hasGrade = Boolean(c.diem && typeof c.diem.diemTongKet10 === 'number');
-                      const isPassed = c.diem?.trangThai === 'PASSED' || (c.diem?.diemTongKet10 || 0) >= 4.0;
-                      const isDanger20 = c.absencePct >= 20;
-                      const isWarning10 = c.absencePct >= 10 && !isDanger20;
-
-                      return (
-                        <tr key={c.maMH} className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors">
-                          <td className="py-2.5 px-3 font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
-                            {c.maMH}
-                          </td>
-                          <td className="py-2.5 px-3 font-medium text-slate-900 dark:text-slate-100">
-                            {c.tenMH}
-                          </td>
-                          <td className="py-2.5 px-3 text-center font-mono tabular-nums text-slate-700 dark:text-slate-300">
-                            {c.soTinChi}
-                          </td>
-                          <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300">
-                            {c.giangVien}
-                          </td>
-                          <td className="py-2.5 px-3 text-center font-mono tabular-nums">
-                            <StatusBadge
-                              label={`${c.missedPeriods}/${c.totalPeriods} (${c.absencePct.toFixed(0)}%)`}
-                              variant={isDanger20 ? 'danger' : isWarning10 ? 'warning' : 'neutral'}
-                            />
-                          </td>
-                          <td className="py-2.5 px-3 text-center font-mono tabular-nums">
-                            {hasGrade ? (
-                              <span className="font-semibold text-slate-900 dark:text-slate-100">
-                                {c.diem!.diemTongKet10.toFixed(1)} ({c.diem!.diemChu})
-                              </span>
-                            ) : (
-                              <span className="text-slate-400 dark:text-slate-500">Chưa có</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3 text-center">
-                            {isDanger20 ? (
-                              <StatusBadge label="Cấm thi" variant="danger" dot />
-                            ) : isWarning10 ? (
-                              <StatusBadge label="Cảnh báo vắng" variant="warning" dot />
-                            ) : hasGrade ? (
-                              isPassed ? (
-                                <StatusBadge label="Đã đạt" variant="success" dot />
-                              ) : (
-                                <StatusBadge label="Chưa đạt" variant="danger" dot />
-                              )
-                            ) : (
-                              <StatusBadge label="Đang học" variant="info" dot />
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* GRID 2 CỘT: RÈN LUYỆN & HỌC PHÍ */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* RÈN LUYỆN THEO THÁNG */}
-            <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-4 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-200 dark:border-slate-800">
-                  <div className="flex items-center gap-2">
-                    <Award className="w-4 h-4 text-blue-700 dark:text-blue-400" />
-                    <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
-                      Điểm rèn luyện
-                    </h2>
-                  </div>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
-                    Tháng {new Date().getMonth() + 1}/{new Date().getFullYear()}
-                  </span>
-                </div>
-
-                {studentTrainingData.currentMonthRecord ? (
-                  <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded border border-slate-200 dark:border-slate-700 mb-3 space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-slate-900 dark:text-slate-100 font-mono tabular-nums">
-                        Tháng {studentTrainingData.currentMonthRecord.thang}
-                      </span>
-                      <StatusBadge
-                        label={`${studentTrainingData.currentMonthRecord.diemRL} điểm · ${studentTrainingData.currentMonthRecord.xepLoai}`}
-                        variant={
-                          Number(studentTrainingData.currentMonthRecord.diemRL || 0) >= 80
-                            ? 'success'
-                            : Number(studentTrainingData.currentMonthRecord.diemRL || 0) >= 50
-                            ? 'info'
-                            : 'danger'
-                        }
-                      />
-                    </div>
-                    {studentTrainingData.currentMonthRecord.nhanXet && (
-                      <p className="text-xs text-slate-700 dark:text-slate-300">
-                        {studentTrainingData.currentMonthRecord.nhanXet}
-                      </p>
-                    )}
-                    {studentTrainingData.currentMonthRecord.nguoiDanhGia && (
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
-                        {studentTrainingData.currentMonthRecord.nguoiDanhGia}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded border border-slate-200 dark:border-slate-700 mb-3 flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
-                    <Info className="w-4 h-4 text-slate-400 shrink-0" />
-                    <span>
-                      Chưa có dữ liệu tháng {new Date().getMonth() + 1}/{new Date().getFullYear()}.
-                    </span>
-                  </div>
-                )}
-
-                <div>
-                  <h3 className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">
-                    Lịch sử gần đây
-                  </h3>
-                  {studentTrainingData.allRecords.length === 0 ? (
-                    <p className="text-xs text-slate-500 dark:text-slate-400">Chưa có dữ liệu.</p>
-                  ) : (
-                    <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                      {studentTrainingData.recentHistory.map((r, i) => (
-                        <div
-                          key={r.id || i}
-                          className="flex items-center justify-between p-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 text-xs"
-                        >
-                          <span className="font-mono tabular-nums text-slate-800 dark:text-slate-200">
-                            Tháng {r.thang}{r.nam ? `/${r.nam}` : ''}
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
-                              {r.diemRL} điểm
-                            </span>
-                            <StatusBadge label={r.xepLoai || '—'} variant="neutral" />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="pt-3 mt-3 border-t border-slate-200 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => onSwitchView?.('training')}
-                  className="w-full py-1.5 px-3 rounded text-xs font-semibold text-blue-700 dark:text-blue-400 border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-1 cursor-pointer"
-                >
-                  <span>Điểm rèn luyện chi tiết</span>
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-
-            {/* HỌC PHÍ & LỆ PHÍ */}
-            <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-4 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-200 dark:border-slate-800">
-                  <div className="flex items-center gap-2">
-                    <CreditCard className="w-4 h-4 text-blue-700 dark:text-blue-400" />
-                    <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
-                      Học phí & Lệ phí
-                    </h2>
-                  </div>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
-                    {currentActiveSemester}
-                  </span>
-                </div>
-
-                {studentTuitionData.hasData ? (
-                  <div className="space-y-2.5 mb-3">
-                    <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded border border-slate-200 dark:border-slate-700 flex items-center justify-between">
-                      <div>
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium block">
-                          Tổng lệ phí đăng ký
-                        </span>
-                        <div className="text-base font-bold text-slate-900 dark:text-slate-100 font-mono tabular-nums mt-0.5">
-                          {studentTuitionData.totalFee > 0
-                            ? `${studentTuitionData.totalFee.toLocaleString('vi-VN')} VNĐ`
-                            : 'Chưa định mức'}
-                        </div>
-                      </div>
-                      <StatusBadge label={`${studentTuitionData.retakeItems.length} môn`} variant="info" />
-                    </div>
-
-                    <div className="space-y-1.5 max-h-36 overflow-y-auto">
-                      {studentTuitionData.retakeItems.map((r) => (
-                        <div
-                          key={r.id}
-                          className="p-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 text-xs flex items-center justify-between gap-2"
-                        >
-                          <div className="min-w-0">
-                            <div className="font-semibold text-slate-900 dark:text-slate-100 truncate">
-                              {r.tenMH} ({r.maMH})
-                            </div>
-                            <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                              {r.loaiDangKy === 'THI_LAI' ? 'Thi lại' : 'Học lại'} · {r.hocKy || currentActiveSemester}
-                            </div>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <div className="font-mono tabular-nums font-semibold text-slate-900 dark:text-slate-100">
-                              {r.phiDiem ? `${r.phiDiem.toLocaleString('vi-VN')} đ` : '—'}
-                            </div>
-                            <StatusBadge
-                              label={r.trangThai === 'DA_DUYET' ? 'Đã duyệt' : 'Chờ duyệt'}
-                              variant={r.trangThai === 'DA_DUYET' ? 'success' : 'warning'}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded border border-slate-200 dark:border-slate-700 mb-3 flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span>Chưa có dữ liệu lệ phí phát sinh.</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="pt-3 mt-3 border-t border-slate-200 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => onSwitchView?.('retakes')}
-                  className="w-full py-1.5 px-3 rounded text-xs font-semibold text-blue-700 dark:text-blue-400 border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-1 cursor-pointer"
-                >
-                  <span>Thi lại & Học lại</span>
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <StudentOverviewDashboard
+          studentCode={currentStudentCode}
+          studentObj={currentStudentObj || null}
+          activeSemester={activeSemester}
+          grades={allGrades}
+          schedule={schedule}
+          subjects={subjects}
+          trainingPoints={trainingPoints}
+          retakes={retakes}
+          attendanceList={attendanceList}
+          examNotices={examNotices}
+          lastUpdatedLabel={lastUpdatedLabel}
+          onSwitchView={onSwitchView}
+        />
       )}
 
-      {/* ========================================================================= */}
-      {/* ADMIN DASHBOARD                                                           */}
-      {/* ========================================================================= */}
-      {!isStudent && adminTab === 'DASHBOARD' && (
-        <div className="space-y-4">
-          <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-3">
-            <DataToolbar
-              hasActiveFilters={hasAdminFilters}
-              onClearFilters={clearAdminFilters}
-              filters={
-                <>
-                  <select
-                    aria-label="Lọc theo học kỳ"
-                    value={filterSemester}
-                    onChange={(e) => setFilterSemester(e.target.value)}
-                    className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5 font-medium cursor-pointer"
-                  >
-                    <option value="ALL">Tất cả học kỳ</option>
-                    {availableSemesters.map((hk) => (
-                      <option key={hk.value} value={hk.value}>{hk.label}</option>
-                    ))}
-                  </select>
+      {!isStudent && isLecturer && adminTab === 'DASHBOARD' && (
+        <LecturerOverviewDashboard
+          currentUser={currentUser}
+          activeSemester={activeSemester}
+          students={students}
+          grades={allGrades}
+          schedule={schedule}
+          subjects={subjects}
+          trainingPoints={trainingPoints}
+          attendanceList={attendanceList}
+          examNotices={examNotices}
+          lastUpdatedLabel={lastUpdatedLabel}
+          onSwitchView={onSwitchView}
+          onOpenFullProfile={onOpenFullProfile}
+          onExportWithFilters={handleExportWithCurrentFilters}
+        />
+      )}
 
-                  <select
-                    aria-label="Lọc theo khoa"
-                    value={filterFaculty}
-                    onChange={(e) => {
-                      setFilterFaculty(e.target.value);
-                      setSelectedClassFilter('ALL');
-                    }}
-                    className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5 font-medium cursor-pointer"
-                  >
-                    <option value="ALL">Tất cả khoa</option>
-                    {uniqueFaculties.map((f) => (
-                      <option key={f} value={f}>{f}</option>
-                    ))}
-                  </select>
-
-                  <select
-                    aria-label="Lọc theo lớp"
-                    value={selectedClassFilter}
-                    onChange={(e) => setSelectedClassFilter(e.target.value)}
-                    className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5 font-medium cursor-pointer"
-                  >
-                    <option value="ALL">Tất cả lớp</option>
-                    {uniqueClasses.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-
-                  <select
-                    aria-label="Lọc theo tháng rèn luyện"
-                    value={filterMonth}
-                    onChange={(e) => setFilterMonth(e.target.value)}
-                    className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-xs rounded px-2.5 py-1.5 font-medium cursor-pointer"
-                  >
-                    {availableMonths.map((m) => (
-                      <option key={m} value={m}>Tháng {m}</option>
-                    ))}
-                  </select>
-                </>
-              }
-            />
-          </div>
-
-          <MetricStrip
-            metrics={[
-              {
-                label: 'Tổng sinh viên',
-                value: adminAcademicKPIs.totalStudents,
-                dotColor: 'slate',
-              },
-              {
-                label: 'Số lớp',
-                value: adminAcademicKPIs.totalClasses,
-                dotColor: 'slate',
-              },
-              {
-                label: 'Điểm TB (Hệ 10)',
-                value: adminAcademicKPIs.avgGPA10 !== null ? adminAcademicKPIs.avgGPA10.toFixed(2) : 'Chưa có',
-                dotColor: 'blue',
-              },
-              {
-                label: 'Tỷ lệ đạt',
-                value: adminAcademicKPIs.passRate !== null ? `${adminAcademicKPIs.passRate}%` : 'Chưa có',
-                dotColor: 'emerald',
-              },
-              {
-                label: 'Cần chú ý',
-                value: attentionStudentsList.length,
-                dotColor: 'rose',
-              },
-            ]}
-          />
-
-          {/* RÈN LUYỆN THÁNG */}
-          <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 mb-3 border-b border-slate-200 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <Award className="w-4 h-4 text-blue-700 dark:text-blue-400" />
-                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
-                  Điểm rèn luyện tháng {filterMonth}
-                </h2>
-                {adminTrainingOverview.hasData && (
-                  <StatusBadge label={`${adminTrainingOverview.totalEvaluated} SV`} variant="info" />
-                )}
-              </div>
-              {adminTrainingOverview.hasData && adminTrainingOverview.avgScore !== null && (
-                <span className="text-xs font-medium text-slate-700 dark:text-slate-300 font-mono tabular-nums">
-                  Trung bình: <strong className="text-slate-900 dark:text-slate-100">{adminTrainingOverview.avgScore}</strong>
-                </span>
-              )}
-            </div>
-
-            {adminTrainingOverview.hasData ? (
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-xs">
-                <div className="p-3 rounded bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-center">
-                  <span className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300 uppercase block">Xuất sắc (≥90)</span>
-                  <span className="text-base font-bold text-emerald-900 dark:text-emerald-100 font-mono tabular-nums mt-1 block">
-                    {adminTrainingOverview.distribution.xuatSac}
-                  </span>
-                </div>
-                <div className="p-3 rounded bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-center">
-                  <span className="text-[11px] font-semibold text-blue-800 dark:text-blue-300 uppercase block">Tốt (80-89)</span>
-                  <span className="text-base font-bold text-blue-900 dark:text-blue-100 font-mono tabular-nums mt-1 block">
-                    {adminTrainingOverview.distribution.tot}
-                  </span>
-                </div>
-                <div className="p-3 rounded bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-center">
-                  <span className="text-[11px] font-semibold text-amber-800 dark:text-amber-300 uppercase block">Khá (70-79)</span>
-                  <span className="text-base font-bold text-amber-900 dark:text-amber-100 font-mono tabular-nums mt-1 block">
-                    {adminTrainingOverview.distribution.kha}
-                  </span>
-                </div>
-                <div className="p-3 rounded bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-center">
-                  <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 uppercase block">Trung bình (50-69)</span>
-                  <span className="text-base font-bold text-slate-900 dark:text-slate-100 font-mono tabular-nums mt-1 block">
-                    {adminTrainingOverview.distribution.trungBinh}
-                  </span>
-                </div>
-                <div className="p-3 rounded bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-center col-span-2 sm:col-span-1">
-                  <span className="text-[11px] font-semibold text-rose-800 dark:text-rose-300 uppercase block">Yếu / Kém (&lt;50)</span>
-                  <span className="text-base font-bold text-rose-900 dark:text-rose-100 font-mono tabular-nums mt-1 block">
-                    {adminTrainingOverview.distribution.yeuKem}
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <EmptyState message={`Chưa có dữ liệu rèn luyện tháng ${filterMonth}.`} />
-            )}
-          </div>
-
-          {/* DANH SÁCH SINH VIÊN CẦN CHÚ Ý */}
-          <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden">
-            <div className="flex items-center justify-between px-3 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
-              <div className="flex items-center gap-2">
-                <ShieldAlert className="w-4 h-4 text-rose-600 dark:text-rose-400" />
-                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
-                  Sinh viên cần chú ý ({attentionStudentsList.length})
-                </h2>
-              </div>
-            </div>
-
-            {attentionStudentsList.length === 0 ? (
-              students.length === 0 ? (
-                <EmptyState message="Chưa có dữ liệu sinh viên." />
-              ) : (
-                <div className="p-4 text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>Không có trường hợp cảnh báo.</span>
-                </div>
-              )
-            ) : (
-              <>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-left">
-                    <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 uppercase text-[11px] font-semibold tracking-wider border-b border-slate-200 dark:border-slate-800">
-                      <tr>
-                        <th className="py-2.5 px-3">Mã SV</th>
-                        <th className="py-2.5 px-3">Họ và Tên</th>
-                        <th className="py-2.5 px-3">Lớp</th>
-                        <th className="py-2.5 px-3">Khoa</th>
-                        <th className="py-2.5 px-3">Lý Do</th>
-                        <th className="py-2.5 px-3 text-center">Thao Tác</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {paginatedAttentionList.map((st) => (
-                        <tr key={st.maSV} className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors">
-                          <td className="py-2.5 px-3 font-mono font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{st.maSV}</td>
-                          <td className="py-2.5 px-3 font-medium text-slate-900 dark:text-slate-100">{st.hoTen}</td>
-                          <td className="py-2.5 px-3 font-mono text-slate-700 dark:text-slate-300">{st.lop}</td>
-                          <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300">{st.khoa}</td>
-                          <td className="py-2.5 px-3">
-                            <StatusBadge label={st.attentionReason} variant="danger" />
-                          </td>
-                          <td className="py-2.5 px-3 text-center">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const found = (students || []).find((s) => s.maSV === st.maSV);
-                                if (found) setDrilldownStudent(found);
-                              }}
-                              className="px-2 py-1 rounded text-xs font-semibold text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/60 transition-colors cursor-pointer"
-                            >
-                              Xem điểm
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <PaginationBar
-                  currentPage={attentionPage}
-                  pageSize={attentionPageSize}
-                  totalItems={attentionStudentsList.length}
-                  onPageChange={setAttentionPage}
-                  onPageSizeChange={setAttentionPageSize}
-                />
-              </>
-            )}
-          </div>
-        </div>
+      {!isStudent && !isLecturer && adminTab === 'DASHBOARD' && (
+        <AdminOverviewDashboard
+          activeSemester={activeSemester}
+          semesters={semesters}
+          students={students}
+          grades={allGrades}
+          schedule={schedule}
+          subjects={subjects}
+          trainingPoints={trainingPoints}
+          retakes={retakes}
+          attendanceList={attendanceList}
+          examNotices={examNotices}
+          lastUpdatedLabel={lastUpdatedLabel}
+          onSwitchView={onSwitchView}
+          onOpenFullProfile={onOpenFullProfile}
+          onOpenClassDrilldown={(classCode) => {
+            setAdminTab('CLASS_DRILLDOWN');
+            setDrilldownClassCode(classCode || null);
+          }}
+          onExportWithFilters={handleExportWithCurrentFilters}
+        />
       )}
 
       {/* ========================================================================= */}

@@ -1,3 +1,5 @@
+export * from './profile';
+
 export type UserRole = 'ADMIN' | 'LECTURER' | 'STUDENT';
 
 export interface UserPermission {
@@ -9,6 +11,9 @@ export interface UserPermission {
   canApproveRetakes?: boolean;
   canManageSchedule?: boolean;
   canEditHoSo?: boolean;
+  canVerifyProfiles?: boolean;
+  canExportProfiles?: boolean;
+  canManageCatalogs?: boolean;
 }
 
 export interface User {

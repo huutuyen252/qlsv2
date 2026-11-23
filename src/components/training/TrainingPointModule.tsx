@@ -21,6 +21,7 @@ import {
   BarChart3,
   BookOpen,
   Download,
+  Pencil,
 } from 'lucide-react';
 
 import { SinhVien, UserRole, User } from '../../types';
@@ -36,6 +37,8 @@ import {
   MonthStatus,
   TransactionStatus,
   AppealStatus,
+  CalculationType,
+  ScoreDirection,
 } from '../../types/trainingPoint';
 import { trainingApiService } from '../../services/trainingApiService';
 import {
@@ -151,6 +154,7 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
 }) => {
   type TabKey = 'CLASS_BOARD' | 'STUDENT_PORTAL' | 'APPROVAL' | 'OFFICERS' | 'POLICY' | 'APPEALS';
   const isStudentRole = userRole === 'STUDENT';
+  const isAdmin = userRole === 'ADMIN';
   const isAdminOrLecturer = userRole === 'ADMIN' || userRole === 'LECTURER';
 
   const [activeTab, setActiveTab] = useState<TabKey>(isStudentRole ? 'STUDENT_PORTAL' : 'CLASS_BOARD');
@@ -194,6 +198,50 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
   const [isLockModalOpen, setIsLockModalOpen] = useState<boolean>(false);
   const [isAppealModalOpen, setIsAppealModalOpen] = useState<boolean>(false);
   const [selectedStudentForDetail, setSelectedStudentForDetail] = useState<SinhVien | null>(null);
+
+  // Admin Criterion Create/Edit/Delete States
+  const [isCriterionModalOpen, setIsCriterionModalOpen] = useState<boolean>(false);
+  const [editingCriterion, setEditingCriterion] = useState<ScoreCriterion | null>(null);
+  const [criterionForm, setCriterionForm] = useState<{
+    categoryId: string;
+    code: string;
+    name: string;
+    direction: ScoreDirection;
+    calculationType: CalculationType;
+    defaultPoints: number;
+    minPoints: number;
+    maxPoints: number;
+    maxOccurrencesPerMonth: string;
+    requireNote: boolean;
+    requireEvidence: boolean;
+    requireApproval: boolean;
+    allowBatch: boolean;
+    isActive: boolean;
+    levels: Array<{ id?: string; levelName: string; points: number }>;
+  }>({
+    categoryId: 'CAT_STUDY',
+    code: '',
+    name: '',
+    direction: 'ADD',
+    calculationType: 'FIXED',
+    defaultPoints: 2,
+    minPoints: 1,
+    maxPoints: 5,
+    maxOccurrencesPerMonth: '',
+    requireNote: false,
+    requireEvidence: false,
+    requireApproval: true,
+    allowBatch: true,
+    isActive: true,
+    levels: [
+      { levelName: 'Cấp Khoa', points: 2 },
+      { levelName: 'Cấp Trường', points: 4 },
+    ],
+  });
+  const [criterionFormError, setCriterionFormError] = useState<string | null>(null);
+  const [isSavingCriterion, setIsSavingCriterion] = useState<boolean>(false);
+  const [deletingCriterion, setDeletingCriterion] = useState<ScoreCriterion | null>(null);
+  const [isDeletingCriterion, setIsDeletingCriterion] = useState<boolean>(false);
 
   const [actionPrompt, setActionPrompt] = useState<ActionPromptModalState>({
     isOpen: false,
@@ -267,6 +315,8 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
   const appealUrlInputId = useId();
   const actionPromptTitleId = useId();
   const actionPromptInputId = useId();
+  const criterionModalTitleId = useId();
+  const criterionDeleteTitleId = useId();
 
   // Escape handler for all modals
   useEffect(() => {
@@ -276,13 +326,19 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
       isLockModalOpen ||
       isOfficerModalOpen ||
       isAppealModalOpen ||
+      isCriterionModalOpen ||
+      Boolean(deletingCriterion) ||
       actionPrompt.isOpen;
 
     if (!anyModalOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (actionPrompt.isOpen) {
+        if (deletingCriterion) {
+          setDeletingCriterion(null);
+        } else if (isCriterionModalOpen) {
+          setIsCriterionModalOpen(false);
+        } else if (actionPrompt.isOpen) {
           setActionPrompt((prev) => ({ ...prev, isOpen: false }));
         } else if (isAppealModalOpen) {
           setIsAppealModalOpen(false);
@@ -305,6 +361,8 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
     isLockModalOpen,
     isOfficerModalOpen,
     isAppealModalOpen,
+    isCriterionModalOpen,
+    deletingCriterion,
     actionPrompt.isOpen,
   ]);
 
@@ -416,13 +474,199 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
         event.type === 'TRANSACTION_CANCELLED' ||
         event.type === 'MONTHLY_UPDATED' ||
         event.type === 'MONTH_LOCKED' ||
-        event.type === 'APPEAL_UPDATED'
+        event.type === 'APPEAL_UPDATED' ||
+        event.type === 'CRITERIA_UPDATED'
       ) {
         loadData();
       }
     });
     return () => unsubscribe();
   }, [loadData]);
+
+  // Admin Criterion CRUD Handlers
+  const getCalculationTypeLabel = (calcType: CalculationType): string => {
+    switch (calcType) {
+      case 'FIXED':
+        return 'Cố định';
+      case 'PER_OCCURRENCE':
+        return 'Theo số lần';
+      case 'SELECT_LEVEL':
+        return 'Theo cấp độ';
+      case 'MANUAL_RANGE':
+        return 'Trong khoảng điểm';
+      default:
+        return calcType;
+    }
+  };
+
+  const openCreateCriterionModal = (defaultCategoryId?: string) => {
+    setEditingCriterion(null);
+    setCriterionFormError(null);
+    setCriterionForm({
+      categoryId: defaultCategoryId || categories[0]?.id || 'CAT_STUDY',
+      code: '',
+      name: '',
+      direction: 'ADD',
+      calculationType: 'FIXED',
+      defaultPoints: 2,
+      minPoints: 1,
+      maxPoints: 5,
+      maxOccurrencesPerMonth: '',
+      requireNote: false,
+      requireEvidence: false,
+      requireApproval: true,
+      allowBatch: true,
+      isActive: true,
+      levels: [
+        { levelName: 'Cấp Khoa', points: 2 },
+        { levelName: 'Cấp Trường', points: 4 },
+      ],
+    });
+    setIsCriterionModalOpen(true);
+  };
+
+  const openEditCriterionModal = (c: ScoreCriterion) => {
+    setEditingCriterion(c);
+    setCriterionFormError(null);
+    const absDefault = Math.abs(c.defaultPoints || 1);
+    setCriterionForm({
+      categoryId: c.categoryId,
+      code: c.code,
+      name: c.name,
+      direction: c.direction,
+      calculationType: c.calculationType,
+      defaultPoints: absDefault,
+      minPoints: c.minPoints !== undefined ? Math.abs(c.minPoints) : Math.max(1, absDefault - 1),
+      maxPoints: c.maxPoints !== undefined ? Math.abs(c.maxPoints) : absDefault + 2,
+      maxOccurrencesPerMonth: c.maxOccurrencesPerMonth ? String(c.maxOccurrencesPerMonth) : '',
+      requireNote: Boolean(c.requireNote),
+      requireEvidence: Boolean(c.requireEvidence),
+      requireApproval: Boolean(c.requireApproval),
+      allowBatch: Boolean(c.allowBatch),
+      isActive: c.isActive !== false,
+      levels:
+        c.levels && c.levels.length > 0
+          ? c.levels.map((lv) => ({
+              id: lv.id,
+              levelName: lv.levelName,
+              points: Math.abs(lv.points),
+            }))
+          : [
+              { levelName: 'Cấp Khoa', points: 2 },
+              { levelName: 'Cấp Trường', points: 4 },
+            ],
+    });
+    setIsCriterionModalOpen(true);
+  };
+
+  const handleSaveCriterion = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isAdmin) return;
+    setCriterionFormError(null);
+
+    const trimmedCode = criterionForm.code.trim().toUpperCase().replace(/\s+/g, '_');
+    const trimmedName = criterionForm.name.trim();
+    if (!trimmedCode || !/^[A-Z0-9_-]+$/.test(trimmedCode)) {
+      setCriterionFormError('Mã tiêu chí chỉ gồm chữ cái không dấu, số, dấu gạch dưới (_) hoặc gạch nối (-).');
+      return;
+    }
+    if (!trimmedName) {
+      setCriterionFormError('Vui lòng nhập tên tiêu chí.');
+      return;
+    }
+    const ptsMag = Math.abs(Number(criterionForm.defaultPoints));
+    if (!Number.isFinite(ptsMag) || ptsMag <= 0 || ptsMag > 100) {
+      setCriterionFormError('Điểm mặc định phải lớn hơn 0 và không vượt quá 100.');
+      return;
+    }
+
+    const payload: Partial<ScoreCriterion> = {
+      categoryId: criterionForm.categoryId,
+      code: trimmedCode,
+      name: trimmedName,
+      direction: criterionForm.direction,
+      calculationType: criterionForm.calculationType,
+      defaultPoints: criterionForm.direction === 'SUBTRACT' ? -ptsMag : ptsMag,
+      requireNote: criterionForm.requireNote,
+      requireEvidence: criterionForm.requireEvidence,
+      requireApproval: criterionForm.requireApproval,
+      allowBatch: criterionForm.allowBatch,
+      isActive: criterionForm.isActive,
+    };
+
+    if (criterionForm.calculationType === 'MANUAL_RANGE') {
+      const minMag = Math.abs(Number(criterionForm.minPoints));
+      const maxMag = Math.abs(Number(criterionForm.maxPoints));
+      if (!Number.isFinite(minMag) || !Number.isFinite(maxMag) || minMag <= 0 || minMag > maxMag || maxMag > 100) {
+        setCriterionFormError('Khoảng điểm không hợp lệ (0 < Điểm tối thiểu <= Điểm tối đa <= 100).');
+        return;
+      }
+      payload.minPoints = minMag;
+      payload.maxPoints = maxMag;
+    }
+
+    if (criterionForm.calculationType === 'PER_OCCURRENCE' && criterionForm.maxOccurrencesPerMonth.trim() !== '') {
+      const cap = Math.floor(Number(criterionForm.maxOccurrencesPerMonth));
+      if (!Number.isFinite(cap) || cap < 1 || cap > 100) {
+        setCriterionFormError('Số lần tối đa/tháng phải từ 1 đến 100.');
+        return;
+      }
+      payload.maxOccurrencesPerMonth = cap;
+    }
+
+    if (criterionForm.calculationType === 'SELECT_LEVEL') {
+      const cleanedLevels = criterionForm.levels
+        .map((lv, idx) => ({
+          id: lv.id || `LV-TMP-${idx + 1}`,
+          criterionId: editingCriterion?.id || 'NEW',
+          levelName: lv.levelName.trim(),
+          points: Math.abs(Number(lv.points)),
+          displayOrder: idx + 1,
+        }))
+        .filter((lv) => lv.levelName.length > 0);
+      if (cleanedLevels.length === 0 || cleanedLevels.some((lv) => !Number.isFinite(lv.points) || lv.points <= 0 || lv.points > 100)) {
+        setCriterionFormError('Vui lòng nhập ít nhất 1 cấp độ với tên và mức điểm hợp lệ (0 < điểm <= 100).');
+        return;
+      }
+      payload.levels = cleanedLevels;
+    }
+
+    setIsSavingCriterion(true);
+    try {
+      const res = editingCriterion
+        ? await trainingApiService.updateCriterion(editingCriterion.id, payload)
+        : await trainingApiService.createCriterion(payload);
+
+      if (res.success) {
+        showToast(res.message || (editingCriterion ? 'Đã cập nhật tiêu chí.' : 'Đã thêm tiêu chí mới.'));
+        setIsCriterionModalOpen(false);
+        setEditingCriterion(null);
+        await loadData();
+      } else {
+        setCriterionFormError(res.message || 'Không thể lưu tiêu chí rèn luyện.');
+      }
+    } finally {
+      setIsSavingCriterion(false);
+    }
+  };
+
+  const handleConfirmDeleteCriterion = async () => {
+    if (!deletingCriterion || !isAdmin) return;
+    setIsDeletingCriterion(true);
+    try {
+      const res = await trainingApiService.deleteCriterion(deletingCriterion.id);
+      if (res.success) {
+        showToast(res.message || 'Đã xóa tiêu chí rèn luyện.');
+        setDeletingCriterion(null);
+        await loadData();
+      } else {
+        setApiError(res.message || 'Không thể xóa tiêu chí rèn luyện.');
+        setDeletingCriterion(null);
+      }
+    } finally {
+      setIsDeletingCriterion(false);
+    }
+  };
 
   const selectedCriterionObj = useMemo(() => {
     return criteria.find((c) => c.id === entryCriterionId) || null;
@@ -971,7 +1215,7 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
               }`}
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Duyệt giao dịch ({kpis.pendingCount})</span>
+              <span>Duyệt đơn ({kpis.pendingCount})</span>
             </button>
           )}
 
@@ -1630,16 +1874,26 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
           {/* TAB 5: POLICY */}
           {activeTab === 'POLICY' && (
             <div className="bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-4">
-              <div className="border-b border-slate-200 dark:border-slate-800 pb-2.5 flex items-center justify-between">
+              <div className="border-b border-slate-200 dark:border-slate-800 pb-3 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <BookOpen className="w-4 h-4 text-blue-700 dark:text-blue-400" />
                   <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100">
                     Danh mục tiêu chí đánh giá
                   </h2>
+                  <span className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                    ({criteria.length} tiêu chí)
+                  </span>
                 </div>
-                <span className="text-xs font-mono tabular-nums font-semibold text-slate-600 dark:text-slate-400">
-                  {criteria.length} tiêu chí
-                </span>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => openCreateCriterionModal()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Thêm tiêu chí mới</span>
+                  </button>
+                )}
               </div>
 
               {categories.length === 0 ? (
@@ -1660,58 +1914,141 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
                               (Trần {cat.maxPoints}đ)
                             </span>
                           </div>
-                          <span className="text-[11px] font-mono tabular-nums text-slate-600 dark:text-slate-300">
-                            {catCriteria.length} tiêu chí
-                          </span>
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-[11px] font-mono tabular-nums text-slate-600 dark:text-slate-300">
+                              {catCriteria.length} tiêu chí
+                            </span>
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => openCreateCriterionModal(cat.id)}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded border border-blue-200 dark:border-blue-800 transition-colors cursor-pointer"
+                              >
+                                <Plus className="w-3 h-3" />
+                                <span>Thêm vào nhóm</span>
+                              </button>
+                            )}
+                          </div>
                         </div>
 
-                        <div className="divide-y divide-slate-200 dark:divide-slate-800">
-                          {catCriteria.map((c) => (
-                            <div
-                              key={c.id}
-                              className="p-3 text-xs flex items-center justify-between gap-2 hover:bg-blue-50/30 dark:hover:bg-blue-950/20 transition-colors"
-                            >
-                              <div>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <StatusBadge
-                                    label={`${c.direction === 'ADD' ? '+' : '-'}${c.defaultPoints}đ`}
-                                    variant={c.direction === 'ADD' ? 'success' : 'danger'}
-                                    className="font-mono font-bold"
-                                  />
-                                  <span className="font-semibold text-slate-900 dark:text-slate-100">
-                                    {c.name}
-                                  </span>
-                                </div>
-                                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-2 font-mono">
-                                  <span>{c.code}</span>
-                                  <span aria-hidden="true">·</span>
-                                  <span>{c.calculationType}</span>
-                                  {c.allowBatch && (
-                                    <>
-                                      <span aria-hidden="true">·</span>
-                                      <span className="font-sans text-blue-700 dark:text-blue-400 font-medium">
-                                        Hỗ trợ nhập hàng loạt
-                                      </span>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
+                        {catCriteria.length === 0 ? (
+                          <div className="p-4 text-center text-xs text-slate-500 dark:text-slate-400">
+                            Chưa có tiêu chí nào trong nhóm này.
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-slate-200 dark:divide-slate-800">
+                            {catCriteria.map((c) => {
+                              const absDefault = Math.abs(c.defaultPoints);
+                              const signPrefix = c.direction === 'ADD' ? '+' : '-';
+                              const pointLabel =
+                                c.calculationType === 'MANUAL_RANGE' &&
+                                c.minPoints !== undefined &&
+                                c.maxPoints !== undefined
+                                  ? `${signPrefix}${Math.abs(c.minPoints)}–${Math.abs(c.maxPoints)}đ`
+                                  : `${signPrefix}${absDefault}đ`;
 
-                              {isAdminOrLecturer && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setEntryCriterionId(c.id);
-                                    setIsQuickEntryOpen(true);
-                                  }}
-                                  className="px-2.5 py-1 text-xs text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 rounded border border-blue-200 dark:border-blue-800 transition-colors font-semibold cursor-pointer whitespace-nowrap"
+                              return (
+                                <div
+                                  key={c.id}
+                                  className={`p-3 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 hover:bg-blue-50/30 dark:hover:bg-blue-950/20 transition-colors ${
+                                    !c.isActive ? 'opacity-60 bg-slate-50/60 dark:bg-slate-900/60' : ''
+                                  }`}
                                 >
-                                  Áp dụng
-                                </button>
-                              )}
-                            </div>
-                          ))}
-                        </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <StatusBadge
+                                        label={pointLabel}
+                                        variant={c.direction === 'ADD' ? 'success' : 'danger'}
+                                        className="font-mono font-bold tabular-nums"
+                                      />
+                                      <span className="font-semibold text-slate-900 dark:text-slate-100">
+                                        {c.name}
+                                      </span>
+                                      {!c.isActive && (
+                                        <StatusBadge label="Ngừng áp dụng" variant="neutral" />
+                                      )}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center flex-wrap gap-x-2 gap-y-0.5 font-mono">
+                                      <span>{c.code}</span>
+                                      <span aria-hidden="true">·</span>
+                                      <span className="font-sans">{getCalculationTypeLabel(c.calculationType)}</span>
+                                      {c.maxOccurrencesPerMonth && (
+                                        <>
+                                          <span aria-hidden="true">·</span>
+                                          <span className="font-sans">Tối đa {c.maxOccurrencesPerMonth} lần/tháng</span>
+                                        </>
+                                      )}
+                                      {c.requireApproval && (
+                                        <>
+                                          <span aria-hidden="true">·</span>
+                                          <span className="font-sans text-amber-700 dark:text-amber-400">Cần duyệt</span>
+                                        </>
+                                      )}
+                                      {c.allowBatch && (
+                                        <>
+                                          <span aria-hidden="true">·</span>
+                                          <span className="font-sans text-blue-700 dark:text-blue-400 font-medium">
+                                            Nhập hàng loạt
+                                          </span>
+                                        </>
+                                      )}
+                                    </div>
+                                    {c.calculationType === 'SELECT_LEVEL' && c.levels && c.levels.length > 0 && (
+                                      <div className="text-[11px] text-slate-600 dark:text-slate-300 mt-1.5 flex items-center flex-wrap gap-x-3 gap-y-1">
+                                        {c.levels.map((lv) => (
+                                          <span key={lv.id} className="inline-flex items-center gap-1">
+                                            <span>{lv.levelName}:</span>
+                                            <span className="font-mono font-semibold tabular-nums text-slate-800 dark:text-slate-100">
+                                              {signPrefix}
+                                              {Math.abs(lv.points)}đ
+                                            </span>
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    {isAdmin && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => openEditCriterionModal(c)}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded border border-slate-300 dark:border-slate-700 transition-colors font-medium cursor-pointer whitespace-nowrap"
+                                          title="Chỉnh sửa tiêu chí và mức điểm"
+                                        >
+                                          <Pencil className="w-3 h-3" />
+                                          <span>Tùy chỉnh</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setDeletingCriterion(c)}
+                                          className="inline-flex items-center justify-center p-1.5 text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded border border-rose-200 dark:border-rose-900 transition-colors cursor-pointer"
+                                          aria-label={`Xóa tiêu chí ${c.name}`}
+                                          title="Xóa tiêu chí"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </>
+                                    )}
+                                    {isAdminOrLecturer && c.isActive && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setEntryCriterionId(c.id);
+                                          setIsQuickEntryOpen(true);
+                                        }}
+                                        className="px-2.5 py-1 text-xs text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 rounded border border-blue-200 dark:border-blue-800 transition-colors font-semibold cursor-pointer whitespace-nowrap"
+                                      >
+                                        Áp dụng
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -1871,11 +2208,13 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
                   className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
                 >
                   <option value="">-- Chọn tiêu chí --</option>
-                  {criteria.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      [{c.direction === 'ADD' ? '+' : '-'}] [{c.categoryName}] {c.name}
-                    </option>
-                  ))}
+                  {criteria
+                    .filter((c) => c.isActive)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        [{c.direction === 'ADD' ? '+' : '-'}{Math.abs(c.defaultPoints)}đ] [{c.categoryName}] {c.name}
+                      </option>
+                    ))}
                 </select>
               </div>
 
@@ -2098,10 +2437,10 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
                 >
                   <option value="">-- Chọn tiêu chí --</option>
                   {criteria
-                    .filter((c) => c.allowBatch)
+                    .filter((c) => c.isActive && c.allowBatch)
                     .map((c) => (
                       <option key={c.id} value={c.id}>
-                        [{c.direction === 'ADD' ? '+' : '-'}] {c.name} ({c.defaultPoints}đ)
+                        [{c.direction === 'ADD' ? '+' : '-'}{Math.abs(c.defaultPoints)}đ] {c.name}
                       </option>
                     ))}
                 </select>
@@ -2526,6 +2865,447 @@ export const TrainingPointModule: React.FC<TrainingPointModuleProps> = ({
                   className="px-4 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded text-xs font-semibold transition-colors cursor-pointer"
                 >
                   Xác nhận
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 7: ADMIN CREATE / EDIT CRITERION */}
+      {isAdmin && isCriterionModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={criterionModalTitleId}
+          onClick={() => setIsCriterionModalOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-md max-w-xl w-full max-h-[90vh] flex flex-col border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shrink-0">
+              <h3 id={criterionModalTitleId} className="font-bold text-sm text-slate-900 dark:text-slate-100">
+                {editingCriterion ? 'Tùy chỉnh tiêu chí đánh giá' : 'Thêm tiêu chí đánh giá mới'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsCriterionModalOpen(false)}
+                aria-label="Đóng biểu mẫu tiêu chí"
+                className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCriterion} className="p-4 space-y-3.5 text-xs overflow-y-auto">
+              {criterionFormError && (
+                <div className="p-2.5 rounded border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-xs font-medium">
+                  {criterionFormError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                    Nhóm nội dung <span className="text-rose-600">*</span>
+                  </label>
+                  <select
+                    value={criterionForm.categoryId}
+                    onChange={(e) => setCriterionForm((prev) => ({ ...prev, categoryId: e.target.value }))}
+                    required
+                    className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                  >
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name} (Trần {cat.maxPoints}đ)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                    Mã tiêu chí <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={criterionForm.code}
+                    onChange={(e) =>
+                      setCriterionForm((prev) => ({
+                        ...prev,
+                        code: e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ''),
+                      }))
+                    }
+                    placeholder="VD: HT_OLYMPIC"
+                    maxLength={40}
+                    required
+                    className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs font-mono text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                  Tên tiêu chí <span className="text-rose-600">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={criterionForm.name}
+                  onChange={(e) => setCriterionForm((prev) => ({ ...prev, name: e.target.value }))}
+                  placeholder="Nhập mô tả rõ ràng cho tiêu chí cộng/trừ điểm..."
+                  maxLength={250}
+                  required
+                  className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                    Loại điểm <span className="text-rose-600">*</span>
+                  </label>
+                  <select
+                    value={criterionForm.direction}
+                    onChange={(e) =>
+                      setCriterionForm((prev) => ({
+                        ...prev,
+                        direction: e.target.value as ScoreDirection,
+                      }))
+                    }
+                    className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="ADD">Cộng điểm (+)</option>
+                    <option value="SUBTRACT">Trừ điểm (-)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                    Kiểu tính điểm <span className="text-rose-600">*</span>
+                  </label>
+                  <select
+                    value={criterionForm.calculationType}
+                    onChange={(e) =>
+                      setCriterionForm((prev) => ({
+                        ...prev,
+                        calculationType: e.target.value as CalculationType,
+                      }))
+                    }
+                    className="w-full px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="FIXED">Cố định</option>
+                    <option value="PER_OCCURRENCE">Theo số lần</option>
+                    <option value="MANUAL_RANGE">Trong khoảng điểm</option>
+                    <option value="SELECT_LEVEL">Chọn theo cấp độ</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                    Mức điểm mặc định <span className="text-rose-600">*</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-2 font-mono font-bold text-slate-500">
+                      {criterionForm.direction === 'ADD' ? '+' : '-'}
+                    </span>
+                    <input
+                      type="number"
+                      min={0.5}
+                      max={100}
+                      step={0.5}
+                      value={criterionForm.defaultPoints}
+                      onChange={(e) =>
+                        setCriterionForm((prev) => ({
+                          ...prev,
+                          defaultPoints: Math.abs(Number(e.target.value) || 0),
+                        }))
+                      }
+                      required
+                      className="w-full pl-6 pr-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-xs font-mono tabular-nums text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {criterionForm.calculationType === 'PER_OCCURRENCE' && (
+                <div className="p-3 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+                  <label className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                    Số lần tối đa mỗi tháng (không bắt buộc)
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={criterionForm.maxOccurrencesPerMonth}
+                    onChange={(e) =>
+                      setCriterionForm((prev) => ({ ...prev, maxOccurrencesPerMonth: e.target.value }))
+                    }
+                    placeholder="VD: 5"
+                    className="w-40 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs font-mono text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+              )}
+
+              {criterionForm.calculationType === 'MANUAL_RANGE' && (
+                <div className="p-3 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                      Điểm tối thiểu <span className="text-rose-600">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={0.5}
+                      max={100}
+                      step={0.5}
+                      value={criterionForm.minPoints}
+                      onChange={(e) =>
+                        setCriterionForm((prev) => ({
+                          ...prev,
+                          minPoints: Math.abs(Number(e.target.value) || 0),
+                        }))
+                      }
+                      required
+                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs font-mono tabular-nums text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                      Điểm tối đa <span className="text-rose-600">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={0.5}
+                      max={100}
+                      step={0.5}
+                      value={criterionForm.maxPoints}
+                      onChange={(e) =>
+                        setCriterionForm((prev) => ({
+                          ...prev,
+                          maxPoints: Math.abs(Number(e.target.value) || 0),
+                        }))
+                      }
+                      required
+                      className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs font-mono tabular-nums text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {criterionForm.calculationType === 'SELECT_LEVEL' && (
+                <div className="p-3 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-700 dark:text-slate-200">
+                      Danh sách cấp độ điểm <span className="text-rose-600">*</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCriterionForm((prev) => ({
+                          ...prev,
+                          levels: [...prev.levels, { levelName: '', points: prev.defaultPoints || 2 }],
+                        }))
+                      }
+                      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 rounded border border-blue-200 dark:border-blue-800 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Thêm cấp độ</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {criterionForm.levels.map((lv, idx) => (
+                      <div key={lv.id || idx} className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={lv.levelName}
+                          onChange={(e) =>
+                            setCriterionForm((prev) => ({
+                              ...prev,
+                              levels: prev.levels.map((item, i) =>
+                                i === idx ? { ...item, levelName: e.target.value } : item
+                              ),
+                            }))
+                          }
+                          placeholder={`Tên cấp độ ${idx + 1} (VD: Cấp Trường)`}
+                          className="flex-1 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs text-slate-900 dark:text-slate-100"
+                        />
+                        <input
+                          type="number"
+                          min={0.5}
+                          max={100}
+                          step={0.5}
+                          value={lv.points}
+                          onChange={(e) =>
+                            setCriterionForm((prev) => ({
+                              ...prev,
+                              levels: prev.levels.map((item, i) =>
+                                i === idx ? { ...item, points: Math.abs(Number(e.target.value) || 0) } : item
+                              ),
+                            }))
+                          }
+                          className="w-20 px-2 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs font-mono tabular-nums text-slate-900 dark:text-slate-100"
+                        />
+                        {criterionForm.levels.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCriterionForm((prev) => ({
+                                ...prev,
+                                levels: prev.levels.filter((_, i) => i !== idx),
+                              }))
+                            }
+                            aria-label="Xóa cấp độ"
+                            className="p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={criterionForm.requireApproval}
+                    onChange={(e) =>
+                      setCriterionForm((prev) => ({ ...prev, requireApproval: e.target.checked }))
+                    }
+                    className="rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+                  />
+                  <span>Yêu cầu duyệt trước khi tính điểm</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={criterionForm.allowBatch}
+                    onChange={(e) =>
+                      setCriterionForm((prev) => ({ ...prev, allowBatch: e.target.checked }))
+                    }
+                    className="rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+                  />
+                  <span>Hỗ trợ nhập hàng loạt</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={criterionForm.requireNote}
+                    onChange={(e) =>
+                      setCriterionForm((prev) => ({ ...prev, requireNote: e.target.checked }))
+                    }
+                    className="rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+                  />
+                  <span>Bắt buộc ghi chú lý do</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={criterionForm.requireEvidence}
+                    onChange={(e) =>
+                      setCriterionForm((prev) => ({ ...prev, requireEvidence: e.target.checked }))
+                    }
+                    className="rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+                  />
+                  <span>Bắt buộc đính kèm minh chứng</span>
+                </label>
+                {editingCriterion && (
+                  <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer sm:col-span-2 pt-1 border-t border-slate-200 dark:border-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={criterionForm.isActive}
+                      onChange={(e) =>
+                        setCriterionForm((prev) => ({ ...prev, isActive: e.target.checked }))
+                      }
+                      className="rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+                    />
+                    <span className="font-semibold">Đang áp dụng tiêu chí này</span>
+                  </label>
+                )}
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsCriterionModalOpen(false)}
+                  disabled={isSavingCriterion}
+                  className="px-3.5 py-1.5 text-xs text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingCriterion}
+                  className="px-4 py-1.5 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white rounded text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  {isSavingCriterion
+                    ? 'Đang lưu...'
+                    : editingCriterion
+                      ? 'Lưu thay đổi'
+                      : 'Thêm tiêu chí'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 8: ADMIN DELETE CRITERION CONFIRMATION */}
+      {isAdmin && deletingCriterion && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={criterionDeleteTitleId}
+          onClick={() => !isDeletingCriterion && setDeletingCriterion(null)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-md max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
+              <h3 id={criterionDeleteTitleId} className="font-bold text-sm text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                <span>Xác nhận xóa tiêu chí</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => !isDeletingCriterion && setDeletingCriterion(null)}
+                aria-label="Đóng hộp thoại"
+                className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3 text-xs text-slate-700 dark:text-slate-300">
+              <p>
+                Bạn có chắc chắn muốn xóa tiêu chí{' '}
+                <strong className="text-slate-900 dark:text-slate-100">{deletingCriterion.name}</strong>{' '}
+                (<span className="font-mono">{deletingCriterion.code}</span>)?
+              </p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Lưu ý: Các tiêu chí đã từng phát sinh giao dịch điểm sinh viên sẽ được bảo vệ khỏi việc xóa; khi đó bạn có thể chọn Tùy chỉnh và tắt trạng thái áp dụng.
+              </p>
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setDeletingCriterion(null)}
+                  disabled={isDeletingCriterion}
+                  className="px-3.5 py-1.5 text-xs text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteCriterion}
+                  disabled={isDeletingCriterion}
+                  className="px-4 py-1.5 bg-rose-700 hover:bg-rose-800 disabled:opacity-60 text-white rounded text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  {isDeletingCriterion ? 'Đang xóa...' : 'Xóa tiêu chí'}
                 </button>
               </div>
             </div>

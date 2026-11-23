@@ -42,7 +42,7 @@ export const MAIN_MENU_ITEMS: MenuItem[] = [
   {
     id: 'students',
     title: 'Hồ sơ & Sinh viên',
-    description: 'Thông tin cá nhân & lý lịch',
+    description: 'Danh sách, bộ lọc & hồ sơ mở rộng',
     icon: Users,
     roles: ['ADMIN', 'LECTURER', 'TEACHER', 'STUDENT'],
     href: '/students',
@@ -116,6 +116,14 @@ export const ADMIN_MENU_ITEMS: MenuItem[] = [
     icon: ShieldCheck,
     roles: ['ADMIN'],
     href: '/admin/users',
+  },
+  {
+    id: 'admin-catalogs',
+    title: 'Quản lý Danh mục chuẩn',
+    description: 'Hành chính 2 cấp, Dân tộc, Tôn giáo',
+    icon: Layers,
+    roles: ['ADMIN'],
+    href: '/admin/catalogs',
   },
   {
     id: 'admin-import',

@@ -311,9 +311,9 @@ export const OfficialSchoolScheduleView: React.FC = () => {
             </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-medium bg-slate-50 p-2.5 rounded-md border border-slate-200">
-            <div><span className="font-bold text-slate-600">Khóa:</span> 2025-2030</div>
-            <div><span className="font-bold text-slate-600">Lớp:</span> 25DDS09041</div>
-            <div><span className="font-bold text-slate-600">Chuyên ngành:</span> CN kỹ thuật cơ khí</div>
+            <div><span className="font-bold text-slate-600">Khóa:</span> Theo danh mục lớp</div>
+            <div><span className="font-bold text-slate-600">Lớp:</span> Theo lớp đang chọn</div>
+            <div><span className="font-bold text-slate-600">Khoa chuyên ngành:</span> Khoa Kỹ thuật cơ sở / Khoa Ô tô</div>
             <div><span className="font-bold text-slate-600">Thời gian:</span> 03/08/2026 - 17/01/2027</div>
           </div>
           <div className="overflow-x-auto border border-slate-950 text-[10px] leading-tight">

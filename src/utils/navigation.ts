@@ -21,6 +21,14 @@ export const VIEW_ROUTES: Record<string, { path: string; title: string }> = {
     path: '/students',
     title: 'Hồ sơ & Sinh viên | Quản Lý Sinh Viên',
   },
+  'students-builder': {
+    path: '/students/builder',
+    title: 'Trình tạo danh sách hồ sơ | Quản Lý Sinh Viên',
+  },
+  'students-quality': {
+    path: '/students/data-quality',
+    title: 'Chất lượng hồ sơ sinh viên | Quản Lý Sinh Viên',
+  },
   schedule: {
     path: '/schedule',
     title: 'Thời khóa biểu | Quản Lý Sinh Viên',
@@ -68,6 +76,10 @@ export const ADMIN_TAB_ROUTES: Record<string, { path: string; title: string }> =
     path: '/admin/users',
     title: 'Quản lý Người dùng & Phân quyền | Admin Console',
   },
+  'admin-catalogs': {
+    path: '/admin/catalogs',
+    title: 'Danh mục & Trường tùy biến | Admin Console',
+  },
   'admin-import': {
     path: '/admin/import',
     title: 'Import Dữ liệu Excel Wizard | Admin Console',
@@ -94,7 +106,14 @@ export function parseRouteFromPath(pathname: string): { view: string; adminTab?:
     return { view: 'dashboard' };
   }
 
-  if (normalized === '/students' || normalized === '/sinh-vien' || normalized === '/ho-so') {
+  if (
+    normalized === '/students' ||
+    normalized === '/sinh-vien' ||
+    normalized === '/ho-so' ||
+    normalized === '/students/builder' ||
+    normalized === '/students/data-quality' ||
+    normalized === '/students/quality'
+  ) {
     return { view: 'students' };
   }
 
@@ -140,6 +159,9 @@ export function parseRouteFromPath(pathname: string): { view: string; adminTab?:
   }
 
   if (normalized.startsWith('/admin')) {
+    if (normalized === '/admin/catalogs' || normalized === '/admin-catalogs') {
+      return { view: 'admin', adminTab: 'admin-catalogs' };
+    }
     if (normalized === '/admin/import' || normalized === '/admin-import') {
       return { view: 'admin', adminTab: 'admin-import' };
     }

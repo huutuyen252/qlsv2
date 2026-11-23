@@ -10,6 +10,7 @@ import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { ConfirmDialog } from './components/common';
 import { UserManagementModule } from './components/admin/UserManagementModule';
 import { StudentProfileModule } from './components/profile/StudentProfileModule';
+import { StudentFullProfileView, ProfileTabKey } from './components/profile/StudentFullProfileView';
 import { GradeManagementModule } from './components/grades/GradeManagementModule';
 import { TrainingPointModule } from './components/training/TrainingPointModule';
 import { ScheduleModule } from './components/schedule/ScheduleModule';
@@ -18,6 +19,7 @@ import { ReportsModule } from './components/reports/ReportsModule';
 import { SubjectListModule } from './components/subjects/SubjectListModule';
 import { AdminLayout } from './components/layouts/AdminLayout';
 import { AdminOverviewModule } from './components/admin/AdminOverviewModule';
+import { AdminCatalogsModule } from './components/admin/AdminCatalogsModule';
 import { ImportWizard } from './components/admin/ImportWizard';
 import { AdminBackupModule } from './components/admin/AdminBackupModule';
 import { AdminAuditLogsModule } from './components/admin/AdminAuditLogsModule';
@@ -90,6 +92,7 @@ export default function App() {
   });
   const [activeSemester, setActiveSemester] = useState<string>(() => getAcademicPeriod().code);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
+  const [selectedFullProfile, setSelectedFullProfile] = useState<{ maSV: string; tab?: ProfileTabKey } | null>(null);
 
   // Core Database States
   const [users, setUsers] = useState<User[]>(INITIAL_USERS);
@@ -135,11 +138,19 @@ export default function App() {
   // Handle navigation across all modules and update browser address bar
   const handleNavigate = (view: string, adminTab?: string) => {
     const canonicalView = view === 'retake' ? 'retakes' : view;
+    if (canonicalView !== 'student-detail') {
+      setSelectedFullProfile(null);
+    }
     if (adminTab) {
       setAdminSubTab(adminTab);
     }
     setCurrentView(canonicalView);
-    updateBrowserUrl(canonicalView, adminTab || adminSubTab, false);
+    updateBrowserUrl(canonicalView === 'student-detail' ? 'students' : canonicalView, adminTab || adminSubTab, false);
+  };
+
+  const handleOpenFullProfile = (maSV: string, tab: ProfileTabKey = 'GENERAL') => {
+    setSelectedFullProfile({ maSV, tab });
+    setCurrentView('student-detail');
   };
 
   // Browser Back & Forward (popstate) event listener
@@ -782,12 +793,11 @@ export default function App() {
     : null;
   const studentClass = currentStudentObj?.lop?.trim();
 
-  // Scope student view to their own class
+  // Scope student view strictly to SELF (matches hardened backend /api/students)
   const filteredStudents = isStudentRole
-    ? (studentClass
-        ? students.filter((s) => s.lop && s.lop.trim().toLowerCase() === studentClass.toLowerCase())
-        : (currentStudentCode ? students.filter((s) => s.maSV.toLowerCase() === currentStudentCode.toLowerCase()) : students)
-      )
+    ? (currentStudentCode
+        ? students.filter((s) => s.maSV.toLowerCase() === currentStudentCode.toLowerCase())
+        : [])
     : students;
 
   const classStudentCodes = new Set(filteredStudents.map((s) => s.maSV.toLowerCase()));
@@ -918,6 +928,10 @@ export default function App() {
               />
             )}
 
+            {currentView !== 'users' && adminSubTab === 'admin-catalogs' && (
+              <AdminCatalogsModule showToast={showToast} />
+            )}
+
             {currentView !== 'users' && adminSubTab === 'admin-auditlogs' && (
               <AdminAuditLogsModule
                 currentUser={currentUser}
@@ -969,6 +983,7 @@ export default function App() {
                   {currentView === 'dashboard' && (
                     <ReportsModule
                       userRole={currentUser?.role || 'STUDENT'}
+                      currentUser={currentUser}
                       currentStudentCode={currentStudentCode}
                       activeSemester={activeSemester}
                       semesters={semesters}
@@ -980,6 +995,7 @@ export default function App() {
                       trainingPoints={filteredTrainingPoints}
                       retakes={filteredRetakes}
                       onSwitchView={handleNavigate}
+                      onOpenFullProfile={handleOpenFullProfile}
                       initialTab="DASHBOARD"
                       isLoadingData={isLoadingData}
                       loadError={dataLoadError}
@@ -996,6 +1012,7 @@ export default function App() {
                     >
                       <ReportsModule
                         userRole={currentUser?.role || 'STUDENT'}
+                        currentUser={currentUser}
                         currentStudentCode={currentStudentCode}
                         activeSemester={activeSemester}
                         semesters={semesters}
@@ -1007,6 +1024,7 @@ export default function App() {
                         trainingPoints={filteredTrainingPoints}
                         retakes={filteredRetakes}
                         onSwitchView={handleNavigate}
+                        onOpenFullProfile={handleOpenFullProfile}
                         initialTab="QUICK_REPORT"
                         isLoadingData={isLoadingData}
                         loadError={dataLoadError}
@@ -1031,7 +1049,9 @@ export default function App() {
                     />
                   )}
 
-                  {currentView === 'students' && (
+                  {(currentView === 'students' ||
+                    currentView === 'students-builder' ||
+                    currentView === 'students-quality') && (
                     <StudentProfileModule
                       students={filteredStudents}
                       grades={filteredGrades}
@@ -1048,9 +1068,31 @@ export default function App() {
                       onUploadHoSo={handleUploadHoSo}
                       onImportStudents={handleImportStudentsExcel}
                       onSwitchView={handleNavigate}
+                      onOpenFullProfile={handleOpenFullProfile}
                       isLoading={isLoadingData}
                       loadError={dataLoadError}
                       onRetryLoad={loadAllData}
+                    />
+                  )}
+
+                  {currentView === 'student-detail' && selectedFullProfile && (
+                    <StudentFullProfileView
+                      maSV={selectedFullProfile.maSV}
+                      initialTab={selectedFullProfile.tab || 'GENERAL'}
+                      currentUser={currentUser}
+                      grades={filteredGrades}
+                      trainingPoints={filteredTrainingPoints}
+                      onBack={() => {
+                        setSelectedFullProfile(null);
+                        handleNavigate('students');
+                      }}
+                      onProfileSaved={loadAllData}
+                      showToast={showToast}
+                      onGoToCatalogs={
+                        currentUser?.role === 'ADMIN'
+                          ? () => handleNavigate('admin', 'admin-catalogs')
+                          : undefined
+                      }
                     />
                   )}
 

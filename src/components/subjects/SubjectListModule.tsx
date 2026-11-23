@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { HocKy, MonHoc, NamHoc, SinhVien, UserRole } from '../../types';
 import { apiService } from '../../services/apiService';
 import { isSubjectMatchingClass } from '../../utils/subjectHelper';
+import { SPECIALIZED_FACULTIES, FACULTY_KTCS } from '../../utils/classHelper';
 import {
   BookOpen,
   Plus,
@@ -88,18 +89,15 @@ export const SubjectListModule: React.FC<SubjectListModuleProps> = ({
     return Array.from(set);
   }, [academicYearsProp, subjects]);
 
-  // Dynamic faculty list
-  const facultyList = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          subjects
-            .map((s) => s.khoaPhuTrach?.trim())
-            .filter((f): f is string => Boolean(f))
-        )
-      ).sort(),
-    [subjects]
-  );
+  // Dynamic faculty list (always includes the 2 specialized faculties)
+  const facultyList = useMemo(() => {
+    const set = new Set<string>(SPECIALIZED_FACULTIES);
+    subjects.forEach((s) => {
+      const f = s.khoaPhuTrach?.trim();
+      if (f) set.add(f);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'vi'));
+  }, [subjects]);
 
   // Dynamic subject types
   const loaiMonList = useMemo(() => {
@@ -374,13 +372,13 @@ export const SubjectListModule: React.FC<SubjectListModuleProps> = ({
   const handleDownloadTemplate = () => {
     const templateData = [
       {
-        'Mã Môn Học': 'CNTT101',
-        'Tên Môn Học': 'Lập trình Hướng đối tượng',
+        'Mã Môn Học': 'KTCS101',
+        'Tên Môn Học': 'Kỹ thuật cơ sở',
         'Số Tín Chỉ': 3,
         'Lớp Áp Dụng': 'ALL',
         'Học Kỳ': semesters[0] || 'HK1',
         'Năm Học': academicYears[0] || '',
-        'Khoa / Bộ Môn Phụ Trách': facultyList[0] || 'Khoa Công nghệ thông tin',
+        'Khoa / Bộ Môn Phụ Trách': facultyList[0] || FACULTY_KTCS,
         'Loại Môn': 'Bắt buộc',
       },
     ];
@@ -1059,7 +1057,7 @@ export const SubjectListModule: React.FC<SubjectListModuleProps> = ({
                     disabled={Boolean(editingSubject)}
                     value={form.maMH}
                     onChange={(e) => setForm({ ...form, maMH: e.target.value })}
-                    placeholder="VD: CNTT101"
+                    placeholder="VD: KTCS101"
                     className="w-full p-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-slate-100 font-mono font-semibold focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 disabled:opacity-60"
                   />
                 </div>

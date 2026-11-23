@@ -714,6 +714,227 @@ export function getCriteria(params?: { categoryId?: string; activeOnly?: boolean
   return list;
 }
 
+export interface UpsertCriterionInput {
+  categoryId: string;
+  code: string;
+  name: string;
+  direction: 'ADD' | 'SUBTRACT';
+  calculationType: 'FIXED' | 'PER_OCCURRENCE' | 'SELECT_LEVEL' | 'MANUAL_RANGE';
+  defaultPoints: number;
+  minPoints?: number;
+  maxPoints?: number;
+  maxOccurrencesPerDay?: number;
+  maxOccurrencesPerMonth?: number;
+  requireNote?: boolean;
+  requireEvidence?: boolean;
+  requireApproval?: boolean;
+  allowBatch?: boolean;
+  effectiveFrom?: string;
+  effectiveTo?: string;
+  isActive?: boolean;
+  levels?: Array<{ id?: string; levelName: string; points: number; displayOrder?: number }>;
+}
+
+function normalizeAndValidateCriterionInput(
+  input: UpsertCriterionInput,
+  existingId?: string
+): Omit<ScoreCriterion, 'id'> {
+  const category = categories.find((cat) => cat.id === input.categoryId);
+  if (!category) {
+    throw new Error('Nhóm nội dung rèn luyện không hợp lệ.');
+  }
+
+  const cleanCode = String(input.code || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '_');
+  if (!cleanCode || cleanCode.length > 40 || !/^[A-Z0-9_-]+$/.test(cleanCode)) {
+    throw new Error('Mã tiêu chí chỉ gồm chữ cái không dấu, số, dấu gạch dưới (_) hoặc gạch nối (-), tối đa 40 ký tự.');
+  }
+
+  const duplicate = criteria.find(
+    (c) => c.code.toUpperCase() === cleanCode && c.id !== existingId
+  );
+  if (duplicate) {
+    throw new Error(`Mã tiêu chí "${cleanCode}" đã tồn tại. Vui lòng chọn mã khác.`);
+  }
+
+  const cleanName = String(input.name || '').trim();
+  if (!cleanName || cleanName.length > 250) {
+    throw new Error('Tên tiêu chí không được để trống và tối đa 250 ký tự.');
+  }
+
+  const direction = input.direction === 'SUBTRACT' ? 'SUBTRACT' : input.direction === 'ADD' ? 'ADD' : null;
+  if (!direction) {
+    throw new Error('Loại điểm phải là Cộng điểm (ADD) hoặc Trừ điểm (SUBTRACT).');
+  }
+
+  const allowedCalcTypes = ['FIXED', 'PER_OCCURRENCE', 'SELECT_LEVEL', 'MANUAL_RANGE'] as const;
+  if (!allowedCalcTypes.includes(input.calculationType)) {
+    throw new Error('Kiểu tính điểm không hợp lệ.');
+  }
+
+  const rawDefaultMag = Math.abs(Number(input.defaultPoints));
+  if (!Number.isFinite(rawDefaultMag) || rawDefaultMag <= 0 || rawDefaultMag > 100) {
+    throw new Error('Điểm mặc định phải lớn hơn 0 và không vượt quá 100.');
+  }
+
+  const signedDefaultPoints = direction === 'SUBTRACT' ? -rawDefaultMag : rawDefaultMag;
+
+  let minPoints: number | undefined;
+  let maxPoints: number | undefined;
+  if (input.calculationType === 'MANUAL_RANGE') {
+    const minMag = Math.abs(Number(input.minPoints));
+    const maxMag = Math.abs(Number(input.maxPoints));
+    if (!Number.isFinite(minMag) || !Number.isFinite(maxMag) || minMag <= 0 || maxMag > 100 || minMag > maxMag) {
+      throw new Error('Khoảng điểm phải hợp lệ (0 < Điểm tối thiểu <= Điểm tối đa <= 100).');
+    }
+    minPoints = minMag;
+    maxPoints = maxMag;
+  } else if (input.calculationType === 'FIXED') {
+    minPoints = rawDefaultMag;
+    maxPoints = rawDefaultMag;
+  }
+
+  let maxOccurrencesPerMonth: number | undefined;
+  if (input.maxOccurrencesPerMonth !== undefined && input.maxOccurrencesPerMonth !== null && String(input.maxOccurrencesPerMonth) !== '') {
+    const cap = Math.floor(Number(input.maxOccurrencesPerMonth));
+    if (!Number.isFinite(cap) || cap < 1 || cap > 100) {
+      throw new Error('Số lần tối đa/tháng phải từ 1 đến 100.');
+    }
+    maxOccurrencesPerMonth = cap;
+  }
+
+  let maxOccurrencesPerDay: number | undefined;
+  if (input.maxOccurrencesPerDay !== undefined && input.maxOccurrencesPerDay !== null && String(input.maxOccurrencesPerDay) !== '') {
+    const capDay = Math.floor(Number(input.maxOccurrencesPerDay));
+    if (!Number.isFinite(capDay) || capDay < 1 || capDay > 50) {
+      throw new Error('Số lần tối đa/ngày phải từ 1 đến 50.');
+    }
+    maxOccurrencesPerDay = capDay;
+  }
+
+  let normalizedLevels: ScoreCriterion['levels'];
+  if (input.calculationType === 'SELECT_LEVEL') {
+    if (!Array.isArray(input.levels) || input.levels.length === 0) {
+      throw new Error('Tiêu chí chọn theo cấp độ cần ít nhất 1 mức điểm.');
+    }
+    const targetCriterionId = existingId || 'PENDING';
+    normalizedLevels = input.levels.map((lv, idx) => {
+      const lvName = String(lv.levelName || '').trim();
+      const lvPoints = Math.abs(Number(lv.points));
+      if (!lvName || lvName.length > 120) {
+        throw new Error(`Tên cấp độ thứ ${idx + 1} không hợp lệ.`);
+      }
+      if (!Number.isFinite(lvPoints) || lvPoints <= 0 || lvPoints > 100) {
+        throw new Error(`Điểm của cấp độ "${lvName}" phải từ 0.5 đến 100.`);
+      }
+      return {
+        id: lv.id && String(lv.id).trim() ? String(lv.id).trim() : `LV-${Date.now()}-${idx + 1}`,
+        criterionId: targetCriterionId,
+        levelName: lvName,
+        points: lvPoints,
+        displayOrder: idx + 1,
+      };
+    });
+  }
+
+  const shortCategoryName =
+    category.id === 'CAT_STUDY'
+      ? 'Học tập'
+      : category.id === 'CAT_DISCIPLINE'
+        ? 'Kỷ luật'
+        : category.id === 'CAT_ACTIVITY'
+          ? 'Hoạt động'
+          : category.name;
+
+  return {
+    policyId: category.policyId || policies.find((p) => p.isDefault)?.id || 'POL-2025-2026',
+    categoryId: category.id,
+    categoryCode: category.code,
+    categoryName: shortCategoryName,
+    code: cleanCode,
+    name: cleanName,
+    direction,
+    calculationType: input.calculationType,
+    defaultPoints: signedDefaultPoints,
+    minPoints,
+    maxPoints,
+    maxOccurrencesPerDay,
+    maxOccurrencesPerMonth,
+    requireNote: Boolean(input.requireNote),
+    requireEvidence: Boolean(input.requireEvidence),
+    requireApproval: input.requireApproval !== undefined ? Boolean(input.requireApproval) : true,
+    allowBatch: Boolean(input.allowBatch),
+    effectiveFrom: input.effectiveFrom || new Date().toISOString().split('T')[0],
+    effectiveTo: input.effectiveTo || undefined,
+    isActive: input.isActive !== undefined ? Boolean(input.isActive) : true,
+    levels: normalizedLevels,
+  };
+}
+
+export function createCriterion(input: UpsertCriterionInput): ScoreCriterion {
+  const validated = normalizeAndValidateCriterionInput(input);
+  const id = `CRI-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const newCriterion: ScoreCriterion = {
+    id,
+    ...validated,
+    levels: validated.levels?.map((lv, idx) => ({
+      ...lv,
+      id: `LV-${id}-${idx + 1}`,
+      criterionId: id,
+    })),
+  };
+
+  criteria.push(newCriterion);
+  saveToDisk();
+  trainingEventBus.emit('score.criteria.updated', { action: 'CREATE', criterion: newCriterion });
+  return newCriterion;
+}
+
+export function updateCriterion(id: string, input: UpsertCriterionInput): ScoreCriterion {
+  const idx = criteria.findIndex((c) => c.id === id);
+  if (idx === -1) {
+    throw new Error('Không tìm thấy tiêu chí rèn luyện cần chỉnh sửa.');
+  }
+
+  const validated = normalizeAndValidateCriterionInput(input, id);
+  const updated: ScoreCriterion = {
+    id,
+    ...validated,
+    effectiveFrom: input.effectiveFrom || criteria[idx].effectiveFrom,
+    levels: validated.levels?.map((lv, lIdx) => ({
+      ...lv,
+      id: lv.id || `LV-${id}-${lIdx + 1}`,
+      criterionId: id,
+    })),
+  };
+
+  criteria[idx] = updated;
+  saveToDisk();
+  trainingEventBus.emit('score.criteria.updated', { action: 'UPDATE', criterion: updated });
+  return updated;
+}
+
+export function deleteCriterion(id: string): { deleted: ScoreCriterion } {
+  const idx = criteria.findIndex((c) => c.id === id);
+  if (idx === -1) {
+    throw new Error('Không tìm thấy tiêu chí rèn luyện cần xóa.');
+  }
+
+  const isUsedInTransactions = scoreTransactions.some((tx) => tx.criterionId === id);
+  if (isUsedInTransactions) {
+    throw new Error(
+      'Tiêu chí này đã phát sinh giao dịch điểm của sinh viên nên không thể xóa. Vui lòng chỉnh sửa và tắt trạng thái "Đang áp dụng".'
+    );
+  }
+
+  const [deleted] = criteria.splice(idx, 1);
+  saveToDisk();
+  trainingEventBus.emit('score.criteria.updated', { action: 'DELETE', criterionId: id });
+  return { deleted };
+}
+
 export function getTrainingMonths(academicYear?: string): TrainingMonth[] {
   if (academicYear) return trainingMonths.filter((m) => m.academicYear === academicYear);
   return [...trainingMonths];
@@ -769,7 +990,7 @@ export function createTransaction(data: {
   autoSubmit?: boolean;
 }): ScoreTransaction {
   const criterion = criteria.find((c) => c.id === data.criterionId);
-  if (!criterion) {
+  if (!criterion || !criterion.isActive) {
     throw new Error('Tiêu chí rèn luyện không tồn tại hoặc đã bị ngừng sử dụng');
   }
 

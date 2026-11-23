@@ -64,6 +64,8 @@ import {
   getAllIdMappings,
   getAllMigrationConflicts,
   executeDataBackfill,
+  getSystemConfig,
+  updateSystemConfig,
 } from './src/db/dbOperations';
 import { SinhVien, Diem, RenLuyen, ThoiKhoaBieu, ThiLaiHocLai, NamHoc, HocKy, Lop, DiemDanh, ThongBaoKiemTra, MonHoc, NghiLe, AuditLogEntry } from './src/types/index';
 import { uploadToCloudStorage, getStorageStatus } from './src/lib/cloudStorage';
@@ -71,17 +73,17 @@ import { hashPassword, verifyPassword, isBcryptHash, resolvePlainPassword } from
 import {
   normalizeClassName,
   normalizeFacultyName,
-  CANONICAL_CLASS_CO_KHI,
-  CANONICAL_CLASS_O_TO,
-  FACULTY_CO_KHI,
-  FACULTY_O_TO,
 } from './src/utils/classHelper';
 import {
   requirePortalAuth,
   requirePortalRoles,
   requirePortalPermission,
+  issueSignedPortalToken,
+  hasPortalPermission,
   PortalAuthRequest,
 } from './src/middleware/portalAuth';
+import { studentProfileRouter } from './src/routes/studentProfileRoutes';
+import { ensureProfileExpansionSchema } from './src/db/profileExpansionStore';
 const failedLoginAttempts: Record<string, number> = {};
 
 function getReqIp(req: Request): string {
@@ -100,8 +102,9 @@ async function startServer() {
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
   try {
     await seedInitialDataIfNeeded();
+    await ensureProfileExpansionSchema();
   } catch (err: any) {
-    console.warn('[DB] Seeding skipped:', err?.message);
+    console.warn('[DB] Seeding/expansion skipped:', err?.message);
   }
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -119,6 +122,9 @@ async function startServer() {
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
+
+  // Phân hệ Mở rộng Hồ sơ Sinh viên (Địa chỉ 2 cấp, Gia đình, Dân tộc/Tôn giáo, Đoàn/Đảng, Custom Fields, List Builder)
+  app.use('/api', studentProfileRouter);
 
   // Phân hệ Quản lý Điểm Rèn luyện Sinh viên (REST & Realtime SSE)
   app.use('/api/training-points', trainingPointRouter);
@@ -203,15 +209,13 @@ async function startServer() {
         status: 'SUCCESS',
         ip: getReqIp(req),
       });
-      const mockToken = `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.user_${user.id}_role_${user.role}.${Date.now()}`;
+      const signedToken = issueSignedPortalToken(user);
+      const { password: _pwd, plainPassword: _plainPwd, ...safeUser } = user as any;
       return res.json({
         success: true,
         message: 'Đăng nhập thành công',
-        accessToken: mockToken,
-        user: {
-          ...user,
-          plainPassword: user.plainPassword || resolvePlainPassword(user),
-        },
+        accessToken: signedToken,
+        user: safeUser,
       });
     } catch (error: any) {
       console.error('Login error:', error);
@@ -249,7 +253,7 @@ async function startServer() {
         password: hashPassword(rawPass),
         plainPassword: rawPass,
         studentCode: role === 'STUDENT' ? (studentCode || username).trim() : undefined,
-        faculty: faculty || (role === 'STUDENT' ? 'Khoa Cơ khí' : 'Khoa Cơ khí'),
+        faculty: faculty ? normalizeFacultyName(faculty) : '',
         status: 'ACTIVE' as const,
         createdAt: new Date().toISOString().split('T')[0],
         permissions: {
@@ -276,11 +280,8 @@ async function startServer() {
   app.get('/api/users', requirePortalRoles('ADMIN'), async (req: Request, res: Response) => {
     try {
       const userList = await getAllUsers();
-      const enriched = userList.map((u: any) => ({
-        ...u,
-        plainPassword: u.plainPassword || resolvePlainPassword(u),
-      }));
-      return res.json({ success: true, data: enriched, total: enriched.length });
+      const sanitized = userList.map(({ password: _p, plainPassword: _pp, ...u }: any) => u);
+      return res.json({ success: true, data: sanitized, total: sanitized.length });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
     }
@@ -492,24 +493,27 @@ async function startServer() {
       let list = await getAllSinhVien(search as string, khoa as string, lop as string);
       if (req.authUser?.role === 'STUDENT') {
         const ownCode = (req.authUser.studentCode || req.authUser.username || '').toLowerCase();
-        const selfRecord = ownCode ? await getSinhVienByMaSV(ownCode) : null;
-        const ownClass = selfRecord?.lop?.trim().toLowerCase();
-        list = list.filter((s) =>
-          ownClass
-            ? Boolean(s.lop && s.lop.trim().toLowerCase() === ownClass)
-            : s.maSV.toLowerCase() === ownCode
-        );
+        list = list.filter((s) => s.maSV.toLowerCase() === ownCode);
       }
       return res.json({ success: true, data: list, total: list.length });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
     }
   });
-  app.get('/api/students/profile', requirePortalAuth, async (req: Request, res: Response) => {
+  app.get('/api/students/profile', requirePortalAuth, async (req: PortalAuthRequest, res: Response) => {
     try {
       const maSV = req.query.maSV as string;
       if (!maSV) {
         return res.status(400).json({ success: false, message: 'Thiếu maSV' });
+      }
+      const actor = req.authUser!;
+      if (actor.role === 'STUDENT') {
+        const ownCode = (actor.studentCode || actor.username || '').toLowerCase();
+        if (maSV.toLowerCase() !== ownCode) {
+          return res.status(403).json({ success: false, message: 'Bạn chỉ được phép xem hồ sơ của chính mình.' });
+        }
+      } else if (actor.role !== 'ADMIN' && !hasPortalPermission(actor, 'canManageStudents')) {
+        return res.status(403).json({ success: false, message: 'Bạn không có quyền truy cập hồ sơ sinh viên.' });
       }
       const student = await getSinhVienByMaSV(maSV);
       if (!student) {
@@ -528,7 +532,7 @@ async function startServer() {
       }
       newStudent.maSV = newStudent.maSV.trim();
       newStudent.hoTen = newStudent.hoTen.trim();
-      newStudent.lop = normalizeClassName(newStudent.lop) || CANONICAL_CLASS_CO_KHI;
+      newStudent.lop = normalizeClassName(newStudent.lop);
       newStudent.khoa = normalizeFacultyName(newStudent.khoa, newStudent.lop);
       const existing = await getSinhVienByMaSV(newStudent.maSV);
       if (existing) {
@@ -621,7 +625,7 @@ async function startServer() {
       let newUsersCreated = 0;
       for (const st of students) {
         if (st.maSV && st.hoTen) {
-          const normLop = normalizeClassName(st.lop) || CANONICAL_CLASS_CO_KHI;
+          const normLop = normalizeClassName(st.lop);
           const normKhoa = normalizeFacultyName(st.khoa, normLop);
           const studentObj = {
             maSV: st.maSV.trim(),
@@ -1010,7 +1014,7 @@ async function startServer() {
         id: recordId,
         maSV,
         hoTenSV: student ? student.hoTen : 'Sinh viên',
-        lop: student ? normalizeClassName(student.lop) : CANONICAL_CLASS_CO_KHI,
+        lop: student ? normalizeClassName(student.lop) : normalizeClassName(req.body.lop),
         thang: Number(thang || 11),
         nam: Number(nam || 2026),
         namHoc: namHoc || (Number(nam) >= 2026 ? '2026-2027' : `${nam}-${Number(nam)+1}`),
@@ -1055,7 +1059,7 @@ async function startServer() {
         id,
         maSV: data.maSV,
         hoTenSV: student ? student.hoTen : (data.hoTenSV || 'Sinh viên'),
-        lop: student ? normalizeClassName(student.lop) : (normalizeClassName(data.lop) || CANONICAL_CLASS_CO_KHI),
+        lop: student ? normalizeClassName(student.lop) : normalizeClassName(data.lop),
         thang: Number(data.thang || 8),
         nam: Number(data.nam || 2026),
         namHoc: data.namHoc || '2026-2027',
@@ -1174,7 +1178,7 @@ async function startServer() {
             id: `rl-${t.maSV}-${thangVal}-${namVal}`,
             maSV: t.maSV,
             hoTenSV: student ? student.hoTen : t.hoTenSV || 'Sinh viên',
-            lop: student ? normalizeClassName(student.lop) : normalizeClassName(t.lop) || CANONICAL_CLASS_CO_KHI,
+            lop: student ? normalizeClassName(student.lop) : normalizeClassName(t.lop),
             thang: thangVal,
             nam: namVal,
             namHoc: namHocVal,
@@ -1335,10 +1339,10 @@ async function startServer() {
         return res.status(400).json({ success: false, message: 'Vui lòng nhập tên môn học và mđã học phần' });
       }
       const createdItems: any[] = [];
-      const targetClass = normalizeClassName(lop || lopID) || CANONICAL_CLASS_CO_KHI;
+      const targetClass = normalizeClassName(lop || lopID);
       if (applyToClass && targetClass) {
         const allStudents = await getAllSinhVien(undefined, undefined, targetClass);
-        const studentCodes = allStudents.length > 0 ? allStudents.map((s: any) => s.maSV) : [maSV || '25DDS0904103'];
+        const studentCodes = allStudents.length > 0 ? allStudents.map((s: any) => s.maSV) : (maSV ? [maSV] : []);
         for (let idx = 0; idx < studentCodes.length; idx++) {
           const studentCode = studentCodes[idx];
           const idVal = `tkb-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`;
@@ -1371,7 +1375,7 @@ async function startServer() {
         const newItem = {
           id: idVal,
           tkbID: idVal,
-          maSV: maSV || '25DDS0904103',
+          maSV: maSV || '',
           lop: targetClass,
           lopID: targetClass,
           hocKy: hocKy || 'HK1',
@@ -1684,8 +1688,8 @@ async function startServer() {
         maMH: maMH.trim(),
         tenMH: tenMH.trim(),
         soTinChi: Number(soTinChi || 3),
-        khoa: khoa || 'Khoa Cơ khí',
-        khoaPhuTrach: khoaPhuTrach || khoa || 'Khoa Cơ khí',
+        khoa: normalizeFacultyName(khoa || khoaPhuTrach),
+        khoaPhuTrach: normalizeFacultyName(khoaPhuTrach || khoa),
         loaiMon: loaiMon || 'Bắt buộc',
         hocKy: hocKy || 'HK1',
         namHoc: namHoc || '2025-2026',
@@ -1747,8 +1751,8 @@ async function startServer() {
             maMH: s.maMH.trim(),
             tenMH: s.tenMH.trim(),
             soTinChi: Number(s.soTinChi || 3),
-            khoa: s.khoa || 'Khoa Cơ khí',
-            khoaPhuTrach: s.khoaPhuTrach || s.khoa || 'Khoa Cơ khí',
+            khoa: normalizeFacultyName(s.khoa || s.khoaPhuTrach),
+            khoaPhuTrach: normalizeFacultyName(s.khoaPhuTrach || s.khoa),
             loaiMon: s.loaiMon || 'Bắt buộc',
             hocKy: s.hocKy || 'HK1',
             namHoc: s.namHoc || '2025-2026',
@@ -1820,13 +1824,14 @@ async function startServer() {
     }
   });
 
-  app.post('/api/audit-logs', requirePortalAuth, async (req: Request, res: Response) => {
+  app.post('/api/audit-logs', requirePortalAuth, async (req: PortalAuthRequest, res: Response) => {
     try {
-      const { user, role, action, target, details, status, ip } = req.body;
+      const { action, target, details, status, ip } = req.body;
       const clientIp = ip || (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1';
       const created = await createAuditLog({
-        user: user || 'admin',
-        role: role || 'ADMIN',
+        user: req.authUser!.username,
+        role: req.authUser!.role,
+        actorUserId: req.authUser!.id,
         action: action || 'OPERATION',
         target: target || 'Hệ thống Quản trị',
         details: details || '',
@@ -1890,6 +1895,76 @@ async function startServer() {
         ip: getReqIp(req),
       });
       return res.json({ success: true, data: result });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.get('/api/system-config', (_req: Request, res: Response) => {
+    try {
+      return res.json({ success: true, data: getSystemConfig() });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.put('/api/system-config', requirePortalRoles('ADMIN'), (req: Request, res: Response) => {
+    try {
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const sanitizeUrl = (val: unknown, fallback: string): string => {
+        if (typeof val !== 'string') return fallback;
+        const trimmed = val.trim();
+        if (!trimmed) return '';
+        if (/^https?:\/\//i.test(trimmed)) return trimmed;
+        return fallback;
+      };
+      const cleanStr = (val: unknown, maxLen = 200): string | undefined =>
+        typeof val === 'string' ? val.trim().slice(0, maxLen) : undefined;
+
+      const ALLOWED_HOLIDAY_MODES = new Set([
+        'AUTO',
+        'DEFAULT',
+        'TET',
+        'FOUNDING_PARTY',
+        'WOMEN_DAY',
+        'LIBERATION_LABOR',
+        'NATIONAL_DAY',
+        'VIETNAMESE_WOMEN',
+        'TEACHERS_DAY',
+        'MILITARY_DAY',
+      ]);
+
+      const patch: Record<string, any> = {};
+      const stringFields = [
+        'schoolName',
+        'schoolCode',
+        'campusAddress',
+        'adminName',
+        'adminUnit',
+        'hotline',
+        'contactEmail',
+        'supportHours',
+      ];
+      for (const field of stringFields) {
+        const cleaned = cleanStr(body[field]);
+        if (cleaned !== undefined) patch[field] = cleaned;
+      }
+      if (typeof body.holidayThemeMode === 'string') {
+        const mode = body.holidayThemeMode.trim().toUpperCase();
+        if (ALLOWED_HOLIDAY_MODES.has(mode)) {
+          patch.holidayThemeMode = mode;
+        }
+      }
+      if (body.holidayBannerText !== undefined) {
+        const cleanedBanner = cleanStr(body.holidayBannerText, 260);
+        if (cleanedBanner !== undefined) patch.holidayBannerText = cleanedBanner;
+      }
+      if (body.facebookUrl !== undefined) patch.facebookUrl = sanitizeUrl(body.facebookUrl, 'https://www.facebook.com');
+      if (body.tiktokUrl !== undefined) patch.tiktokUrl = sanitizeUrl(body.tiktokUrl, 'https://www.tiktok.com');
+      if (body.zaloUrl !== undefined) patch.zaloUrl = sanitizeUrl(body.zaloUrl, 'https://zalo.me');
+
+      const updated = updateSystemConfig(patch);
+      return res.json({ success: true, data: updated, message: 'Đã lưu cấu hình hệ thống' });
     } catch (error: any) {
       return res.status(500).json({ success: false, message: error.message });
     }

@@ -21,23 +21,27 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
   children,
 }) => {
   return (
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
-      <div>
-        <div className="flex items-center gap-2">
-          {Icon && <Icon className="w-5 h-5 text-blue-700 dark:text-blue-400 shrink-0" />}
-          <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 pb-4 border-b border-slate-200/90 dark:border-slate-800">
+      <div className="flex items-center gap-3 min-w-0">
+        {Icon && (
+          <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-100 dark:border-blue-900/60 flex items-center justify-center text-blue-700 dark:text-blue-400 shrink-0">
+            <Icon className="w-4.5 h-4.5" />
+          </div>
+        )}
+        <div className="min-w-0">
+          <h1 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-50 tracking-tight truncate">
             {title}
           </h1>
+          {subtitle && (
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+              {subtitle}
+            </p>
+          )}
         </div>
-        {subtitle && (
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            {subtitle}
-          </p>
-        )}
       </div>
 
       {(actions || children) && (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {actions}
           {children}
         </div>

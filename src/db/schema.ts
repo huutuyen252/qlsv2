@@ -151,7 +151,7 @@ export const diemDanh = pgTable('diem_danh', {
   tenMH: text('ten_mh'),
   lop: text('lop'),
   ngay: text('ngay').notNull(),
-  soTietNghi: integer('so_tiet_nghỉi').notNull().default(0),
+  soTietNghi: integer('so_tiet_nghi').notNull().default(0),
   coPhep: boolean('co_phep').notNull().default(false),
   ghiChu: text('ghi_chu'),
   nguoiDiemDanh: text('nguoi_diem_danh'),
@@ -193,6 +193,13 @@ export const auditLogs = pgTable('audit_logs', {
   status: text('status').notNull().default('SUCCESS'),
   ip: text('ip'),
   createdAt: text('created_at'),
+  actorUserId: text('actor_user_id'),
+  entityType: text('entity_type'),
+  entityId: text('entity_id'),
+  beforeJson: jsonb('before_json'),
+  afterJson: jsonb('after_json'),
+  isSensitiveRead: boolean('is_sensitive_read').default(false),
+  reason: text('reason'),
 });
 
 export const idMapping = pgTable('id_mapping', {
@@ -220,5 +227,240 @@ export const migrationConflictLog = pgTable('migration_conflict_log', {
   notes: text('notes'),
   createdAt: text('created_at'),
 });
+
+// ==================== PHASE 2: PROFILE EXPANSION TABLES ====================
+
+export const administrativeUnits = pgTable('administrative_units', {
+  id: text('id').primaryKey(),
+  officialCode: text('official_code').notNull(),
+  unitLevel: text('unit_level').notNull(), // PROVINCE | COMMUNE
+  name: text('name').notNull(),
+  shortName: text('short_name'),
+  unitType: text('unit_type').notNull(),
+  parentId: text('parent_id'),
+  effectiveFrom: text('effective_from').notNull(),
+  effectiveTo: text('effective_to'),
+  status: text('status').notNull().default('ACTIVE'),
+  successorUnitId: text('successor_unit_id'),
+  createdAt: text('created_at'),
+  updatedAt: text('updated_at'),
+});
+
+export const administrativeUnitHistory = pgTable('administrative_unit_history', {
+  id: text('id').primaryKey(),
+  sourceUnitId: text('source_unit_id').notNull(),
+  targetUnitId: text('target_unit_id'),
+  changeType: text('change_type').notNull(),
+  resolutionNo: text('resolution_no'),
+  effectiveDate: text('effective_date').notNull(),
+  notes: text('notes'),
+  createdBy: text('created_by'),
+  createdAt: text('created_at'),
+});
+
+export const studentAddresses = pgTable('student_addresses', {
+  id: text('id').primaryKey(),
+  maSV: text('ma_sv').notNull(),
+  addressType: text('address_type').notNull(), // PERMANENT | CURRENT | TEMPORARY
+  provinceUnitId: text('province_unit_id').notNull(),
+  communeUnitId: text('commune_unit_id').notNull(),
+  addressDetail: text('address_detail').notNull().default(''),
+  isPrimary: boolean('is_primary').notNull().default(false),
+  validFrom: text('valid_from').notNull(),
+  validTo: text('valid_to'),
+  verificationStatus: text('verification_status').notNull().default('UNVERIFIED'),
+  verifiedBy: text('verified_by'),
+  verifiedAt: text('verified_at'),
+  source: text('source').notNull().default('STAFF_ENTRY'),
+  createdBy: text('created_by').notNull(),
+  updatedBy: text('updated_by').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const ethnicities = pgTable('ethnicities', {
+  id: text('id').primaryKey(),
+  officialCode: text('official_code').notNull().unique(),
+  name: text('name').notNull().unique(),
+  isActive: boolean('is_active').notNull().default(true),
+  sortOrder: integer('sort_order').notNull().default(0),
+});
+
+export const religions = pgTable('religions', {
+  id: text('id').primaryKey(),
+  officialCode: text('official_code').notNull().unique(),
+  name: text('name').notNull().unique(),
+  isActive: boolean('is_active').notNull().default(true),
+  sortOrder: integer('sort_order').notNull().default(0),
+});
+
+export const studentDemographics = pgTable('student_demographics', {
+  maSV: text('ma_sv').primaryKey(),
+  ethnicityId: text('ethnicity_id'),
+  ethnicityStatus: text('ethnicity_status').notNull().default('NOT_DECLARED'),
+  religionId: text('religion_id'),
+  religionStatus: text('religion_status').notNull().default('NOT_DECLARED'),
+  verificationStatus: text('verification_status').notNull().default('UNVERIFIED'),
+  verifiedBy: text('verified_by'),
+  verifiedAt: text('verified_at'),
+  source: text('source').notNull().default('STAFF_ENTRY'),
+  createdBy: text('created_by').notNull(),
+  updatedBy: text('updated_by').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const relationshipTypes = pgTable('relationship_types', {
+  id: text('id').primaryKey(),
+  code: text('code').notNull().unique(),
+  labelVi: text('label_vi').notNull(),
+  isParental: boolean('is_parental').notNull().default(false),
+  isActive: boolean('is_active').notNull().default(true),
+  sortOrder: integer('sort_order').notNull().default(0),
+});
+
+export const studentFamilyProfiles = pgTable('student_family_profiles', {
+  id: text('id').primaryKey(),
+  maSV: text('ma_sv').notNull().unique(),
+  familyStructureStatus: text('family_structure_status').notNull().default('NOT_DECLARED'),
+  dataCompletenessState: text('data_completeness_state').notNull().default('NOT_ENTERED'),
+  verificationStatus: text('verification_status').notNull().default('UNVERIFIED'),
+  verifiedBy: text('verified_by'),
+  verifiedAt: text('verified_at'),
+  notes: text('notes'),
+  createdBy: text('created_by').notNull(),
+  updatedBy: text('updated_by').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const studentFamilyMembers = pgTable('student_family_members', {
+  id: text('id').primaryKey(),
+  familyProfileId: text('family_profile_id').notNull(),
+  maSV: text('ma_sv').notNull(),
+  relationshipTypeId: text('relationship_type_id').notNull(),
+  fullName: text('full_name').notNull(),
+  birthYear: integer('birth_year'),
+  isDeceased: boolean('is_deceased').notNull().default(false),
+  occupation: text('occupation'),
+  workplace: text('workplace'),
+  provinceUnitId: text('province_unit_id'),
+  communeUnitId: text('commune_unit_id'),
+  addressDetail: text('address_detail'),
+  isGuardian: boolean('is_guardian').notNull().default(false),
+  isPrimaryContact: boolean('is_primary_contact').notNull().default(false),
+  isEmergencyContact: boolean('is_emergency_contact').notNull().default(false),
+  notes: text('notes'),
+  createdBy: text('created_by').notNull(),
+  updatedBy: text('updated_by').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const familyMemberContacts = pgTable('family_member_contacts', {
+  id: text('id').primaryKey(),
+  familyMemberId: text('family_member_id').notNull(),
+  contactType: text('contact_type').notNull(),
+  contactValue: text('contact_value').notNull(),
+  isPrimary: boolean('is_primary').notNull().default(false),
+  isEmergency: boolean('is_emergency').notNull().default(false),
+  canReceiveSms: boolean('can_receive_sms').notNull().default(true),
+  verificationStatus: text('verification_status').notNull().default('UNVERIFIED'),
+  createdBy: text('created_by').notNull(),
+  updatedBy: text('updated_by').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const organizations = pgTable('organizations', {
+  id: text('id').primaryKey(),
+  code: text('code').notNull().unique(),
+  name: text('name').notNull().unique(),
+  isActive: boolean('is_active').notNull().default(true),
+});
+
+export const studentOrganizationMemberships = pgTable('student_organization_memberships', {
+  id: text('id').primaryKey(),
+  maSV: text('ma_sv').notNull(),
+  organizationId: text('organization_id').notNull(),
+  membershipStatus: text('membership_status').notNull().default('NOT_MEMBER'),
+  joinDate: text('join_date'),
+  officialDate: text('official_date'),
+  membershipCode: text('membership_code'),
+  unitName: text('unit_name'),
+  evidenceFileUrl: text('evidence_file_url'),
+  verificationStatus: text('verification_status').notNull().default('UNVERIFIED'),
+  verifiedBy: text('verified_by'),
+  verifiedAt: text('verified_at'),
+  createdBy: text('created_by').notNull(),
+  updatedBy: text('updated_by').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const customFieldDefinitions = pgTable('custom_field_definitions', {
+  id: text('id').primaryKey(),
+  fieldKey: text('field_key').notNull().unique(),
+  label: text('label').notNull(),
+  description: text('description'),
+  sectionGroup: text('section_group').notNull().default('ADDITIONAL'),
+  dataType: text('data_type').notNull(),
+  isRequired: boolean('is_required').notNull().default(false),
+  isFilterable: boolean('is_filterable').notNull().default(true),
+  isReportable: boolean('is_reportable').notNull().default(true),
+  isSensitive: boolean('is_sensitive').notNull().default(false),
+  validationRules: jsonb('validation_rules'),
+  visibilityRoles: jsonb('visibility_roles').notNull(),
+  editableRoles: jsonb('editable_roles').notNull(),
+  effectiveFrom: text('effective_from'),
+  effectiveTo: text('effective_to'),
+  isActive: boolean('is_active').notNull().default(true),
+  sortOrder: integer('sort_order').notNull().default(0),
+  createdBy: text('created_by').notNull(),
+  updatedBy: text('updated_by').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const customFieldOptions = pgTable('custom_field_options', {
+  id: text('id').primaryKey(),
+  fieldId: text('field_id').notNull(),
+  optionValue: text('option_value').notNull(),
+  optionLabel: text('option_label').notNull(),
+  sortOrder: integer('sort_order').notNull().default(0),
+  isActive: boolean('is_active').notNull().default(true),
+});
+
+export const studentCustomFieldValues = pgTable('student_custom_field_values', {
+  id: text('id').primaryKey(),
+  maSV: text('ma_sv').notNull(),
+  fieldId: text('field_id').notNull(),
+  valueText: text('value_text'),
+  valueNumber: doublePrecision('value_number'),
+  valueDate: text('value_date'),
+  valueBoolean: boolean('value_boolean'),
+  valueJson: jsonb('value_json'),
+  verificationStatus: text('verification_status').notNull().default('UNVERIFIED'),
+  createdBy: text('created_by').notNull(),
+  updatedBy: text('updated_by').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const savedFilterPresets = pgTable('saved_filter_presets', {
+  id: text('id').primaryKey(),
+  ownerUserId: text('owner_user_id').notNull(),
+  ownerName: text('owner_name'),
+  name: text('name').notNull(),
+  description: text('description'),
+  visibility: text('visibility').notNull().default('PRIVATE'),
+  targetRoles: jsonb('target_roles').notNull(),
+  filterAst: jsonb('filter_ast').notNull(),
+  selectedColumns: jsonb('selected_columns').notNull(),
+  sortConfig: jsonb('sort_config'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
 
 

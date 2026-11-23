@@ -967,5 +967,26 @@ export const apiService = {
       return { success: false, message: 'Lỗi khi chạy migration backfill' };
     }
   },
+  async getSystemConfig(): Promise<{ success: boolean; data?: Record<string, any> }> {
+    try {
+      const res = await fetch(`${API_BASE}/system-config`);
+      return await res.json();
+    } catch {
+      return { success: false };
+    }
+  },
+  async updateSystemConfig(config: Record<string, any>): Promise<{ success: boolean; data?: Record<string, any>; message?: string }> {
+    try {
+      const res = await authFetch(`${API_BASE}/system-config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      });
+      return await res.json();
+    } catch {
+      return { success: false, message: 'Lỗi khi lưu cấu hình hệ thống' };
+    }
+  },
 };
+
 

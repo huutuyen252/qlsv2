@@ -111,6 +111,50 @@ export const trainingApiService = {
     }
   },
 
+  async createCriterion(
+    data: Partial<ScoreCriterion>
+  ): Promise<{ success: boolean; message: string; data?: ScoreCriterion }> {
+    try {
+      const res = await authFetch(`${API_BASE}/criteria`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch {
+      return { success: false, message: 'Lỗi kết nối khi thêm tiêu chí rèn luyện' };
+    }
+  },
+
+  async updateCriterion(
+    id: string,
+    data: Partial<ScoreCriterion>
+  ): Promise<{ success: boolean; message: string; data?: ScoreCriterion }> {
+    try {
+      const res = await authFetch(`${API_BASE}/criteria/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      return await res.json();
+    } catch {
+      return { success: false, message: 'Lỗi kết nối khi cập nhật tiêu chí rèn luyện' };
+    }
+  },
+
+  async deleteCriterion(
+    id: string
+  ): Promise<{ success: boolean; message: string; data?: ScoreCriterion }> {
+    try {
+      const res = await authFetch(`${API_BASE}/criteria/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+      return await res.json();
+    } catch {
+      return { success: false, message: 'Lỗi kết nối khi xóa tiêu chí rèn luyện' };
+    }
+  },
+
   async getMonths(academicYear?: string): Promise<{ success: boolean; data: TrainingMonth[] }> {
     try {
       const query = academicYear ? `?academicYear=${encodeURIComponent(academicYear)}` : '';

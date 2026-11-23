@@ -32,8 +32,8 @@ export const SwaggerDocModule: React.FC = () => {
         grades: [
           {
             maSV: 'sv2024001',
-            maMH: 'CNTT104',
-            tenMH: 'Lập trình ReactJS',
+            maMH: 'KTCS101',
+            tenMH: 'Kỹ thuật cơ sở',
             soTinChi: 3,
             hocKy: 'HK1',
             namHoc: '2024-2025',

@@ -1,147 +1,128 @@
-export const CANONICAL_CLASS_CO_KHI = 'CNKT CƠ KHÍ 25DDS09041';
-export const CANONICAL_CLASS_O_TO = 'CNKT Ô TÔ 25DDS09021';
-
-export const CANONICAL_CLASSES = [
-  CANONICAL_CLASS_CO_KHI,
-  CANONICAL_CLASS_O_TO,
-] as const;
-
-export const FACULTY_CO_KHI = 'Khoa Cơ khí';
+export const FACULTY_KTCS = 'Khoa Kỹ thuật cơ sở';
 export const FACULTY_O_TO = 'Khoa Ô tô';
 
+export const SPECIALIZED_FACULTIES = [
+  FACULTY_KTCS,
+  FACULTY_O_TO,
+] as const;
+
 /**
- * Normalizes any variation of class name into its canonical uppercase representation.
- * Examples:
- * - "CNKT Cơ khí 25DDS 09041", "CNKT Cơ khí 25DDS09041", "25DDS09041" -> "CNKT CƠ KHÍ 25DDS09041"
- * - "CNKT Ô tô 25DDS09021", "CNKT Ô tô 25DDS 09021", "25DDS09021" -> "CNKT Ô TÔ 25DDS09021"
+ * Normalizes whitespace in a class name without forcing hardcoded cohorts or class codes.
  */
 export function normalizeClassName(rawLop: string | undefined | null): string {
   if (!rawLop) return '';
-  const trimmed = rawLop.trim().replace(/\s+/g, ' ');
-  const lower = trimmed.toLowerCase();
-
-  // Check Mechanical engineering 25DDS09041
-  if (
-    lower.includes('09041') ||
-    ((lower.includes('cơ khí') || lower.includes('co khi')) && (lower.includes('25dds') || lower.includes('cnkt')))
-  ) {
-    return CANONICAL_CLASS_CO_KHI;
-  }
-
-  // Check Automotive engineering 25DDS09021
-  if (
-    lower.includes('09021') ||
-    ((lower.includes('ô tô') || lower.includes('o to')) && (lower.includes('25dds') || lower.includes('cnkt')))
-  ) {
-    return CANONICAL_CLASS_O_TO;
-  }
-
-  // General cleanup
-  return trimmed.replace(/25DDS\s+/i, '25DDS').toUpperCase();
+  return rawLop.trim().replace(/\s+/g, ' ');
 }
 
 /**
- * Returns the faculty associated with a class name.
+ * Returns the specialized faculty associated with a class name, if clearly identifiable.
+ * Only recognizes the 2 specialized faculties: Khoa Kỹ thuật cơ sở and Khoa Ô tô.
  */
 export function getFacultyForClass(lopName: string | undefined | null): string {
-  const norm = normalizeClassName(lopName);
-  if (norm === CANONICAL_CLASS_CO_KHI) return FACULTY_CO_KHI;
-  if (norm === CANONICAL_CLASS_O_TO) return FACULTY_O_TO;
-
-  if (!lopName) return 'Khoa Đào tạo';
-  const lower = lopName.toLowerCase();
-  if (lower.includes('cơ khí') || lower.includes('co khi') || lower.includes('ktcs')) return FACULTY_CO_KHI;
-  if (lower.includes('ô tô') || lower.includes('o to')) return FACULTY_O_TO;
-  if (lower.includes('thông tin') || lower.includes('cntt')) return 'Khoa Công nghệ Thông tin';
-  return 'Khoa Đào tạo';
+  if (!lopName) return '';
+  const lower = lopName.trim().toLowerCase();
+  if (
+    lower.includes('kỹ thuật cơ sở') ||
+    lower.includes('ky thuat co so') ||
+    lower.includes('ktcs') ||
+    lower.includes('cơ sở') ||
+    lower.includes('co so')
+  ) {
+    return FACULTY_KTCS;
+  }
+  if (lower.includes('ô tô') || lower.includes('o to') || lower.includes('oto')) {
+    return FACULTY_O_TO;
+  }
+  return '';
 }
 
 /**
- * Normalizes faculty name.
+ * Normalizes a faculty name against the 2 official specialized faculties
+ * (Khoa Kỹ thuật cơ sở, Khoa Ô tô) while preserving administrative units (e.g., Phòng Đào tạo).
  */
 export function normalizeFacultyName(rawKhoa: string | undefined | null, lop?: string): string {
-  if (lop) {
-    const facultyFromLop = getFacultyForClass(lop);
-    if (facultyFromLop) return facultyFromLop;
+  const trimmed = (rawKhoa || '').trim();
+  if (trimmed) {
+    const lower = trimmed.toLowerCase();
+    if (
+      lower.includes('kỹ thuật cơ sở') ||
+      lower.includes('ky thuat co so') ||
+      lower.includes('ktcs') ||
+      lower.includes('cơ khí') ||
+      lower.includes('co khi')
+    ) {
+      return FACULTY_KTCS;
+    }
+    if (lower.includes('ô tô') || lower.includes('o to') || lower.includes('oto')) {
+      return FACULTY_O_TO;
+    }
+    return trimmed;
   }
-  if (!rawKhoa) return 'Khoa Đào tạo';
-  const lower = rawKhoa.toLowerCase();
-  if (lower.includes('cơ khí') || lower.includes('co khi') || lower.includes('ktcs')) return FACULTY_CO_KHI;
-  if (lower.includes('ô tô') || lower.includes('o to')) return FACULTY_O_TO;
-  if (lower.includes('thông tin') || lower.includes('cntt')) return 'Khoa Công nghệ Thông tin';
-  return rawKhoa.trim();
+  if (lop) {
+    return getFacultyForClass(lop);
+  }
+  return '';
 }
 
 /**
- * Checks if two class strings refer to the same class, case-insensitively and canonicalized.
+ * Checks if two class strings refer to the same class, case-insensitively.
  */
 export function isSameClass(lopA: string | undefined | null, lopB: string | undefined | null): boolean {
   if (!lopA && !lopB) return true;
   if (!lopA || !lopB) return false;
-  return normalizeClassName(lopA) === normalizeClassName(lopB);
+  return normalizeClassName(lopA).toLowerCase() === normalizeClassName(lopB).toLowerCase();
 }
 
 /**
- * Returns a deduplicated list of canonical class names from student records.
+ * Returns a deduplicated list of real class names strictly from student records.
+ * Never injects hardcoded classes or cohorts.
  */
 export function getUniqueClassesFromStudents(students: { lop?: string }[]): string[] {
   const set = new Set<string>();
-
-  // Add from students
   students.forEach((s) => {
     if (s.lop) {
       const norm = normalizeClassName(s.lop);
       if (norm) set.add(norm);
     }
   });
-
-  // Ensure standard classes exist
-  CANONICAL_CLASSES.forEach((c) => set.add(c));
-
-  return Array.from(set).sort();
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'vi'));
 }
 
 /**
- * Returns the major associated with a class name.
+ * Returns the major associated with a class name, if identifiable from the 2 specialized faculties.
  */
 export function getMajorForClass(lopName: string | undefined | null): string {
-  if (!lopName) return 'Chưa phân ngành';
-  const lower = lopName.toLowerCase();
-  if (lower.includes('cơ khí') || lower.includes('co khi') || lower.includes('09041')) {
-    return 'Công nghệ Kỹ thuật Cơ khí';
+  if (!lopName) return '';
+  const lower = lopName.trim().toLowerCase();
+  if (
+    lower.includes('kỹ thuật cơ sở') ||
+    lower.includes('ky thuat co so') ||
+    lower.includes('ktcs')
+  ) {
+    return 'Kỹ thuật cơ sở';
   }
-  if (lower.includes('ô tô') || lower.includes('o to') || lower.includes('09021')) {
+  if (lower.includes('ô tô') || lower.includes('o to') || lower.includes('oto')) {
     return 'Công nghệ Kỹ thuật Ô tô';
   }
-  if (lower.includes('thông tin') || lower.includes('cntt') || lower.includes('it')) {
-    return 'Công nghệ Thông tin';
-  }
-  if (lower.includes('điện tử') || lower.includes('viễn thông')) {
-    return 'Kỹ thuật Điện tử - Viễn thông';
-  }
-  if (lower.includes('kinh tế') || lower.includes('qtkd')) {
-    return 'Quản trị Kinh doanh';
-  }
-  return 'Kỹ thuật Công nghệ Ứng dụng';
+  return '';
 }
 
 /**
- * Returns the cohort / intake year associated with a class name or student code.
+ * Extracts cohort / intake year strictly when explicitly present in the class name (e.g. K24, 2026).
+ * Returns empty string if no cohort is present — never defaults to K25.
  */
 export function getCohortForClass(lopName: string | undefined | null): string {
-  if (!lopName) return 'Khóa 2025';
-  const match = lopName.match(/(2[0-9])DDS/i) || lopName.match(/K(2[0-9])/i) || lopName.match(/\b(202[0-9])\b/);
-  if (match) {
-    const rawNum = match[1];
-    if (rawNum.length === 2) {
-      return `Khóa 20${rawNum} (K${rawNum})`;
-    }
-    const shortK = rawNum.slice(-2);
-    return `Khóa ${rawNum} (K${shortK})`;
+  if (!lopName) return '';
+  const kMatch = lopName.match(/\bK(\d{2})\b/i);
+  if (kMatch) {
+    const num = kMatch[1];
+    return `Khóa 20${num} (K${num})`;
   }
-  if (lopName.includes('25DDS') || lopName.includes('25')) return 'Khóa 2025 (K25)';
-  if (lopName.includes('24DDS') || lopName.includes('24')) return 'Khóa 2024 (K24)';
-  if (lopName.includes('23DDS') || lopName.includes('23')) return 'Khóa 2023 (K23)';
-  return 'Khóa 2025 (K25)';
+  const yearMatch = lopName.match(/\b(20\d{2})\b/);
+  if (yearMatch) {
+    const fullYear = yearMatch[1];
+    const shortK = fullYear.slice(-2);
+    return `Khóa ${fullYear} (K${shortK})`;
+  }
+  return '';
 }
-

@@ -11,6 +11,9 @@ import {
   getOfficerAssignments,
   createOfficerAssignment,
   getCriteria,
+  createCriterion,
+  updateCriterion,
+  deleteCriterion,
   getTrainingMonths,
   getTransactions,
   createTransaction,
@@ -28,6 +31,7 @@ import { getAllSinhVien } from '../db/dbOperations';
 import {
   requirePortalAuth,
   requirePortalPermission,
+  requirePortalRoles,
   PortalAuthRequest,
 } from '../middleware/portalAuth';
 
@@ -74,6 +78,9 @@ trainingPointRouter.get('/events', (req: Request, res: Response) => {
   const onAppealUpdated = (appeal: any) => {
     res.write(`data: ${JSON.stringify({ type: 'APPEAL_UPDATED', data: appeal })}\n\n`);
   };
+  const onCriteriaUpdated = (payload: any) => {
+    res.write(`data: ${JSON.stringify({ type: 'CRITERIA_UPDATED', data: payload })}\n\n`);
+  };
 
   trainingEventBus.on('score.transaction.created', onCreated);
   trainingEventBus.on('score.transaction.approved', onApproved);
@@ -82,6 +89,7 @@ trainingPointRouter.get('/events', (req: Request, res: Response) => {
   trainingEventBus.on('score.monthly.updated', onMonthlyUpdated);
   trainingEventBus.on('score.month.locked', onMonthLocked);
   trainingEventBus.on('score.appeal.updated', onAppealUpdated);
+  trainingEventBus.on('score.criteria.updated', onCriteriaUpdated);
 
   // Heartbeat ping mỗi 25s để giữ kết nối không bị timeout
   const pingInterval = setInterval(() => {
@@ -97,6 +105,7 @@ trainingPointRouter.get('/events', (req: Request, res: Response) => {
     trainingEventBus.off('score.monthly.updated', onMonthlyUpdated);
     trainingEventBus.off('score.month.locked', onMonthLocked);
     trainingEventBus.off('score.appeal.updated', onAppealUpdated);
+    trainingEventBus.off('score.criteria.updated', onCriteriaUpdated);
   });
 });
 
@@ -168,6 +177,45 @@ trainingPointRouter.get('/criteria', (req: Request, res: Response) => {
       activeOnly: activeOnly === 'true',
     }),
   });
+});
+
+trainingPointRouter.post('/criteria', requirePortalRoles('ADMIN'), (req: Request, res: Response) => {
+  try {
+    const created = createCriterion(req.body);
+    return res.status(201).json({
+      success: true,
+      message: 'Đã thêm mới tiêu chí rèn luyện thành công.',
+      data: created,
+    });
+  } catch (error: any) {
+    return res.status(400).json({ success: false, message: error.message || 'Không thể thêm tiêu chí.' });
+  }
+});
+
+trainingPointRouter.put('/criteria/:id', requirePortalRoles('ADMIN'), (req: Request, res: Response) => {
+  try {
+    const updated = updateCriterion(req.params.id, req.body);
+    return res.json({
+      success: true,
+      message: 'Đã cập nhật tiêu chí rèn luyện thành công.',
+      data: updated,
+    });
+  } catch (error: any) {
+    return res.status(400).json({ success: false, message: error.message || 'Không thể cập nhật tiêu chí.' });
+  }
+});
+
+trainingPointRouter.delete('/criteria/:id', requirePortalRoles('ADMIN'), (req: Request, res: Response) => {
+  try {
+    const result = deleteCriterion(req.params.id);
+    return res.json({
+      success: true,
+      message: 'Đã xóa tiêu chí rèn luyện thành công.',
+      data: result.deleted,
+    });
+  } catch (error: any) {
+    return res.status(400).json({ success: false, message: error.message || 'Không thể xóa tiêu chí.' });
+  }
 });
 
 trainingPointRouter.get('/months', (req: Request, res: Response) => {

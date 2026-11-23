@@ -16,6 +16,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { apiService } from '../../services/apiService';
+import { normalizeFacultyName } from '../../utils/classHelper';
 
 export type ImportDataType = 'STUDENTS' | 'GRADES' | 'SCHEDULE' | 'TRAINING' | 'SUBJECTS';
 
@@ -232,7 +233,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onSuccess, showToast
               maMH: String(sub.maMH).trim(),
               tenMH: String(sub.tenMH).trim(),
               soTinChi: Number(sub.soTinChi) || 3,
-              khoaPhuTrach: sub.khoaPhuTrach || 'Công nghệ thông tin',
+              khoaPhuTrach: sub.khoaPhuTrach ? normalizeFacultyName(String(sub.khoaPhuTrach)) : '',
             });
           }
         }

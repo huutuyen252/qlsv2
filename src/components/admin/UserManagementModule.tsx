@@ -4,6 +4,7 @@
 
 import React, { useState } from 'react';
 import { User, UserRole, UserPermission, SinhVien } from '../../types';
+import { SPECIALIZED_FACULTIES } from '../../utils/classHelper';
 import {
   ShieldCheck,
   ShieldAlert,
@@ -167,6 +168,7 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
   };
 
   const getUserPasswordDisplay = (user: User) => {
+    if (!user.plainPassword && !user.password) return '••••••••';
     return resolvePlainPassword(user);
   };
 
@@ -174,11 +176,11 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
     setEditingUser(user);
     setEditUsername(user.username);
     setEditFullName(user.fullName);
-    const plainPass = resolvePlainPassword(user);
-    setEditPassword(plainPass);
+    const hasPlain = Boolean(user.plainPassword || user.password);
+    setEditPassword(hasPlain ? resolvePlainPassword(user) : '');
     setShowEditPassword(false);
     setEditEmail(user.email || '');
-    setEditFaculty(user.faculty || 'Khoa Cơ khí');
+    setEditFaculty(user.faculty || '');
     setEditStudentCode(user.studentCode || '');
     setEditRole(user.role);
     setEditStatus(user.status || 'ACTIVE');
@@ -193,6 +195,9 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
         canEvaluateTraining: user.role === 'ADMIN' || user.role === 'LECTURER',
         canApproveRetakes: user.role === 'ADMIN',
         canManageSchedule: user.role === 'ADMIN' || user.role === 'LECTURER',
+        canVerifyProfiles: user.role === 'ADMIN' || user.role === 'LECTURER',
+        canExportProfiles: user.role === 'ADMIN' || user.role === 'LECTURER',
+        canManageCatalogs: user.role === 'ADMIN',
       }
     );
   };
@@ -724,7 +729,7 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
                           setNewFullName(match.hoTen);
                           setNewUsername(match.maSV);
                           setNewEmail(match.email || `${match.maSV}@tdnu.edu.vn`);
-                          setNewFaculty(match.khoa || 'Công nghệ Thông tin');
+                          setNewFaculty(match.khoa || '');
                         }
                       }
                     }}
@@ -805,11 +810,18 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
                   <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Đơn Vị Quản Lý / Khoa:</label>
                   <input
                     type="text"
+                    list="tdnu-faculty-options"
                     value={newFaculty}
                     onChange={(e) => setNewFaculty(e.target.value)}
-                    placeholder="Khoa CNTT, Phòng Đào tạo..."
+                    placeholder="Khoa Kỹ thuật cơ sở, Khoa Ô tô, Phòng Đào tạo..."
                     className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none"
                   />
+                  <datalist id="tdnu-faculty-options">
+                    {SPECIALIZED_FACULTIES.map((fac) => (
+                      <option key={fac} value={fac} />
+                    ))}
+                    <option value="Phòng Đào tạo" />
+                  </datalist>
                 </div>
               </div>
 
@@ -919,7 +931,7 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
                       type={showEditPassword ? 'text' : 'password'}
                       value={editPassword}
                       onChange={(e) => setEditPassword(e.target.value)}
-                      placeholder="Nhập mật khẩu mới hoặc chỉnh sửa mật khẩu..."
+                      placeholder="Để trống nếu giữ nguyên mật khẩu hiện tại..."
                       className="w-full bg-white dark:bg-slate-900 border border-amber-400 dark:border-amber-600 rounded pl-2.5 pr-8 py-1.5 text-xs text-slate-900 dark:text-amber-200 font-mono focus:outline-none"
                     />
                     <button
@@ -946,11 +958,18 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
                     <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Đơn Vị Quản Lý / Khoa:</label>
                     <input
                       type="text"
+                      list="tdnu-faculty-options-edit"
                       value={editFaculty}
                       onChange={(e) => setEditFaculty(e.target.value)}
-                      placeholder="Khoa CNTT, Phòng Đào tạo..."
+                      placeholder="Khoa Kỹ thuật cơ sở, Khoa Ô tô, Phòng Đào tạo..."
                       className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none"
                     />
+                    <datalist id="tdnu-faculty-options-edit">
+                      {SPECIALIZED_FACULTIES.map((fac) => (
+                        <option key={fac} value={fac} />
+                      ))}
+                      <option value="Phòng Đào tạo" />
+                    </datalist>
                   </div>
                 </div>
 
@@ -1096,6 +1115,29 @@ export const UserManagementModule: React.FC<UserManagementModuleProps> = ({
                       <span className="font-semibold text-teal-800 dark:text-teal-300">Cấp Quyền Bổ Sung Hồ Sơ Số Hóa (Cho Sinh Viên)</span>
                     </div>
                   </label>
+
+                  <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                      Quyền Hồ sơ sinh viên
+                    </div>
+                    {[
+                      { key: 'canVerifyProfiles', label: 'Xác minh địa chỉ 2 cấp & thông tin hồ sơ sinh viên' },
+                      { key: 'canExportProfiles', label: 'Xuất Excel danh sách hồ sơ sinh viên' },
+                      { key: 'canManageCatalogs', label: 'Quản trị Danh mục Hành chính 2 cấp, Dân tộc, Tôn giáo' },
+                    ].map((perm) => (
+                      <label key={perm.key} className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean((editPermissions as Record<string, boolean | undefined>)[perm.key])}
+                          onChange={(e) =>
+                            setEditPermissions((prev) => ({ ...prev, [perm.key]: e.target.checked }))
+                          }
+                          className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 mt-0.5"
+                        />
+                        <span className="font-medium">{perm.label}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               </div>
 
