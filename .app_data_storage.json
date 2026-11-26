@@ -243,6 +243,24 @@
   "memoryNghiLe": [],
   "memoryAuditLogs": [
     {
+      "id": "LOG-1795701200343-852",
+      "timestamp": "20:53:20 26/11/2026",
+      "user": "admin",
+      "role": "ADMIN",
+      "action": "LOGIN",
+      "target": "Hệ thống Quản trị & Đào tạo",
+      "details": "Đăng nhập thành công vào hệ thống qua trình duyệt với vai trò ADMIN (Dương Hữu Tuyến)",
+      "status": "SUCCESS",
+      "ip": "127.0.0.1",
+      "createdAt": "2026-11-26T13:53:20.342Z",
+      "actorUserId": null,
+      "entityType": null,
+      "entityId": null,
+      "beforeJson": null,
+      "afterJson": null,
+      "reason": null
+    },
+    {
       "id": "LOG-1794662606092-644",
       "timestamp": "13:23:26 14/11/2026",
       "user": "admin",
@@ -1678,5 +1696,17 @@
       "notes": "Lớp \"ĐH Kỹ thuật cơ sở 1\" của sinh viên Vũ Thu Giang (SV005) chưa có bản ghi trong bảng danh mục lop",
       "createdAt": "2026-11-12T13:49:30.647Z"
     }
-  ]
+  ],
+  "memorySystemConfig": {
+    "adminName": "Dương Hữu Tuyến",
+    "adminUnit": "Quản trị hệ thống · Phòng Đào tạo",
+    "hotline": "028.3894.1234",
+    "contactEmail": "admin@tdnu.edu.vn",
+    "supportHours": "Thứ 2 – Thứ 6 · 07:30 – 17:00",
+    "facebookUrl": "https://www.facebook.com",
+    "tiktokUrl": "https://www.tiktok.com",
+    "zaloUrl": "https://zalo.me/02838941234",
+    "holidayThemeMode": "AUTO",
+    "holidayBannerText": ""
+  }
 }
